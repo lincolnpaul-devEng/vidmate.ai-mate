@@ -13,6 +13,21 @@
 
 class AIToolRegistry;
 
+struct AIAgentSettings {
+    QString mode{QStringLiteral("yolo")}; // "ask" or "yolo"
+    QString editingModelId{QStringLiteral("auto")};
+    QString provider{QStringLiteral("all")}; // "all", "openrouter", "groq"
+    QString imageModel{QStringLiteral("auto")};
+    QString videoModel{QStringLiteral("auto")};
+    QString musicModel{QStringLiteral("auto")};
+    QString voiceModel{QStringLiteral("auto")};
+    QString soundModel{QStringLiteral("auto")};
+    QString mgTier{QStringLiteral("balance")}; // "speed", "balance", "quality"
+    QString cacheMode{QStringLiteral("short")}; // "short", "long"
+    bool cloudAssetsAccess{true};
+    bool planMode{false};
+};
+
 /**
  * @class AIDispatcher
  * @brief Handles network communications with AI endpoints and dispatches JSON commands.
@@ -34,6 +49,9 @@ public:
     void setModel(const QString &model);
     void loadEnvConfig(const QString &customPath = QString());
 
+    AIAgentSettings agentSettings() const { return m_settings; }
+    void setAgentSettings(const AIAgentSettings &settings);
+
     /** @brief Returns the tool registry for external access */
     AIToolRegistry *toolRegistry() const { return m_toolRegistry; }
     QString supabaseUrl() const { return m_supabaseUrl; }
@@ -44,6 +62,7 @@ Q_SIGNALS:
     void errorOccurred(const QString &errorMessage);
     void requestStarted();
     void requestFinished();
+    void agentSettingsChanged(const AIAgentSettings &settings);
 
 private Q_SLOTS:
     void slotReplyFinished(QNetworkReply *reply);
@@ -64,4 +83,5 @@ private:
     QString m_supabaseServiceKey;
     QString m_lastEngine;
     QString m_lastPrompt;
+    AIAgentSettings m_settings;
 };

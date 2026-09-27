@@ -103,6 +103,15 @@ void AIDispatcher::setApiEndpoint(const QString &url) { m_apiUrl = url; }
 void AIDispatcher::setApiKey(const QString &key) { m_apiKey = key; }
 void AIDispatcher::setModel(const QString &model) { m_model = model; }
 
+void AIDispatcher::setAgentSettings(const AIAgentSettings &settings)
+{
+    m_settings = settings;
+    if (settings.editingModelId != QStringLiteral("auto") && !settings.editingModelId.isEmpty()) {
+        m_model = settings.editingModelId;
+    }
+    Q_EMIT agentSettingsChanged(m_settings);
+}
+
 // ── Editor State Snapshot ───────────────────────────────────────────────────
 
 QString AIDispatcher::buildEditorStateSnapshot()
@@ -150,6 +159,23 @@ QString AIDispatcher::buildSystemPrompt()
     QString toolDescriptions = m_toolRegistry->toolDescriptionsForPrompt();
     QString editorState = buildEditorStateSnapshot();
 
+    QString settingsDirective;
+    if (m_settings.planMode) {
+        settingsDirective += QStringLiteral("- Plan Mode is ACTIVE: Generate a numbered step-by-step execution plan first and wait for confirmation.\n");
+    }
+    if (m_settings.mode == QStringLiteral("ask")) {
+        settingsDirective += QStringLiteral("- Ask Mode is ACTIVE: Present proposed timeline changes for review.\n");
+    } else {
+        settingsDirective += QStringLiteral("- YOLO Mode is ACTIVE: Autonomous direct tool execution on the timeline.\n");
+    }
+    if (m_settings.cloudAssetsAccess) {
+        settingsDirective += QStringLiteral("- Autonomous Cloud Assets: You may search & insert Pexels/Pixabay and Freesound assets.\n");
+    }
+    settingsDirective += QStringLiteral("- Motion Graphics Tier: %1\n").arg(m_settings.mgTier);
+    if (m_settings.voiceModel != QStringLiteral("auto")) {
+        settingsDirective += QStringLiteral("- Preferred Voiceover Model: %1\n").arg(m_settings.voiceModel);
+    }
+
     return QStringLiteral(
         "You are Velo AI: an autonomous master writer-director and video-editing AI running natively "
         "inside Kdenlive (non-linear editor) with Natron VFX compositor as a sub-processor.\n"
@@ -169,8 +195,11 @@ QString AIDispatcher::buildSystemPrompt()
         "8. **Subtitles & Captions**: Accurate subtitle timing synced to speech transcript.\n"
         "9. **Render QA**: Visual verification (frame snapshots), audio level check, quality probe.\n\n"
 
+        "# Active Agent Configuration\n"
+        "%1\n\n"
+
         "# Available Tools\n"
-        "%1\n"
+        "%2\n\n"
 
         "# Rules\n"
         "- Always explain the creative reason FIRST, then return the tool call.\n"
@@ -192,8 +221,8 @@ QString AIDispatcher::buildSystemPrompt()
         "```\n\n"
 
         "# Current Editor State\n"
-        "%2"
-    ).arg(toolDescriptions, editorState);
+        "%3"
+    ).arg(settingsDirective, toolDescriptions, editorState);
 }
 
 // ── Send Prompt ─────────────────────────────────────────────────────────────
