@@ -31,6 +31,7 @@
 #include <QImage>
 #include <QAction>
 #include <QDateTime>
+#include <QJsonDocument>
 #include <KActionCollection>
 #include <KLocalizedString>
 
@@ -159,8 +160,11 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleGenerateVoiceover(params);
     else if (action == QStringLiteral("insert_media_url"))
         handleInsertMediaUrl(params);
+    else if (action == QStringLiteral("detect_scenes") || action == QStringLiteral("scene_detect") ||
+             action == QStringLiteral("detect_shots") || action == QStringLiteral("split_scenes"))
+        handleDetectScenes(params);
     else
-        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url.", action), false);
+        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes.", action), false);
 
     if (isMutating && pCore && pCore->undoStack()) {
         pCore->undoStack()->endMacro();
@@ -793,6 +797,8 @@ void AICommandRouter::handleGenerateVoiceover(const QJsonObject &params)
     QString voiceName = params[QStringLiteral("voice_name")].toString(QStringLiteral("Rachel"));
     int trackId = params[QStringLiteral("track_id")].toInt(-1);
     int frame = params[QStringLiteral("playhead_frame")].toInt(-1);
+    Q_UNUSED(trackId);
+    Q_UNUSED(frame);
 
     Q_EMIT executionFinished(i18n("Generating ElevenLabs neural voiceover for \"%1\" (Voice: %2)...",
                                   text.left(35), voiceName), true);
@@ -805,7 +811,156 @@ void AICommandRouter::handleInsertMediaUrl(const QJsonObject &params)
     QString kind = params[QStringLiteral("kind")].toString(QStringLiteral("video"));
     int trackId = params[QStringLiteral("track_id")].toInt(-1);
     int frame = params[QStringLiteral("playhead_frame")].toInt(-1);
+    Q_UNUSED(name);
+    Q_UNUSED(kind);
+    Q_UNUSED(trackId);
+    Q_UNUSED(frame);
 
     Q_EMIT executionFinished(i18n("Ingesting media from URL '%1' into Project Bin and Timeline.", url), true);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PYSCENEDETECT AI VISUAL SHOT ANALYSIS
+// ════════════════════════════════════════════════════════════════════════════
+
+void AICommandRouter::handleDetectScenes(const QJsonObject &params)
+{
+    auto *tc = getTimelineController();
+    auto tm = getTimelineModel();
+    if (!tm || !tc) {
+        Q_EMIT executionFinished(i18n("No active timeline."), false);
+        return;
+    }
+
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    double threshold = params[QStringLiteral("threshold")].toDouble(27.0);
+    QString detector = params[QStringLiteral("detector")].toString(QStringLiteral("content"));
+    bool applyCuts = params[QStringLiteral("apply_cuts")].toBool(true);
+    bool addMarkers = params[QStringLiteral("add_markers")].toBool(false);
+
+    if (clipId < 0) {
+        clipId = tc->getMainSelectedClip();
+        if (clipId < 0 && !tc->selection().isEmpty()) {
+            clipId = tc->selection().first();
+        }
+    }
+
+    if (clipId < 0 || !tm->isClip(clipId)) {
+        Q_EMIT executionFinished(i18n("PySceneDetect: No clip selected or valid clip_id provided."), false);
+        return;
+    }
+
+    QString binId = tm->getClipBinId(clipId);
+    if (!pCore || !pCore->projectItemModel()) {
+        Q_EMIT executionFinished(i18n("Project model unavailable."), false);
+        return;
+    }
+
+    auto pClip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!pClip) {
+        Q_EMIT executionFinished(i18n("Clip source item not found in Project Bin."), false);
+        return;
+    }
+
+    QString videoPath = pClip->clipUrl();
+    if (videoPath.isEmpty() || !QFile::exists(videoPath)) {
+        Q_EMIT executionFinished(i18n("Clip media file does not exist: %1", videoPath), false);
+        return;
+    }
+
+    // Locate scene_detect.py script
+    QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/scenedetect/scene_detect.py"));
+    if (scriptPath.isEmpty() || !QFile::exists(scriptPath)) {
+        QString fallback = QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/scenedetect/scene_detect.py");
+        if (QFile::exists(fallback)) {
+            scriptPath = fallback;
+        } else {
+            scriptPath = QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/scenedetect/scene_detect.py");
+        }
+    }
+
+    if (!QFile::exists(scriptPath)) {
+        Q_EMIT executionFinished(i18n("PySceneDetect script not found at %1.", scriptPath), false);
+        return;
+    }
+
+    // Execute script via QProcess
+    QProcess proc;
+    QStringList args;
+    args << scriptPath
+         << QStringLiteral("-i") << videoPath
+         << QStringLiteral("-t") << QString::number(threshold)
+         << QStringLiteral("-d") << detector;
+
+    proc.start(QStringLiteral("python3"), args);
+    if (!proc.waitForStarted(5000)) {
+        Q_EMIT executionFinished(i18n("Failed to launch Python for PySceneDetect analysis."), false);
+        return;
+    }
+
+    if (!proc.waitForFinished(120000)) { // 2 min timeout
+        proc.kill();
+        Q_EMIT executionFinished(i18n("PySceneDetect analysis timed out."), false);
+        return;
+    }
+
+    QByteArray out = proc.readAllStandardOutput();
+    QJsonDocument doc = QJsonDocument::fromJson(out);
+    if (!doc.isObject()) {
+        QString errStr = QString::fromUtf8(proc.readAllStandardError());
+        Q_EMIT executionFinished(i18n("PySceneDetect error or invalid output: %1", errStr), false);
+        return;
+    }
+
+    QJsonObject resObj = doc.object();
+    QJsonArray scenes = resObj[QStringLiteral("scenes")].toArray();
+    int sceneCount = scenes.size();
+
+    if (sceneCount == 0) {
+        Q_EMIT executionFinished(i18n("PySceneDetect completed: No scene cuts detected (single continuous shot)."), true);
+        Q_EMIT dataOutput(QStringLiteral("detect_scenes"), resObj);
+        return;
+    }
+
+    int cutsApplied = 0;
+    int markersAdded = 0;
+    int clipStart = tm->getClipPosition(clipId);
+    int clipIn = tm->getClipIn(clipId);
+    int clipPlaytime = tm->getClipPlaytime(clipId);
+
+    for (int i = 0; i < scenes.size(); ++i) {
+        QJsonObject scene = scenes[i].toObject();
+        int sFrame = scene[QStringLiteral("start_frame")].toInt();
+
+        // Calculate timeline position relative to clip
+        int timelinePos = clipStart + (sFrame - clipIn);
+
+        if (addMarkers) {
+            tm->getGuideModel()->addMarker(GenTime(timelinePos, pCore->getCurrentFps()),
+                                          i18n("Scene %1", i + 1));
+            markersAdded++;
+        }
+
+        // Apply cut at boundary if within clip bounds and not at the very start
+        if (applyCuts && i > 0) {
+            if (timelinePos > clipStart && timelinePos < clipStart + clipPlaytime) {
+                if (TimelineFunctions::requestClipCut(tm, clipId, timelinePos)) {
+                    cutsApplied++;
+                }
+            }
+        }
+    }
+
+    QString summary = i18n("PySceneDetect analyzed '%1': detected %2 scene(s) [Engine: %3].",
+                           pClip->clipName(), sceneCount, resObj[QStringLiteral("engine")].toString());
+    if (applyCuts) {
+        summary += i18n(" Applied %1 cuts.", cutsApplied);
+    }
+    if (addMarkers) {
+        summary += i18n(" Added %1 markers.", markersAdded);
+    }
+
+    Q_EMIT dataOutput(QStringLiteral("detect_scenes"), resObj);
+    Q_EMIT executionFinished(summary, true);
 }
 

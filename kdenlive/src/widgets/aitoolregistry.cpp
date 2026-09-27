@@ -507,6 +507,29 @@ void AIToolRegistry::registerAllTools()
                 QStringLiteral("Download remote stock/AI media asset, add to Project Bin, and insert onto timeline track."),
                 makeParams(props, {QStringLiteral("url")}));
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // AI VISUAL ANALYSIS & SCENE CUT DETECTION (PySceneDetect)
+    // ════════════════════════════════════════════════════════════════════════
+
+    // 30. detect_scenes — visual scene/shot boundary detection via PySceneDetect
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral(
+            "Clip ID to analyze. Use -1 for currently selected clip or active timeline clip."));
+        props[QStringLiteral("threshold")] = numberParam(QStringLiteral(
+            "Detection threshold sensitivity (default: 27.0). Lower = more sensitive to subtle cuts."));
+        props[QStringLiteral("detector")] = enumParam(
+            QStringLiteral("Scene detection algorithm."),
+            {QStringLiteral("content"), QStringLiteral("adaptive"), QStringLiteral("threshold")});
+        props[QStringLiteral("apply_cuts")] = boolParam(QStringLiteral(
+            "If true, automatically split/cut the clip on the timeline at each detected scene boundary (default: true)."));
+        props[QStringLiteral("add_markers")] = boolParam(QStringLiteral(
+            "If true, add scene guide markers with timestamps at each shot transition (default: false)."));
+        addTool(QStringLiteral("detect_scenes"),
+                QStringLiteral("Visually analyze a video clip using PySceneDetect to detect scene/shot changes, and optionally split the clip or place markers."),
+                makeParams(props, {}));
+    }
 }
 
 // ── API ─────────────────────────────────────────────────────────────────────

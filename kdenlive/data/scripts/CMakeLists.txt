@@ -4,6 +4,7 @@
 add_subdirectory(automask)
 add_subdirectory(vosk)
 add_subdirectory(whisper)
+add_subdirectory(scenedetect)
 
 INSTALL(FILES 
     checkpackages.py
