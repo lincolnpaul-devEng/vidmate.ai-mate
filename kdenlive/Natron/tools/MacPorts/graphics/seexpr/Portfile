@@ -1,0 +1,54 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+# $Id$
+
+PortSystem          1.0
+PortGroup           cmake 1.0
+PortGroup           github 1.0
+
+name                seexpr
+github.setup        wdas SeExpr 3.0.1 v
+# GitHub tarballs extract to <author>-<project>-<hash>; tarball_from enables
+# extract.rename so the source is renamed to ${worksrcdir} (else patch runs in
+# the wrong directory: "No file to patch").
+github.tarball_from tarball
+license             Apache-2
+categories          graphics
+maintainers         nomaintainer
+description         SeExpr is a simple expression language.
+long_description    ${description}
+homepage            http://www.disneyanimation.com/technology/seexpr.html
+platforms           darwin
+
+#master_sites        ${homepage}
+#distname            ${version}
+#dist_subdir         ${name}/${version}_3
+#use_bzip2           yes
+#master_sites        https://github.com/wdas/SeExpr/archive/
+#distname            v${version}
+
+checksums           sha1    bdd27ab6662e1bfb6dc2fe03de0efe4f869d96bc \
+                    rmd160  5d40c10b17b84e51a414a8ea86a070a0881d1427 \
+                    sha256  1b04e8c97e469a9568e72c4ea433e8c92ac8df81ce9c593447b3b08e8773072b \
+                    size    903364
+worksrcdir          SeExpr-${version}
+
+depends_lib         port:libpng
+depends_build       port:doxygen
+
+patchfiles          scandir.diff
+
+build.target-append doc
+
+# Maybe add python variants later.
+
+configure.args-append \
+    -DENABLE_LLVM_BACKEND:BOOL=FALSE \
+    -DENABLE_QT5:BOOL=FALSE \
+    -DUSE_PYTHON:BOOL=FALSE
+
+# SeExpr enables SSE4 by default and appends the x86-only flag -msse4.1, which
+# clang rejects on arm64 ("unsupported option '-msse4.1'"). Disable SSE4 on
+# non-x86 architectures; SeExpr uses its scalar fallback there.
+if {${configure.build_arch} ni {i386 x86_64}} {
+    configure.args-append -DENABLE_SSE4:BOOL=FALSE
+}

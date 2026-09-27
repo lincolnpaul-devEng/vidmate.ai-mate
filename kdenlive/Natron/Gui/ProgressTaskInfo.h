@@ -1,0 +1,179 @@
+/* ***** BEGIN LICENSE BLOCK *****
+ * This file is part of Natron <https://natrongithub.github.io/>,
+ * (C) 2018-2023 The Natron developers
+ * (C) 2013-2018 INRIA and Alexandre Gauthier-Foichat
+ *
+ * Natron is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Natron is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ * ***** END LICENSE BLOCK ***** */
+
+#ifndef Gui_ProgressTaskInfo_h
+#define Gui_ProgressTaskInfo_h
+
+// ***** BEGIN PYTHON BLOCK *****
+// from <https://docs.python.org/3/c-api/intro.html#include-files>:
+// "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
+#include <Python.h>
+// ***** END PYTHON BLOCK *****
+
+#include "Global/Macros.h"
+
+#include <QObject>
+
+#include "Gui/GuiFwd.h"
+
+#include "Gui/TaskBar.h"
+
+NATRON_NAMESPACE_ENTER
+
+struct ProgressTaskInfoPrivate;
+class ProgressTaskInfo
+    : public QObject
+    , public std::enable_shared_from_this<ProgressTaskInfo>
+{
+GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    Q_OBJECT
+GCC_DIAG_SUGGEST_OVERRIDE_ON
+
+    friend class ProgressPanel;
+
+public:
+
+    enum ProgressTaskStatusEnum
+    {
+        eProgressTaskStatusPaused,
+        eProgressTaskStatusRunning,
+        eProgressTaskStatusQueued,
+        eProgressTaskStatusFinished,
+        eProgressTaskStatusCanceled
+    };
+
+private:
+    // constructors should be privatized in any class that derives from std::enable_shared_from_this<>
+
+    ProgressTaskInfo(ProgressPanel* panel,
+                     const NodePtr& node,
+                     const int firstFrame,
+                     const int lastFrame,
+                     const int frameStep,
+                     const bool canPause,
+                     const bool canCancel,
+                     const QString& message,
+                     const ProcessHandlerPtr& process);
+
+public:
+    static ProgressTaskInfoPtr create(ProgressPanel* panel,
+                                                      const NodePtr& node,
+                                                      const int firstFrame,
+                                                      const int lastFrame,
+                                                      const int frameStep,
+                                                      const bool canPause,
+                                                      const bool canCancel,
+                                                      const QString& message,
+                                                      const ProcessHandlerPtr& process)
+    {
+        return ProgressTaskInfoPtr( new ProgressTaskInfo(panel,
+                                                                         node,
+                                                                         firstFrame,
+                                                                         lastFrame,
+                                                                         frameStep,
+                                                                         canPause,
+                                                                         canCancel,
+                                                                         message,
+                                                                         process) );
+    }
+
+    virtual ~ProgressTaskInfo();
+
+    bool wasCanceled() const;
+
+    bool canPause() const;
+
+    void createItems();
+
+    /**
+     * @brief If the task has been restarted, totalProgress is the progress over the whole task,
+     * and subTaskProgress is the progress over the smaller range from which we stopped.
+     **/
+    void updateProgressBar(double totalProgress, double subTaskProgress);
+
+    void updateProgress(const int frame, double progress);
+
+    void cancelTask(bool calledFromRenderEngine, int retCode);
+
+    void restartTask();
+
+    NodePtr getNode() const;
+
+    ProcessHandlerPtr getProcess() const;
+
+    void setTaskBar(TaskBar *taskbar);
+
+    void updateTaskBarProgress(ProgressTaskStatusEnum status, double progress);
+
+    void updateTaskBarState(TaskBar::ProgressState state);
+
+public Q_SLOTS:
+
+    void onShowProgressPanelTimerTimeout();
+
+    void onRefreshLabelTimeout();
+
+    /**
+     * @brief Slot executed when a render engine reports progress
+     **/
+    void onRenderEngineFrameComputed(int frame, double progress);
+
+    /**
+     * @brief Executed when a render engine stops, retCode can be 1 in which case that means the render
+     * was aborted, or 0 in which case the render was successful or a failure.
+     **/
+    void onRenderEngineStopped(int retCode);
+
+    void onProcessCanceled();
+
+    void getTableItems(std::vector<TableItem*>* items) const;
+
+    void createCellWidgets();
+
+    ProgressTaskStatusEnum getStatus() const;
+
+public Q_SLOTS:
+
+
+    void onPauseTriggered();
+    void onCancelTriggered();
+    void onRestartTriggered();
+
+Q_SIGNALS:
+
+    void taskCanceled();
+
+private:
+
+    void setCellWidgets(int row, TableView* view);
+    void removeCellWidgets(int row, TableView* view);
+
+
+    void setProcesshandler(const ProcessHandlerPtr& process);
+
+
+    void clearItems();
+
+    std::unique_ptr<ProgressTaskInfoPrivate> _imp;
+    TaskBar *_taskbar;
+};
+
+NATRON_NAMESPACE_EXIT
+
+#endif // Gui_ProgressTaskInfo_h

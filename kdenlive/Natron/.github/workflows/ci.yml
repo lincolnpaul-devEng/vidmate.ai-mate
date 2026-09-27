@@ -1,0 +1,182 @@
+name: Tests
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+    - RB-2.5
+    - RB-2.6
+    paths-ignore:
+      - Documentation
+  pull_request:
+    branches:
+    - RB-2.5
+    - RB-2.6
+    paths-ignore:
+      - Documentation
+
+jobs:
+  unix_test:
+    name: Test ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.special-invocation }}bash -l {0}
+    env:
+      CI: 'True'
+      PYTHON_VERSION: ${{ matrix.python-version }}
+      OCIO_CONFIG_VERSION: 2.5
+      MATRIX_OS: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest] #macos-latest
+        python-version: ['3.10']
+        include:
+        - os: ubuntu-latest
+          special-invocation: 'xvfb-run --auto-servernum '
+          python-version: '3.10'
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4.1.1
+        with:
+          submodules: recursive
+      - name: Install Linux system packages
+        if: contains(matrix.os, 'ubuntu')
+        shell: bash
+        run: |
+          sudo apt update
+          sudo apt install build-essential libboost-serialization-dev libboost-system-dev libexpat1-dev libcairo2-dev \
+            qt5-qmake qtbase5-dev qtdeclarative5-dev \
+            python3-dev libshiboken2-dev libpyside2-dev python3-pyside2.qtwidgets python3-qtpy \
+            libwayland-dev libwayland-client0 libwayland-egl1 \
+            extra-cmake-modules clang
+      - name: Install Macos system packages
+        if: contains(matrix.os, 'macos')
+        shell: bash
+        run: |
+          brew install xctool python@2 boost giflib jpeg libpng libtiff libxml2 openssl pcre readline sqlite expat cairo \
+            gnu-sed glew openssl ilmbase openexr freetype fontconfig ffmpeg openjpeg libraw libheif openvdb
+
+      - name: Download OpenColorIO-Configs
+        run: |
+          wget https://github.com/NatronGitHub/OpenColorIO-Configs/archive/Natron-v${OCIO_CONFIG_VERSION}.tar.gz
+          tar xzf Natron-v${OCIO_CONFIG_VERSION}.tar.gz
+          mv OpenColorIO-Configs-Natron-v${OCIO_CONFIG_VERSION} OpenColorIO-Configs
+
+      - name: Download Plugins
+        run: |
+          mkdir Plugins && cd Plugins
+          wget https://github.com/NatronGitHub/openfx-io/releases/download/natron_testing/openfx-io-build-ubuntu_22-testing.zip
+          unzip openfx-io-build-ubuntu_22-testing.zip
+          cd ..
+
+      - name: Build Unix (debug)
+        run: |
+          mkdir debug && cd debug
+          cmake -DCMAKE_BUILD_TYPE=Debug ../
+          make -j2
+
+      - name: Run Unix Tests (debug)
+        id: run-unix-tests-debug
+        # Allow continuing after error so logs can be uploaded.
+        continue-on-error: true
+        run: |
+          cd debug
+          OFX_PLUGIN_PATH=$PWD/../Plugins OCIO=$PWD/../OpenColorIO-Configs/blender/config.ocio ctest -V
+
+      - name: Build Unix (release)
+        run: |
+          mkdir release && cd release
+          cmake ../
+          make -j2
+
+      - name: Run Unix Tests (release)
+        id: run-unix-tests-release
+        # Allow continuing after error so logs can be uploaded.
+        continue-on-error: true
+        run: |
+          cd release
+          OFX_PLUGIN_PATH=$PWD/../Plugins OCIO=$PWD/../OpenColorIO-Configs/blender/config.ocio ctest -V
+
+      - name: Upload ${{ matrix.os }} Test Log artifacts
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: ${{ matrix.os }} Test Logs
+          path: ${{ github.workspace }}/release/Testing/Temporary/LastTest.log
+
+      - name: Check for test failures
+        if: steps.run-unix-tests-debug.outcome == 'failure' || steps.run-unix-tests-release.outcome == 'failure'
+        run: exit 1
+
+  win-test:
+    name: Test ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CI: 'True'
+      PYTHON_VERSION: ${{ matrix.python-version }}
+      OCIO_CONFIG_VERSION: 2.5
+      MATRIX_OS: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest]
+        python-version: ['3.10']
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4.1.1
+        with:
+          submodules: recursive
+
+      - name: Install Windows system packages
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          update: true
+          install: git mingw-w64-x86_64-wget unzip mingw-w64-x86_64-ninja mingw-w64-x86_64-cmake
+
+      - name: Install Natron pacman repository
+        run: |
+          ${GITHUB_WORKSPACE}/.github/workflows/install_natron_pacman_repo.sh ${GITHUB_WORKSPACE} ${GITHUB_WORKSPACE}/natron_pacman_repo
+          pacman -S --needed --noconfirm --overwrite "*" mingw-w64-x86_64-natron-build-deps-qt5
+
+      - name: Download OpenColorIO-Configs
+        run: |
+          wget https://github.com/NatronGitHub/OpenColorIO-Configs/archive/Natron-v${OCIO_CONFIG_VERSION}.tar.gz
+          tar xzf Natron-v${OCIO_CONFIG_VERSION}.tar.gz
+          mv OpenColorIO-Configs-Natron-v${OCIO_CONFIG_VERSION} OpenColorIO-Configs
+
+      - name: Build Windows
+        run: |
+          mkdir build && cd build
+          cmake ../
+          ninja
+
+      - name: Run Windows Tests
+        id: run-windows-tests
+        # Allow continuing after error so logs can be uploaded.
+        continue-on-error: true
+        run: |
+          cd build
+
+          mkdir Plugins && cd Plugins
+          wget https://github.com/NatronGitHub/openfx-io/releases/download/natron_testing/openfx-io-build-windows_latest-testing.zip
+          unzip openfx-io-build-windows_latest-testing.zip
+          cd ..
+
+          PYTHONHOME=/mingw64 OFX_PLUGIN_PATH=$PWD/Plugins OCIO=$PWD/../OpenColorIO-Configs/blender/config.ocio ctest -V
+
+      - name: Upload ${{ matrix.os }} Test Log artifacts
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: ${{ matrix.os }} Test Logs
+          path: ${{ github.workspace }}/build/Testing/Temporary/LastTest.log
+
+      - name: Check for test failures
+        if: steps.run-windows-tests.outcome == 'failure'
+        run: exit 1

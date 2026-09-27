@@ -1,0 +1,160 @@
+#
+# ImageMagick 6/7 for openfx-arena <https://github.com/NatronGitHub/openfx-arena>
+#
+
+# freetype/fontconfig is needed to support Text5 and Polaroid
+# bzip2/xz/zlib is needed to support compressions in ReadPSD
+# lcms2 is needed for color support in ReadPSD
+# libpng should be added for legacy support
+
+# v6 is the "safe" option, v7 can break (sometimes)
+#pkgver=7.0.8.55
+pkgver=6.9.11.16
+
+_realname=imagemagick
+pkgbase="mingw-w64-natron_${_realname}"
+pkgname="${MINGW_PACKAGE_PREFIX}-natron_${_realname}"
+pkgrel=5
+pkgdesc="An image viewing/manipulation program (mingw-w64)"
+arch=('any')
+url="https://www.imagemagick.org/"
+license=("custom")
+makedepends=("${MINGW_PACKAGE_PREFIX}-autotools"
+             "${MINGW_PACKAGE_PREFIX}-cc")
+depends=(
+         "${MINGW_PACKAGE_PREFIX}-libpng"
+         "${MINGW_PACKAGE_PREFIX}-bzip2"
+         "${MINGW_PACKAGE_PREFIX}-xz"
+         "${MINGW_PACKAGE_PREFIX}-zlib"
+         "${MINGW_PACKAGE_PREFIX}-freetype"
+         "${MINGW_PACKAGE_PREFIX}-fontconfig"
+	 "${MINGW_PACKAGE_PREFIX}-lcms2"
+	 "${MINGW_PACKAGE_PREFIX}-libheif"
+        )
+options=('strip' '!debug' 'libtool')
+
+source=(
+        https://mirror.sobukus.de/files/src/imagemagick/ImageMagick-${pkgver%.*}-${pkgver##*.}.tar.xz
+        ImageMagick-7.0.8-mingw.diff
+	ImageMagick-7.0.8-disable-ltdl.diff
+	ImageMagick-6.8.8.1-mingw.patch
+	ImageMagick-6-mingw.patch
+	ImageMagick-6.9.11-disable-ltdl.diff
+	ImageMagick-6.9.10-gimp210.diff
+	fix-compiler-errors.patch
+       )
+sha256sums=(
+            'SKIP'
+            'ee504686d4e130e68f88ac26e0728c0a1b627f8571326435329a3e8b8a7868f5'
+            '312a02bdcc2b966322ecca3e76a34a87d796335945401c661b8c4a5327281d5d'
+            '90a650f92f6f77231ffbc109b12dba9acca01614d069f31886edaecc17112530'
+            'c5066995e3cc5fe81cc36b194a4a70fb2bc6ff6e5808062a09d6e767e4bd23eb'
+            'eb83e383f720c109b3ef7fb8c774cf108aec6ac6e71722ac5292b60feaaf3dd6'
+            '98f5da106e24f49fff16020ceae375c4f46108ad9a786002c1895b1c17f3dbeb'
+            '8b705694dc187c736edac98c34e1098e35a07525c52aa5d19bf216962c55c506'
+           )
+
+prepare() {
+  cd ImageMagick-${pkgver%.*}-${pkgver##*.}
+
+  # don't depend on ltdl
+  sed -i 's#with_ltdl='\''yes'\''#with_ltdl='\''no'\''#g' configure.ac
+
+  MCORE="magick"
+  if [ -d "MagickCore" ]; then # v7
+    MCORE="MagickCore"
+    # mingw fixes
+    patch -p0 -i ${srcdir}/ImageMagick-7.0.8-mingw.diff
+  else # v6
+    # mingw fixes
+    patch -p1 -i ${srcdir}/ImageMagick-6-mingw.patch
+    # support gimp 2.10 (until we move to v7)
+    patch -p0 -i ${srcdir}/ImageMagick-6.9.10-gimp210.diff
+  fi
+
+  patch -p1 -i ${srcdir}/fix-compiler-errors.patch
+
+  # fix linker
+  sed -i 's#$(MAGICK_DEP_LIBS)#$(MAGICK_DEP_LIBS) -lws2_32#g' ${MCORE}/MakeFile.am
+
+  # update configure
+  autoreconf
+}
+
+build() {
+  export lt_cv_deplibs_check_method='pass_all'
+  [[ $CARCH = "i686" ]] && EXTRAOPTS="--with-gcc-arch=i686"
+  [[ $CARCH = "x86_64" ]] && EXTRAOPTS="" #EXTRAOPTS="--with-gcc-arch=x86-64"
+
+  [[ -d build-${MINGW_CHOST} ]] && rm -rf build-${MINGW_CHOST}
+  
+  mkdir -p build-${MINGW_CHOST} && cd build-${MINGW_CHOST}
+  ../ImageMagick-${pkgver%.*}-${pkgver##*.}/configure \
+    --prefix=${MINGW_PREFIX} \
+    --build=${MINGW_CHOST} \
+    --host=${MINGW_CHOST} \
+    --with-windows-font-dir=c:/Windows/fonts \
+    --with-magick-plus-plus=yes \
+    --with-quantum-depth=32 \
+    --with-lcms \
+    --with-lzma \
+    --with-zlib \
+    --with-bzlib \
+    --with-png \
+    --with-freetype \
+    --with-fontconfig \
+    --with-heic \
+    --without-raqm \
+    --without-raw \
+    --without-zstd \
+    --without-dps \
+    --without-djvu \
+    --without-fftw \
+    --without-fpx \
+    --without-gslib \
+    --without-gvc \
+    --without-jbig \
+    --without-jpeg \
+    --without-openjp2 \
+    --without-lqr \
+    --without-openexr \
+    --without-pango \
+    --without-rsvg \
+    --without-tiff \
+    --without-webp \
+    --without-xml \
+    --without-x \
+    --without-modules \
+    --without-wmf \
+    --without-autotrace \
+    --without-fpx \
+    --without-jbig \
+    --without-perl \
+    --enable-hdri \
+    --enable-zero-configuration \
+    --enable-static \
+    --disable-opencl \
+    --disable-shared \
+    --disable-deprecated \
+    --disable-legacy-support \
+    --disable-docs \
+    $EXTRAOPTS \
+    CFLAGS="${CFLAGS}" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS} -lws2_32"
+
+  make 
+
+}
+
+package() {
+  cd ${srcdir}/build-${MINGW_CHOST}
+  make -j1 DESTDIR="${pkgdir}" install 
+
+  install -Dm644 ${srcdir}/ImageMagick-${pkgver%.*}-${pkgver##*.}/LICENSE "${pkgdir}${MINGW_PREFIX}/share/licenses/${_realname}/LICENSE"
+  install -Dm644 ${srcdir}/ImageMagick-${pkgver%.*}-${pkgver##*.}/NOTICE "${pkgdir}${MINGW_PREFIX}/share/licenses/${_realname}/NOTICE"
+
+  local PREFIX_WIN=$(cygpath -wm ${MINGW_PREFIX})
+  # fix hard-coded pathes in .pc files
+  for _f in "${pkgdir}${MINGW_PREFIX}"\/lib\/pkgconfig\/*.pc; do
+    sed -e "s|${PREFIX_WIN}|${MINGW_PREFIX}|g" -i ${_f}
+  done
+}

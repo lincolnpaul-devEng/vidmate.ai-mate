@@ -1,0 +1,29 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="128px" height="128px" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:1.41421;">
+    <g>
+        <g id="Ot BackDrop">
+            <g>
+                <rect x="2.5" y="3.5" width="122" height="122" style="fill:rgb(102,102,102);fill-rule:nonzero;"/>
+            </g>
+            <g>
+                <path d="M0,128L127.863,128L127.863,0L0,0L0,128ZM5.03397,6.04724L121.821,6.04724L121.821,122.96L5.03397,122.96L5.03397,6.04724Z" style="fill:black;fill-rule:nonzero;"/>
+            </g>
+            <g>
+                <rect x="2.5" y="0" width="122" height="29" style="fill:rgb(140,140,140);fill-rule:nonzero;"/>
+            </g>
+            <g>
+                <path d="M0,35L127.863,35L127.863,0L0,0L0,35ZM5.03397,6L121.821,6L121.821,28.999L5.03397,28.999L5.03397,6Z" style="fill:rgb(8,8,8);fill-rule:nonzero;"/>
+            </g>
+            <g>
+                <path d="M99.33,128L128,100.526L128,128L99.33,128Z" style="fill:rgb(140,140,140);fill-rule:nonzero;"/>
+            </g>
+            <g>
+                <path d="M89.72,128L128,128L128,91.666L89.72,128ZM122,105.387L122,123L103.993,123L122,105.387Z" style="fill:rgb(8,8,8);fill-rule:nonzero;"/>
+            </g>
+            <g>
+                <rect x="46" y="14.5833" width="35" height="6" style="fill:black;"/>
+            </g>
+        </g>
+    </g>
+</svg>

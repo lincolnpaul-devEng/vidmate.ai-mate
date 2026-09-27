@@ -1,0 +1,38 @@
+# Build directories & binaries
+build/
+build*/
+bin/
+lib/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Cache & temporary files
+.cache/
+.clangd/
+compile_commands.json
+*~
+*.swp
+*.patch
+
+# IDE configurations
+.idea/
+.vscode/
+*.kdev4
+CMakeLists.txt.user*
+
+# Python environments
+venv/
+venv-*/
+__pycache__/
+*.pyc
+
+# Local secrets & env (template in .env.example)
+.env.local
+.env
+
+# CI / Test artefacts
+kde-ci-reports/

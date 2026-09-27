@@ -1,0 +1,31 @@
+[functions.scheduler]
+verify_jwt = false
+
+[functions.giphy-proxy]
+verify_jwt = false
+
+[functions.pixabay-vault]
+verify_jwt = false
+
+[functions.freesound-proxy]
+verify_jwt = false
+
+[functions.pexels-proxy]
+verify_jwt = false
+
+[functions.status-subscribe]
+verify_jwt = false
+
+[functions.telemetry-heartbeat]
+verify_jwt = false
+
+[functions.device-session]
+verify_jwt = false
+
+[functions.get-voices]
+verify_jwt = false
+
+[functions.generate-voice]
+verify_jwt = false
+
+# Cron scheduling can be configured from the Supabase dashboard for this CLI version.
