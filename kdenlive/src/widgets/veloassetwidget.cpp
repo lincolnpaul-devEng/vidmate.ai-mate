@@ -203,11 +203,14 @@ void VeloAssetWidget::setupUi()
 
     auto *voiceForm = new QFormLayout();
     m_voiceCombo = new QComboBox(voiceTab);
-    m_voiceCombo->addItem(QStringLiteral("Rachel (Warm & Natural)"), QStringLiteral("21m00Tcm4TlvDq8ikWAM"));
+    m_voiceCombo->addItem(QStringLiteral("Sarah (Mature, Reassuring, Confident)"), QStringLiteral("EXAVITQu4vr4xnSDxMaL"));
     m_voiceCombo->addItem(QStringLiteral("Adam (Deep & Authoritative)"), QStringLiteral("pNInz6obpgDQGcFmaJgB"));
-    m_voiceCombo->addItem(QStringLiteral("Antoni (Warm Storyteller)"), QStringLiteral("ErXwobaYiN019PkySvjV"));
-    m_voiceCombo->addItem(QStringLiteral("Bella (Narrative Expressive)"), QStringLiteral("EXAVITQu4vr4xnSDxMaL"));
-    m_voiceCombo->addItem(QStringLiteral("Arnold (Crisp Video Host)"), QStringLiteral("VR6AewLTigWG4xSOukaG"));
+    m_voiceCombo->addItem(QStringLiteral("Roger (Laid-Back, Casual, Resonant)"), QStringLiteral("CwhRBWXzGAHq8TQ4Fs17"));
+    m_voiceCombo->addItem(QStringLiteral("George (Warm Storyteller)"), QStringLiteral("JBFqnCBsd6RMkjVDRZzb"));
+    m_voiceCombo->addItem(QStringLiteral("Alice (Clear, Engaging Educator)"), QStringLiteral("Xb7hH8MSUJpSbSDYk0k2"));
+    m_voiceCombo->addItem(QStringLiteral("Brian (Deep, Resonant & Comforting)"), QStringLiteral("nPczCjzI2devNBz1zQrb"));
+    m_voiceCombo->addItem(QStringLiteral("Jessica (Playful, Bright & Warm)"), QStringLiteral("cgSgspJ2msm6clMCkdW9"));
+    m_voiceCombo->addItem(QStringLiteral("Laura (Enthusiast, Quirky Attitude)"), QStringLiteral("FGY2WhTYpPnrIDTdsKH5"));
     voiceForm->addRow(i18n("Speaker Voice:"), m_voiceCombo);
 
     m_voiceTextEdit = new QPlainTextEdit(voiceTab);
@@ -1144,11 +1147,18 @@ void VeloAssetWidget::generateVoiceover(const QString &text, const QString &voic
     if (m_voiceMap.contains(voiceNameOrId.toLower())) {
         voiceId = m_voiceMap.value(voiceNameOrId.toLower());
     }
+    if (voiceId.isEmpty()) {
+        voiceId = QStringLiteral("EXAVITQu4vr4xnSDxMaL");
+    }
 
     QNetworkRequest req = createSupabaseRequest(QStringLiteral("generate-voice"));
     QJsonObject body;
     body[QStringLiteral("text")] = text;
-    body[QStringLiteral("voice_id")] = voiceId.isEmpty() ? QStringLiteral("21m00Tcm4TlvDq8ikWAM") : voiceId;
+    body[QStringLiteral("voiceId")] = voiceId;
+    body[QStringLiteral("voice_id")] = voiceId;
+    body[QStringLiteral("speed")] = speed;
+    body[QStringLiteral("stability")] = stability;
+    body[QStringLiteral("similarityBoost")] = 0.75;
     body[QStringLiteral("voice_settings")] = QJsonObject{
         {QStringLiteral("stability"), stability},
         {QStringLiteral("similarity_boost"), 0.75},
@@ -1156,22 +1166,72 @@ void VeloAssetWidget::generateVoiceover(const QString &text, const QString &voic
     };
 
     QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson());
-    connect(reply, &QNetworkReply::finished, this, [this, reply, text, onComplete]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, onComplete]() {
         reply->deleteLater();
-        if (reply->error() == QNetworkReply::NoError) {
-            QByteArray audioData = reply->readAll();
+        QByteArray respBytes = reply->readAll();
+        QJsonDocument doc = QJsonDocument::fromJson(respBytes);
+
+        if (doc.isObject()) {
+            QJsonObject root = doc.object();
+            bool success = root[QStringLiteral("success")].toBool(false);
+            if (!success) {
+                QString err = root[QStringLiteral("error")].toString();
+                if (err.isEmpty()) err = reply->errorString();
+                m_voiceStatusLabel->setText(i18n("Voice synthesis failed: %1", err));
+                if (onComplete) onComplete(QString(), 0.0);
+                return;
+            }
+
+            QString urlStr = root[QStringLiteral("url")].toString();
+            double duration = root[QStringLiteral("duration")].toDouble(root[QStringLiteral("durationSeconds")].toDouble(5.0));
             QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
             QString outPath = QStringLiteral("%1/voiceover_%2.mp3").arg(tmpDir).arg(QDateTime::currentMSecsSinceEpoch());
 
+            if (urlStr.startsWith(QStringLiteral("data:audio"))) {
+                int commaIdx = urlStr.indexOf(QLatin1Char(','));
+                QByteArray b64 = urlStr.mid(commaIdx + 1).toUtf8();
+                QByteArray audioBytes = QByteArray::fromBase64(b64);
+                QFile f(outPath);
+                if (f.open(QIODevice::WriteOnly)) {
+                    f.write(audioBytes);
+                    f.close();
+                    if (onComplete) onComplete(outPath, duration);
+                    return;
+                }
+            } else if (urlStr.startsWith(QStringLiteral("http"))) {
+                QNetworkRequest dlReq((QUrl(urlStr)));
+                QNetworkReply *dlReply = m_nam->get(dlReq);
+                connect(dlReply, &QNetworkReply::finished, this, [this, dlReply, outPath, duration, onComplete]() {
+                    dlReply->deleteLater();
+                    if (dlReply->error() == QNetworkReply::NoError) {
+                        QFile f(outPath);
+                        if (f.open(QIODevice::WriteOnly)) {
+                            f.write(dlReply->readAll());
+                            f.close();
+                            if (onComplete) onComplete(outPath, duration);
+                            return;
+                        }
+                    }
+                    if (onComplete) onComplete(QString(), 0.0);
+                });
+                return;
+            }
+        }
+
+        // Fallback for direct binary response
+        if (reply->error() == QNetworkReply::NoError && !respBytes.isEmpty()) {
+            QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+            QString outPath = QStringLiteral("%1/voiceover_%2.mp3").arg(tmpDir).arg(QDateTime::currentMSecsSinceEpoch());
             QFile f(outPath);
             if (f.open(QIODevice::WriteOnly)) {
-                f.write(audioData);
+                f.write(respBytes);
                 f.close();
-
                 if (onComplete) onComplete(outPath, 5.0);
                 return;
             }
         }
+
+        m_voiceStatusLabel->setText(i18n("Voice synthesis failed: %1", reply->errorString()));
         if (onComplete) onComplete(QString(), 0.0);
     });
 }

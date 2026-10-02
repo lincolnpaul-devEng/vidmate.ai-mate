@@ -52,7 +52,9 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env.local")
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env")
                 << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env");
+                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env")
+                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env.local")
+                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env");
 
     for (const QString &path : searchPaths) {
         QFile file(path);
@@ -114,8 +116,35 @@ void AIDispatcher::setAgentSettings(const AIAgentSettings &settings)
 
 void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &models)> callback)
 {
+    auto generateFallbackModels = []() -> QJsonArray {
+        QJsonArray list;
+        auto addM = [&list](const QString &id, const QString &name, const QString &provider, int ctx) {
+            QJsonObject obj;
+            obj[QStringLiteral("id")] = id;
+            obj[QStringLiteral("name")] = name;
+            obj[QStringLiteral("provider")] = provider;
+            obj[QStringLiteral("contextLength")] = ctx;
+            list.append(obj);
+        };
+        addM(QStringLiteral("deepseek/deepseek-chat"), QStringLiteral("DeepSeek Chat V3"), QStringLiteral("openrouter"), 65536);
+        addM(QStringLiteral("openai/gpt-4o"), QStringLiteral("OpenAI GPT-4o"), QStringLiteral("openrouter"), 128000);
+        addM(QStringLiteral("anthropic/claude-3.5-sonnet"), QStringLiteral("Anthropic Claude 3.5 Sonnet"), QStringLiteral("openrouter"), 200000);
+        addM(QStringLiteral("meta-llama/llama-3.3-70b-instruct"), QStringLiteral("Meta Llama 3.3 70B Instruct"), QStringLiteral("openrouter"), 131072);
+        addM(QStringLiteral("mistralai/mistral-small-24b-instruct-2501"), QStringLiteral("Mistral Small 24B"), QStringLiteral("openrouter"), 32768);
+        addM(QStringLiteral("groq/llama-3.3-70b-versatile"), QStringLiteral("Groq: Llama 3.3 70B Versatile"), QStringLiteral("groq"), 131072);
+        addM(QStringLiteral("groq/deepseek-r1-distill-llama-70b"), QStringLiteral("Groq: DeepSeek R1 Distill 70B"), QStringLiteral("groq"), 131072);
+        addM(QStringLiteral("groq/mixtral-8x7b-32768"), QStringLiteral("Groq: Mixtral 8x7B"), QStringLiteral("groq"), 32768);
+        return list;
+    };
+
     if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
-        if (callback) callback(QJsonArray());
+        loadEnvConfig();
+    }
+
+    if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
+        QJsonArray fallback = generateFallbackModels();
+        Q_EMIT modelsLoaded(fallback);
+        if (callback) callback(fallback);
         return;
     }
 
@@ -129,19 +158,24 @@ void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &mod
     body[QStringLiteral("action")] = QStringLiteral("models");
 
     QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson());
-    connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, callback, generateFallbackModels]() {
         reply->deleteLater();
         if (reply->error() == QNetworkReply::NoError) {
             QByteArray respData = reply->readAll();
             QJsonDocument doc = QJsonDocument::fromJson(respData);
             if (doc.isObject()) {
                 QJsonArray modelsArr = doc.object()[QStringLiteral("data")].toArray();
-                Q_EMIT modelsLoaded(modelsArr);
-                if (callback) callback(modelsArr);
-                return;
+                if (!modelsArr.isEmpty()) {
+                    Q_EMIT modelsLoaded(modelsArr);
+                    if (callback) callback(modelsArr);
+                    return;
+                }
             }
         }
-        if (callback) callback(QJsonArray());
+        // If request failed or returned empty array, provide fallback models so UI never hangs
+        QJsonArray fallback = generateFallbackModels();
+        Q_EMIT modelsLoaded(fallback);
+        if (callback) callback(fallback);
     });
 }
 
