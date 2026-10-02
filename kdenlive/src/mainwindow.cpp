@@ -821,6 +821,7 @@ void MainWindow::init()
     QAction *allFrame = new QAction(i18n("All Frames"), thumbGroup);
     allFrame->setData(QStringLiteral("1"));
     allFrame->setCheckable(true);
+    allFrame->setChecked(true);
     thumbsMenu->addAction(allFrame);
     QAction *noFrame = new QAction(i18n("No Thumbnails"), thumbGroup);
     noFrame->setData(QStringLiteral("3"));

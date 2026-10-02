@@ -267,7 +267,8 @@ void TimelineWidget::showHeaderMenu()
     }
     if (!isAudio) {
         // Video track
-        int currentThumbs = timelineController.getActiveTrackProperty(QStringLiteral("kdenlive:thumbs_format")).toInt();
+        QVariant thumbsProp = timelineController.getActiveTrackProperty(QStringLiteral("kdenlive:thumbs_format"));
+        int currentThumbs = (thumbsProp.isNull() || !thumbsProp.isValid() || thumbsProp.toString().isEmpty()) ? 1 : thumbsProp.toInt();
         QList<QAction *> actions = m_thumbsMenu->actions();
         for (QAction *ac : std::as_const(actions)) {
             if (ac->data().toInt() == currentThumbs) {
