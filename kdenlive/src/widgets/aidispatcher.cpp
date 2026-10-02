@@ -115,70 +115,13 @@ void AIDispatcher::setAgentSettings(const AIAgentSettings &settings)
 
 void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &models)> callback)
 {
-    auto generateFallbackModels = []() -> QJsonArray {
-        QJsonArray list;
-        auto addM = [&list](const QString &id, const QString &name, const QString &provider, int ctx) {
-            QJsonObject obj;
-            obj[QStringLiteral("id")] = id;
-            obj[QStringLiteral("name")] = name;
-            obj[QStringLiteral("provider")] = provider;
-            obj[QStringLiteral("contextLength")] = ctx;
-            list.append(obj);
-        };
-
-        // DeepSeek
-        addM(QStringLiteral("deepseek/deepseek-chat"), QStringLiteral("DeepSeek Chat V3"), QStringLiteral("openrouter"), 65536);
-        addM(QStringLiteral("deepseek/deepseek-r1"), QStringLiteral("DeepSeek R1 Reasoning"), QStringLiteral("openrouter"), 65536);
-        addM(QStringLiteral("deepseek/deepseek-coder"), QStringLiteral("DeepSeek Coder V2.5"), QStringLiteral("openrouter"), 131072);
-
-        // OpenAI
-        addM(QStringLiteral("openai/gpt-4o"), QStringLiteral("OpenAI GPT-4o"), QStringLiteral("openrouter"), 128000);
-        addM(QStringLiteral("openai/gpt-4o-mini"), QStringLiteral("OpenAI GPT-4o Mini"), QStringLiteral("openrouter"), 128000);
-        addM(QStringLiteral("openai/o1"), QStringLiteral("OpenAI o1 Reasoning"), QStringLiteral("openrouter"), 200000);
-        addM(QStringLiteral("openai/o1-mini"), QStringLiteral("OpenAI o1-mini"), QStringLiteral("openrouter"), 128000);
-        addM(QStringLiteral("openai/o3-mini"), QStringLiteral("OpenAI o3-mini"), QStringLiteral("openrouter"), 200000);
-
-        // Anthropic
-        addM(QStringLiteral("anthropic/claude-3.5-sonnet"), QStringLiteral("Anthropic Claude 3.5 Sonnet"), QStringLiteral("openrouter"), 200000);
-        addM(QStringLiteral("anthropic/claude-3.5-haiku"), QStringLiteral("Anthropic Claude 3.5 Haiku"), QStringLiteral("openrouter"), 200000);
-        addM(QStringLiteral("anthropic/claude-3-opus"), QStringLiteral("Anthropic Claude 3 Opus"), QStringLiteral("openrouter"), 200000);
-
-        // Meta Llama
-        addM(QStringLiteral("meta-llama/llama-3.3-70b-instruct"), QStringLiteral("Meta Llama 3.3 70B Instruct"), QStringLiteral("openrouter"), 131072);
-        addM(QStringLiteral("meta-llama/llama-3.1-405b-instruct"), QStringLiteral("Meta Llama 3.1 405B Instruct"), QStringLiteral("openrouter"), 131072);
-        addM(QStringLiteral("meta-llama/llama-3.1-8b-instruct"), QStringLiteral("Meta Llama 3.1 8B Instruct"), QStringLiteral("openrouter"), 131072);
-        addM(QStringLiteral("meta-llama/llama-3.2-11b-vision-instruct"), QStringLiteral("Meta Llama 3.2 11B Vision"), QStringLiteral("openrouter"), 131072);
-
-        // Google Gemini
-        addM(QStringLiteral("google/gemini-2.0-flash-exp:free"), QStringLiteral("Google Gemini 2.0 Flash (Free)"), QStringLiteral("openrouter"), 1048576);
-        addM(QStringLiteral("google/gemini-pro-1.5"), QStringLiteral("Google Gemini 1.5 Pro"), QStringLiteral("openrouter"), 2000000);
-        addM(QStringLiteral("google/gemini-flash-1.5"), QStringLiteral("Google Gemini 1.5 Flash"), QStringLiteral("openrouter"), 1000000);
-
-        // Mistral
-        addM(QStringLiteral("mistralai/mistral-large-2411"), QStringLiteral("Mistral Large 2411"), QStringLiteral("openrouter"), 128000);
-        addM(QStringLiteral("mistralai/mistral-small-24b-instruct-2501"), QStringLiteral("Mistral Small 24B"), QStringLiteral("openrouter"), 32768);
-        addM(QStringLiteral("mistralai/codestral-2501"), QStringLiteral("Mistral Codestral"), QStringLiteral("openrouter"), 256000);
-
-        // Qwen
-        addM(QStringLiteral("qwen/qwen-2.5-72b-instruct"), QStringLiteral("Qwen 2.5 72B Instruct"), QStringLiteral("openrouter"), 131072);
-        addM(QStringLiteral("qwen/qwen-2.5-coder-32b-instruct"), QStringLiteral("Qwen 2.5 Coder 32B"), QStringLiteral("openrouter"), 32768);
-
-        // Groq
-        addM(QStringLiteral("groq/llama-3.3-70b-versatile"), QStringLiteral("Groq: Llama 3.3 70B Versatile"), QStringLiteral("groq"), 131072);
-        addM(QStringLiteral("groq/deepseek-r1-distill-llama-70b"), QStringLiteral("Groq: DeepSeek R1 Distill 70B"), QStringLiteral("groq"), 131072);
-        addM(QStringLiteral("groq/mixtral-8x7b-32768"), QStringLiteral("Groq: Mixtral 8x7B"), QStringLiteral("groq"), 32768);
-        addM(QStringLiteral("groq/qwen-2.5-32b"), QStringLiteral("Groq: Qwen 2.5 32B"), QStringLiteral("groq"), 131072);
-
-        return list;
-    };
-
-    auto parseOpenRouterDirect = [this, callback, generateFallbackModels]() {
+    auto parseOpenRouterDirect = [this, callback]() {
         QUrl orUrl(QStringLiteral("https://openrouter.ai/api/v1/models"));
         QNetworkRequest orReq(orUrl);
         orReq.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("VidMate-AI-Agent/2.0"));
 
         QNetworkReply *orReply = m_nam->get(orReq);
-        connect(orReply, &QNetworkReply::finished, this, [this, orReply, callback, generateFallbackModels]() {
+        connect(orReply, &QNetworkReply::finished, this, [this, orReply, callback]() {
             orReply->deleteLater();
             if (orReply->error() == QNetworkReply::NoError) {
                 QByteArray respData = orReply->readAll();
@@ -200,7 +143,7 @@ void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &mod
                             normalized.append(modelObj);
                         }
                         if (!normalized.isEmpty()) {
-                            qDebug() << "[AIDispatcher] Loaded" << normalized.size() << "models directly from OpenRouter.";
+                            qDebug() << "[AIDispatcher] Loaded" << normalized.size() << "live models directly from OpenRouter.";
                             Q_EMIT modelsLoaded(normalized);
                             if (callback) callback(normalized);
                             return;
@@ -208,9 +151,9 @@ void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &mod
                     }
                 }
             }
-            QJsonArray fallback = generateFallbackModels();
-            Q_EMIT modelsLoaded(fallback);
-            if (callback) callback(fallback);
+            qWarning() << "[AIDispatcher] Failed to load live models:" << orReply->errorString();
+            Q_EMIT modelsLoaded(QJsonArray());
+            if (callback) callback(QJsonArray());
         });
     };
 
@@ -241,14 +184,14 @@ void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &mod
             if (doc.isObject()) {
                 QJsonArray modelsArr = doc.object()[QStringLiteral("data")].toArray();
                 if (!modelsArr.isEmpty()) {
-                    qDebug() << "[AIDispatcher] Loaded" << modelsArr.size() << "models from Supabase ai-proxy.";
+                    qDebug() << "[AIDispatcher] Loaded" << modelsArr.size() << "live models from Supabase ai-proxy.";
                     Q_EMIT modelsLoaded(modelsArr);
                     if (callback) callback(modelsArr);
                     return;
                 }
             }
         }
-        // If Supabase ai-proxy failed, query OpenRouter public endpoint directly
+        // If Supabase ai-proxy returned error, query OpenRouter live endpoint directly
         parseOpenRouterDirect();
     });
 }

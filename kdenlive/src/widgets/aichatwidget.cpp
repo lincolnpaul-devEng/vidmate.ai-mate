@@ -17,9 +17,9 @@
 
 AIChatWidget::AIChatWidget(QWidget *parent)
     : QWidget(parent)
+    , m_statusTimer(new QTimer(this))
     , m_dispatcher(new AIDispatcher(this))
     , m_router(new AICommandRouter(this))
-    , m_statusTimer(new QTimer(this))
 {
     setupUi();
 
@@ -608,7 +608,11 @@ void AIChatWidget::slotModelsLoaded(const QJsonArray &models)
     slotFilterModels();
 
     if (m_modelsStatusLabel) {
-        m_modelsStatusLabel->setText(i18n("Loaded %1 live models from AI proxy.", m_dynamicModels.size()));
+        if (m_dynamicModels.isEmpty()) {
+            m_modelsStatusLabel->setText(i18n("No live models loaded. Check connection and click Refresh."));
+        } else {
+            m_modelsStatusLabel->setText(i18n("Loaded %1 live models from AI proxy.", m_dynamicModels.size()));
+        }
     }
 
     // Populate creative dropdowns with dynamic multi-modal models
