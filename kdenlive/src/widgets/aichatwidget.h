@@ -21,13 +21,70 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QVector>
 #include "aidispatcher.h"
 
 class AICommandRouter;
 
 /**
+ * @struct ChatMessageEntry
+ * @brief Retained message entry for history tracking, tool grouping, and virtual windowing.
+ * Inspired by Velo's message-groups.ts architecture.
+ */
+struct ChatMessageEntry {
+    enum Role { User, Assistant, Tool, System };
+    Role role{System};
+    QString text;
+    // Tool-specific fields
+    QString toolName;
+    QString toolArgsSummary;
+    bool toolSuccess{true};
+    QString toolError;
+    // Thinking block content (parsed from <thinking> tags in assistant responses)
+    QString thinkingText;
+    qint64 timestamp{0};
+};
+
+/**
+ * @struct ToolOutcomeEntry
+ * @brief Ring buffer entry for the diagnostic inspector's tool outcome history.
+ * Mirrors Velo's AgentRunInspector tool outcome display.
+ */
+struct ToolOutcomeEntry {
+    QString toolName;
+    QString argsSummary;
+    bool success{true};
+    QString error;
+    qint64 timestamp{0};
+};
+
+/**
+ * @struct SessionMetrics
+ * @brief Accumulated session metrics for the diagnostic inspector dialog.
+ * Mirrors Velo's AgentRunInspector telemetry breakdown.
+ */
+struct SessionMetrics {
+    int totalRequests{0};
+    int totalInputTokens{0};
+    int totalOutputTokens{0};
+    int totalRetries{0};
+    int totalToolCalls{0};
+    int successfulTools{0};
+    int failedTools{0};
+    qint64 totalLatencyMs{0};
+    // Per-request metrics (last request)
+    int lastInputTokens{0};
+    int lastOutputTokens{0};
+    qint64 lastLatencyMs{0};
+    QString lastModel;
+};
+
+/**
  * @class AIChatWidget
- * @brief Autonomous Video Editor Agent Workspace with real-time feedback & Velo settings.
+ * @brief Autonomous Video Editor Agent Workspace with Velo-inspired real-time feedback,
+ * tool call grouping, pulsing animations, thinking phrases, diagnostic inspector,
+ * and auto-follow scroll.
  */
 class AIChatWidget : public QWidget
 {
@@ -64,6 +121,7 @@ private Q_SLOTS:
     void slotRefreshModels();
     void slotModelsLoaded(const QJsonArray &models);
     void slotMetricsUpdated(int totalTokens, qint64 latencyMs, const QString &modelId);
+    void slotShowInspector();
 
 private:
     void setupUi();
@@ -72,6 +130,16 @@ private:
     void updateModeBadge();
     void updateMetricsDisplay(int totalTokens, qint64 latencyMs, const QString &modelId);
     QString formatMarkdownHtml(const QString &rawText);
+
+    // Velo-inspired message management
+    void rebuildMessageView();
+    bool isScrollNearBottom() const;
+    void scrollToBottomIfFollowing();
+
+    // Velo-inspired tool argument summarizer (prioritized key extraction, UUID truncation)
+    static QString extractToolArgSummary(const QString &paramsJson);
+    // Film production thinking phrases (deterministic per-turn selection)
+    static const char *thinkingPhrase(int seed);
 
     QStackedWidget *m_stackedWidget{nullptr};
 
@@ -83,6 +151,7 @@ private:
     QPushButton *m_settingsBtn{nullptr};
     QPushButton *m_clearBtn{nullptr};
     QPushButton *m_assetStudioBtn{nullptr};
+    QPushButton *m_inspectorBtn{nullptr};
     QLabel *m_modeBadge{nullptr};
     QComboBox *m_engineTargetSelector{nullptr};
 
@@ -92,13 +161,14 @@ private:
     QLabel *m_tokensTag{nullptr};
     QLabel *m_latencyTag{nullptr};
 
-    // Live Run Status Bar
+    // Live Run Status Bar with pulsing animation
     QWidget *m_liveStatusBar{nullptr};
     QLabel *m_liveStatusDot{nullptr};
     QLabel *m_liveStatusText{nullptr};
     QLabel *m_liveStatusTimer{nullptr};
     QTimer *m_statusTimer{nullptr};
     QElapsedTimer m_elapsedTimer;
+    int m_thinkingSeed{0};
 
     // Proposal Card (in Ask Mode)
     QWidget *m_proposalCard{nullptr};
@@ -107,6 +177,17 @@ private:
     QPushButton *m_applyProposalBtn{nullptr};
     QPushButton *m_rejectProposalBtn{nullptr};
     QJsonObject m_pendingProposalAction;
+
+    // ── Message History & Grouping (Velo message-groups.ts pattern) ─────────
+    QVector<ChatMessageEntry> m_messages;
+    static constexpr int MESSAGE_WINDOW_SIZE = 60;
+    static constexpr int TOOL_GROUP_MIN = 3;
+    bool m_autoFollow{true};
+
+    // ── Diagnostic Inspector Data (Velo AgentRunInspector pattern) ──────────
+    SessionMetrics m_sessionMetrics;
+    QVector<ToolOutcomeEntry> m_toolOutcomes;
+    static constexpr int MAX_TOOL_OUTCOMES = 12;
 
     // ── Settings Page Widgets ───────────────────────────────────────────────
     QWidget *m_settingsPage{nullptr};
