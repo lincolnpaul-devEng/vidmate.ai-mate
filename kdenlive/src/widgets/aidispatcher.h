@@ -49,6 +49,9 @@ public:
     void setModel(const QString &model);
     void loadEnvConfig(const QString &customPath = QString());
 
+    /** @brief Dynamically fetches all live models from OpenRouter and Groq via Supabase ai-proxy */
+    void fetchAvailableModels(std::function<void(const QJsonArray &models)> callback = nullptr);
+
     AIAgentSettings agentSettings() const { return m_settings; }
     void setAgentSettings(const AIAgentSettings &settings);
 
@@ -63,6 +66,7 @@ Q_SIGNALS:
     void requestStarted();
     void requestFinished();
     void agentSettingsChanged(const AIAgentSettings &settings);
+    void modelsLoaded(const QJsonArray &models);
 
 private Q_SLOTS:
     void slotReplyFinished(QNetworkReply *reply);

@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
 #else
         return manager.load(argc, argv, args);
 #endif
-        //exec() is called within the GuiApplicationManager
+        //exec() is called within the GuiApplicationMnger
     }
 } // main
 #ifdef Q_OS_WIN

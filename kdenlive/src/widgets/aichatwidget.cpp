@@ -31,11 +31,15 @@ AIChatWidget::AIChatWidget(QWidget *parent)
     });
     connect(m_dispatcher, &AIDispatcher::requestStarted, this, &AIChatWidget::slotRequestStarted);
     connect(m_dispatcher, &AIDispatcher::requestFinished, this, &AIChatWidget::slotRequestFinished);
+    connect(m_dispatcher, &AIDispatcher::modelsLoaded, this, &AIChatWidget::slotModelsLoaded);
 
     connect(m_router, &AICommandRouter::executionFinished, this, &AIChatWidget::slotExecutionFinished);
     connect(m_router, &AICommandRouter::dataOutput, this, &AIChatWidget::slotToolDataOutput);
 
     connect(m_statusTimer, &QTimer::timeout, this, &AIChatWidget::slotUpdateLiveTimer);
+
+    // Initial fetch of live models from ai-proxy
+    m_dispatcher->fetchAvailableModels();
 }
 
 void AIChatWidget::setupUi()
@@ -288,7 +292,7 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     modeLayout->addWidget(m_modeYoloRadio);
     formLayout->addWidget(modeGroup);
 
-    // 2. Video Editing Model Group
+    // 2. Video Editing Model Group (Live dynamic models from ai-proxy)
     auto *modelGroup = new QGroupBox(i18n("Specialized Video Editing Model"), formContainer);
     auto *modelLayout = new QVBoxLayout(modelGroup);
 
@@ -302,23 +306,24 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     m_providerFilter->addItem(i18n("All Providers"), QStringLiteral("all"));
     m_providerFilter->addItem(QStringLiteral("OpenRouter"), QStringLiteral("openrouter"));
     m_providerFilter->addItem(QStringLiteral("Groq"), QStringLiteral("groq"));
+    connect(m_providerFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotFilterModels);
+
+    m_refreshModelsBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Refresh"), modelGroup);
+    connect(m_refreshModelsBtn, &QPushButton::clicked, this, &AIChatWidget::slotRefreshModels);
 
     filterLayout->addWidget(m_modelSearchInput, 1);
     filterLayout->addWidget(m_providerFilter);
+    filterLayout->addWidget(m_refreshModelsBtn);
     modelLayout->addLayout(filterLayout);
 
     m_editingModelSelector = new QComboBox(modelGroup);
-    m_allAvailableModels = {
-        QStringLiteral("Auto (Default AI Proxy Resolution)"),
-        QStringLiteral("anthropic/claude-3.7-sonnet"),
-        QStringLiteral("openai/gpt-4o"),
-        QStringLiteral("deepseek/deepseek-r1"),
-        QStringLiteral("meta-llama/llama-3.3-70b-instruct"),
-        QStringLiteral("mistralai/mistral-large"),
-        QStringLiteral("groq/llama-3.3-70b-versatile")
-    };
-    m_editingModelSelector->addItems(m_allAvailableModels);
+    m_editingModelSelector->addItem(QStringLiteral("Auto (Default AI Proxy Resolution)"), QStringLiteral("auto"));
     modelLayout->addWidget(m_editingModelSelector);
+
+    m_modelsStatusLabel = new QLabel(i18n("Fetching live models from AI proxy..."), modelGroup);
+    m_modelsStatusLabel->setStyleSheet(QStringLiteral("color: palette(text-muted); font-size: 10.5px;"));
+    modelLayout->addWidget(m_modelsStatusLabel);
+
     formLayout->addWidget(modelGroup);
 
     // 3. Creative AI Multi-Modal Generation Models
@@ -327,23 +332,23 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     creativeLayout->setLabelAlignment(Qt::AlignLeft);
 
     m_imageModelSelector = new QComboBox(creativeGroup);
-    m_imageModelSelector->addItems({QStringLiteral("Auto (AI Proxy)"), QStringLiteral("black-forest-labs/flux-1-schnell"), QStringLiteral("stabilityai/stable-diffusion-xl-base-1.0")});
+    m_imageModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Image Model:"), m_imageModelSelector);
 
     m_videoModelSelector = new QComboBox(creativeGroup);
-    m_videoModelSelector->addItems({QStringLiteral("Auto (AI Proxy)"), QStringLiteral("kling/v1.5-pro"), QStringLiteral("runway/gen3-alpha")});
+    m_videoModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Video Model:"), m_videoModelSelector);
 
     m_musicModelSelector = new QComboBox(creativeGroup);
-    m_musicModelSelector->addItems({QStringLiteral("Auto (AI Proxy)"), QStringLiteral("suno/chirp-v3.5"), QStringLiteral("facebook/musicgen-large")});
+    m_musicModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Music Model:"), m_musicModelSelector);
 
     m_voiceModelSelector = new QComboBox(creativeGroup);
-    m_voiceModelSelector->addItems({QStringLiteral("ElevenLabs (Rachel)"), QStringLiteral("ElevenLabs (Adam)"), QStringLiteral("ElevenLabs (Antoni)"), QStringLiteral("ElevenLabs (Bella)"), QStringLiteral("OpenAI TTS (alloy)")});
+    m_voiceModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Voiceover Model:"), m_voiceModelSelector);
 
     m_soundModelSelector = new QComboBox(creativeGroup);
-    m_soundModelSelector->addItems({QStringLiteral("Auto (Freesound + ElevenLabs SFX)"), QStringLiteral("freesound/neural-search"), QStringLiteral("elevenlabs/sound-effects")});
+    m_soundModelSelector->addItem(QStringLiteral("Auto (Freesound + ElevenLabs SFX)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("SFX Model:"), m_soundModelSelector);
 
     formLayout->addWidget(creativeGroup);
@@ -416,9 +421,93 @@ void AIChatWidget::slotToggleSettings()
 {
     if (m_stackedWidget->currentIndex() == 0) {
         m_stackedWidget->setCurrentIndex(1);
+        if (m_dynamicModels.isEmpty()) {
+            slotRefreshModels();
+        }
     } else {
         slotSaveSettings();
         m_stackedWidget->setCurrentIndex(0);
+    }
+}
+
+void AIChatWidget::slotRefreshModels()
+{
+    if (m_modelsStatusLabel) {
+        m_modelsStatusLabel->setText(i18n("Fetching live models from AI proxy..."));
+    }
+    m_dispatcher->fetchAvailableModels();
+}
+
+void AIChatWidget::slotModelsLoaded(const QJsonArray &models)
+{
+    m_dynamicModels.clear();
+
+    for (const auto &val : models) {
+        QJsonObject obj = val.toObject();
+        DynamicModelInfo info;
+        info.id = obj[QStringLiteral("id")].toString();
+        info.name = obj[QStringLiteral("name")].toString();
+        info.provider = obj[QStringLiteral("provider")].toString().toLower();
+        info.contextLength = obj[QStringLiteral("contextLength")].toInt(0);
+
+        if (!info.id.isEmpty()) {
+            m_dynamicModels.append(info);
+        }
+    }
+
+    slotFilterModels();
+
+    if (m_modelsStatusLabel) {
+        m_modelsStatusLabel->setText(i18n("Loaded %1 live models from AI proxy.", m_dynamicModels.size()));
+    }
+
+    // Populate creative dropdowns with dynamic multi-modal models
+    m_imageModelSelector->clear();
+    m_imageModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
+    m_videoModelSelector->clear();
+    m_videoModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
+    m_musicModelSelector->clear();
+    m_musicModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
+    m_voiceModelSelector->clear();
+    m_voiceModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
+
+    for (const auto &m : m_dynamicModels) {
+        QString display = QStringLiteral("[%1] %2").arg(m.provider.toUpper(), m.name.isEmpty() ? m.id : m.name);
+        m_imageModelSelector->addItem(display, m.id);
+        m_videoModelSelector->addItem(display, m.id);
+        m_musicModelSelector->addItem(display, m.id);
+        m_voiceModelSelector->addItem(display, m.id);
+    }
+}
+
+void AIChatWidget::slotFilterModels()
+{
+    QString query = m_modelSearchInput ? m_modelSearchInput->text().trimmed().toLower() : QString();
+    QString provider = m_providerFilter ? m_providerFilter->currentData().toString() : QStringLiteral("all");
+
+    QString currentSelectedId = m_editingModelSelector->currentData().toString();
+    m_editingModelSelector->clear();
+    m_editingModelSelector->addItem(QStringLiteral("Auto (Default AI Proxy Resolution)"), QStringLiteral("auto"));
+
+    int matched = 0;
+    for (const auto &m : m_dynamicModels) {
+        if (provider != QStringLiteral("all") && m.provider != provider) {
+            continue;
+        }
+        if (!query.isEmpty() && !m.id.toLower().contains(query) && !m.name.toLower().contains(query)) {
+            continue;
+        }
+
+        QString ctxStr = m.contextLength > 0 ? QStringLiteral(" (%1k ctx)").arg(m.contextLength / 1000) : QString();
+        QString display = QStringLiteral("[%1] %2%3").arg(m.provider.toUpper(), m.name.isEmpty() ? m.id : m.name, ctxStr);
+        m_editingModelSelector->addItem(display, m.id);
+        matched++;
+    }
+
+    // Restore previous selection if possible
+    int idx = m_editingModelSelector->findData(currentSelectedId);
+    if (idx >= 0) {
+        m_editingModelSelector->setCurrentIndex(idx);
     }
 }
 
@@ -426,16 +515,16 @@ void AIChatWidget::slotSaveSettings()
 {
     AIAgentSettings s;
     s.mode = m_modeYoloRadio->isChecked() ? QStringLiteral("yolo") : QStringLiteral("ask");
-    s.editingModelId = m_editingModelSelector->currentText();
-    if (s.editingModelId.startsWith(QStringLiteral("Auto"))) {
+    s.editingModelId = m_editingModelSelector->currentData().toString();
+    if (s.editingModelId.isEmpty()) {
         s.editingModelId = QStringLiteral("auto");
     }
     s.provider = m_providerFilter->currentData().toString();
-    s.imageModel = m_imageModelSelector->currentText();
-    s.videoModel = m_videoModelSelector->currentText();
-    s.musicModel = m_musicModelSelector->currentText();
-    s.voiceModel = m_voiceModelSelector->currentText();
-    s.soundModel = m_soundModelSelector->currentText();
+    s.imageModel = m_imageModelSelector->currentData().toString();
+    s.videoModel = m_videoModelSelector->currentData().toString();
+    s.musicModel = m_musicModelSelector->currentData().toString();
+    s.voiceModel = m_voiceModelSelector->currentData().toString();
+    s.soundModel = m_soundModelSelector->currentData().toString();
 
     if (m_mgSpeedRadio->isChecked()) s.mgTier = QStringLiteral("speed");
     else if (m_mgQualityRadio->isChecked()) s.mgTier = QStringLiteral("quality");
@@ -447,16 +536,6 @@ void AIChatWidget::slotSaveSettings()
 
     m_dispatcher->setAgentSettings(s);
     updateModeBadge();
-}
-
-void AIChatWidget::slotFilterModels(const QString &query)
-{
-    m_editingModelSelector->clear();
-    for (const QString &m : m_allAvailableModels) {
-        if (query.isEmpty() || m.contains(query, Qt::CaseInsensitive)) {
-            m_editingModelSelector->addItem(m);
-        }
-    }
 }
 
 QString AIChatWidget::formatMarkdownHtml(const QString &rawText)

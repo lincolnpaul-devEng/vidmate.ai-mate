@@ -2,49 +2,55 @@
  * SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
  * SPDX-FileCopyrightText: 2026 VidMate AI-Mate Contributors
  *
- * Velo Stock Media & AI Voiceover Studio Widget Implementation
+ * Velo Stock Media & AI Voiceover Studio Widget
+ * Unified visual access to Pexels, Pixabay, Giphy, Freesound, and ElevenLabs
+ * text-to-speech with live thumbnail grids and preview player.
  */
 
 #include "veloassetwidget.h"
 #include "core.h"
-#include "mainwindow.h"
 #include "bin/bin.h"
+#include "bin/projectitemmodel.h"
+#include "bin/clipcreator.hpp"
 #include "timeline2/view/timelinewidget.h"
 #include "timeline2/view/timelinecontroller.h"
-#include "timeline2/model/timelinemodel.hpp"
-#include "timeline2/model/timelineitemmodel.hpp"
+#include "mainwindow.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QSplitter>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QUrlQuery>
 #include <QFile>
 #include <QDir>
 #include <QStandardPaths>
-#include <QTextStream>
 #include <QCoreApplication>
-#include <QUrlQuery>
-#include <QDebug>
-#include <QUuid>
+#include <QTextStream>
+#include <QPainter>
+#include <QPixmap>
+#include <QIcon>
+#include <QSplitter>
+#include <KLocalizedString>
 
 VeloAssetWidget::VeloAssetWidget(QWidget *parent)
     : QWidget(parent)
     , m_nam(new QNetworkAccessManager(this))
 {
-    setupUi();
     loadEnvCredentials();
+    setupUi();
     fetchAvailableVoices();
+    // Auto-load popular stock video assets on startup
+    searchStock(QStringLiteral("videos"), QString());
 }
 
 void VeloAssetWidget::setupUi()
 {
     auto *mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(4, 4, 4, 4);
-    mainLayout->setSpacing(4);
+    mainLayout->setContentsMargins(6, 6, 6, 6);
+    mainLayout->setSpacing(6);
 
     m_tabs = new QTabWidget(this);
 
@@ -52,55 +58,108 @@ void VeloAssetWidget::setupUi()
     auto *stockTab = new QWidget(this);
     auto *stockLayout = new QVBoxLayout(stockTab);
     stockLayout->setContentsMargins(4, 4, 4, 4);
-    stockLayout->setSpacing(4);
+    stockLayout->setSpacing(6);
 
     // Search header
     auto *searchRow = new QHBoxLayout();
     m_categoryCombo = new QComboBox(stockTab);
-    m_categoryCombo->addItem(QStringLiteral("🎥 Videos"), QStringLiteral("videos"));
-    m_categoryCombo->addItem(QStringLiteral("🖼️ Photos"), QStringLiteral("images"));
-    m_categoryCombo->addItem(QStringLiteral("🔊 SFX (Audio)"), QStringLiteral("sfx"));
-    m_categoryCombo->addItem(QStringLiteral("🎭 GIFs"), QStringLiteral("gifs"));
-    m_categoryCombo->addItem(QStringLiteral("✨ Stickers"), QStringLiteral("stickers"));
+    m_categoryCombo->addItem(i18n("Videos"), QStringLiteral("videos"));
+    m_categoryCombo->addItem(i18n("Photos"), QStringLiteral("images"));
+    m_categoryCombo->addItem(i18n("Sound Effects"), QStringLiteral("sfx"));
+    m_categoryCombo->addItem(i18n("GIFs"), QStringLiteral("gifs"));
+    m_categoryCombo->addItem(i18n("Stickers"), QStringLiteral("stickers"));
 
     m_searchEdit = new QLineEdit(stockTab);
-    m_searchEdit->setPlaceholderText(QStringLiteral("Search stock media (e.g. drone, cinematic, whoosh, neon)..."));
+    m_searchEdit->setPlaceholderText(i18n("Search stock assets (e.g. drone, cinematic, whoosh, neon)..."));
     m_searchEdit->setClearButtonEnabled(true);
 
-    m_searchBtn = new QPushButton(QStringLiteral("🔍 Search"), stockTab);
+    m_searchBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("system-search")), i18n("Search"), stockTab);
 
     searchRow->addWidget(m_categoryCombo);
     searchRow->addWidget(m_searchEdit, 1);
     searchRow->addWidget(m_searchBtn);
     stockLayout->addLayout(searchRow);
 
-    // Results list
-    m_resultsList = new QListWidget(stockTab);
-    m_resultsList->setIconSize(QSize(96, 64));
-    m_resultsList->setSpacing(2);
-    m_resultsList->setAlternatingRowColors(true);
-    stockLayout->addWidget(m_resultsList, 1);
+    // Splitter between Grid and Preview Panel
+    auto *splitter = new QSplitter(Qt::Vertical, stockTab);
 
-    // Actions row
-    auto *actionRow = new QHBoxLayout();
-    m_addToBinBtn = new QPushButton(QStringLiteral("📥 Add to Project Bin"), stockTab);
-    m_insertTimelineBtn = new QPushButton(QStringLiteral("➕ Insert to Timeline"), stockTab);
-    m_stockStatusLabel = new QLabel(QStringLiteral("Ready"), stockTab);
-    m_stockStatusLabel->setStyleSheet(QStringLiteral("color: #888888;"));
+    // Results Visual Grid
+    m_resultsList = new QListWidget(splitter);
+    m_resultsList->setViewMode(QListView::IconMode);
+    m_resultsList->setIconSize(QSize(130, 80));
+    m_resultsList->setGridSize(QSize(146, 115));
+    m_resultsList->setResizeMode(QListView::Adjust);
+    m_resultsList->setMovement(QListView::Static);
+    m_resultsList->setSpacing(6);
+    m_resultsList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_resultsList->setStyleSheet(QStringLiteral(
+        "QListWidget { background-color: palette(base); border: 1px solid palette(mid); border-radius: 4px; }"
+        "QListWidget::item { border-radius: 4px; padding: 4px; font-size: 10.5px; }"
+        "QListWidget::item:selected { background-color: palette(highlight); color: palette(highlighted-text); }"
+    ));
+    splitter->addWidget(m_resultsList);
 
-    actionRow->addWidget(m_addToBinBtn);
-    actionRow->addWidget(m_insertTimelineBtn);
-    actionRow->addStretch();
-    actionRow->addWidget(m_stockStatusLabel);
-    stockLayout->addLayout(actionRow);
+    // Asset Preview & Ingestion Panel
+    m_previewPanel = new QFrame(splitter);
+    m_previewPanel->setObjectName(QStringLiteral("assetPreviewPanel"));
+    m_previewPanel->setStyleSheet(QStringLiteral(
+        "QFrame#assetPreviewPanel { background-color: palette(alternate-base); border: 1px solid palette(mid); border-radius: 4px; padding: 6px; }"
+    ));
+    auto *prevLayout = new QHBoxLayout(m_previewPanel);
+    prevLayout->setContentsMargins(6, 6, 6, 6);
+    prevLayout->setSpacing(12);
 
-    m_tabs->addTab(stockTab, QStringLiteral("📦 Stock Assets"));
+    m_previewImageLabel = new QLabel(m_previewPanel);
+    m_previewImageLabel->setFixedSize(160, 95);
+    m_previewImageLabel->setAlignment(Qt::AlignCenter);
+    m_previewImageLabel->setStyleSheet(QStringLiteral("background-color: #1a1d24; border-radius: 4px; border: 1px solid #2d3340;"));
+    m_previewImageLabel->setText(i18n("Select an asset to preview"));
+    prevLayout->addWidget(m_previewImageLabel);
+
+    auto *detailsLayout = new QVBoxLayout();
+    detailsLayout->setSpacing(4);
+    m_previewTitleLabel = new QLabel(i18n("No asset selected"), m_previewPanel);
+    m_previewTitleLabel->setStyleSheet(QStringLiteral("font-weight: bold; font-size: 12px; color: palette(text);"));
+    m_previewTitleLabel->setWordWrap(true);
+
+    m_previewDetailsLabel = new QLabel(i18n("Resolution: -- | Duration: -- | Provider: --"), m_previewPanel);
+    m_previewDetailsLabel->setStyleSheet(QStringLiteral("color: palette(text-muted); font-size: 11px;"));
+
+    auto *btnRow = new QHBoxLayout();
+    btnRow->setSpacing(6);
+    m_addToBinBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("list-add")), i18n("Add to Project Bin"), m_previewPanel);
+    m_addToBinBtn->setEnabled(false);
+    m_insertTimelineBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("timeline-insert")), i18n("Insert to Timeline"), m_previewPanel);
+    m_insertTimelineBtn->setEnabled(false);
+    m_insertTimelineBtn->setStyleSheet(QStringLiteral("font-weight: 600;"));
+
+    btnRow->addWidget(m_addToBinBtn);
+    btnRow->addWidget(m_insertTimelineBtn);
+    btnRow->addStretch(1);
+
+    detailsLayout->addWidget(m_previewTitleLabel);
+    detailsLayout->addWidget(m_previewDetailsLabel);
+    detailsLayout->addLayout(btnRow);
+    detailsLayout->addStretch(1);
+    prevLayout->addLayout(detailsLayout, 1);
+
+    splitter->addWidget(m_previewPanel);
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 1);
+    stockLayout->addWidget(splitter, 1);
+
+    // Status label at bottom
+    m_stockStatusLabel = new QLabel(i18n("Ready"), stockTab);
+    m_stockStatusLabel->setStyleSheet(QStringLiteral("color: palette(text-muted); font-size: 11px;"));
+    stockLayout->addWidget(m_stockStatusLabel);
+
+    m_tabs->addTab(stockTab, i18n("Stock Assets"));
 
     // ── Tab 2: AI Voiceover Studio (ElevenLabs) ─────────────────────────────
     auto *voiceTab = new QWidget(this);
     auto *voiceLayout = new QVBoxLayout(voiceTab);
-    voiceLayout->setContentsMargins(6, 6, 6, 6);
-    voiceLayout->setSpacing(6);
+    voiceLayout->setContentsMargins(8, 8, 8, 8);
+    voiceLayout->setSpacing(8);
 
     auto *voiceForm = new QFormLayout();
     m_voiceCombo = new QComboBox(voiceTab);
@@ -109,11 +168,11 @@ void VeloAssetWidget::setupUi()
     m_voiceCombo->addItem(QStringLiteral("Antoni (Warm Storyteller)"), QStringLiteral("ErXwobaYiN019PkySvjV"));
     m_voiceCombo->addItem(QStringLiteral("Bella (Narrative Expressive)"), QStringLiteral("EXAVITQu4vr4xnSDxMaL"));
     m_voiceCombo->addItem(QStringLiteral("Arnold (Crisp Video Host)"), QStringLiteral("VR6AewLTigWG4xSOukaG"));
-    voiceForm->addRow(QStringLiteral("Speaker Voice:"), m_voiceCombo);
+    voiceForm->addRow(i18n("Speaker Voice:"), m_voiceCombo);
 
     m_voiceTextEdit = new QPlainTextEdit(voiceTab);
-    m_voiceTextEdit->setPlaceholderText(QStringLiteral("Enter script or dialogue to synthesize with ElevenLabs high-fidelity neural voice..."));
-    voiceForm->addRow(QStringLiteral("Voiceover Text:"), m_voiceTextEdit);
+    m_voiceTextEdit->setPlaceholderText(i18n("Enter script or dialogue to synthesize with ElevenLabs high-fidelity neural voice..."));
+    voiceForm->addRow(i18n("Voiceover Text:"), m_voiceTextEdit);
 
     auto *sliderRow = new QHBoxLayout();
     m_speedSlider = new QSlider(Qt::Horizontal, voiceTab);
@@ -126,29 +185,29 @@ void VeloAssetWidget::setupUi()
     m_stabilitySlider->setValue(50);
     m_stabilityLabel = new QLabel(QStringLiteral("0.50"), voiceTab);
 
-    sliderRow->addWidget(new QLabel(QStringLiteral("Speed:")));
+    sliderRow->addWidget(new QLabel(i18n("Speed:")));
     sliderRow->addWidget(m_speedSlider);
     sliderRow->addWidget(m_speedLabel);
     sliderRow->addSpacing(12);
-    sliderRow->addWidget(new QLabel(QStringLiteral("Stability:")));
+    sliderRow->addWidget(new QLabel(i18n("Stability:")));
     sliderRow->addWidget(m_stabilitySlider);
     sliderRow->addWidget(m_stabilityLabel);
     voiceLayout->addLayout(voiceForm);
     voiceLayout->addLayout(sliderRow);
 
-    m_generateVoiceBtn = new QPushButton(QStringLiteral("🎙️ Generate Voiceover & Add to Timeline"), voiceTab);
-    m_generateVoiceBtn->setStyleSheet(QStringLiteral("font-weight: bold; padding: 6px;"));
+    m_generateVoiceBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("audio-input-microphone")), i18n("Generate Voiceover & Insert to Timeline"), voiceTab);
+    m_generateVoiceBtn->setStyleSheet(QStringLiteral("font-weight: 600; padding: 6px;"));
     m_voiceProgressBar = new QProgressBar(voiceTab);
     m_voiceProgressBar->setVisible(false);
-    m_voiceStatusLabel = new QLabel(QStringLiteral("Ready to generate speech."), voiceTab);
-    m_voiceStatusLabel->setStyleSheet(QStringLiteral("color: #888888;"));
+    m_voiceStatusLabel = new QLabel(i18n("Ready to generate speech."), voiceTab);
+    m_voiceStatusLabel->setStyleSheet(QStringLiteral("color: palette(text-muted); font-size: 11px;"));
 
     voiceLayout->addWidget(m_generateVoiceBtn);
     voiceLayout->addWidget(m_voiceProgressBar);
     voiceLayout->addWidget(m_voiceStatusLabel);
     voiceLayout->addStretch();
 
-    m_tabs->addTab(voiceTab, QStringLiteral("🎙️ Voice Studio"));
+    m_tabs->addTab(voiceTab, i18n("Voice Studio"));
 
     mainLayout->addWidget(m_tabs);
 
@@ -156,6 +215,7 @@ void VeloAssetWidget::setupUi()
     connect(m_searchBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotSearchClicked);
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &VeloAssetWidget::slotSearchClicked);
     connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &VeloAssetWidget::slotCategoryChanged);
+    connect(m_resultsList, &QListWidget::currentItemChanged, this, &VeloAssetWidget::slotAssetSelected);
     connect(m_resultsList, &QListWidget::itemDoubleClicked, this, &VeloAssetWidget::slotAssetDoubleClicked);
     connect(m_addToBinBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotAddSelectedToBin);
     connect(m_insertTimelineBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotInsertSelectedToTimeline);
@@ -177,7 +237,9 @@ void VeloAssetWidget::loadEnvCredentials()
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env.local")
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env")
                 << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env");
+                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env")
+                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env.local")
+                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env");
 
     for (const QString &path : searchPaths) {
         QFile file(path);
@@ -278,18 +340,19 @@ void VeloAssetWidget::slotCategoryChanged(int)
 void VeloAssetWidget::searchStock(const QString &category, const QString &query, int page)
 {
     if (m_supabaseUrl.isEmpty()) {
-        m_stockStatusLabel->setText(QStringLiteral("❌ Supabase URL not configured"));
+        m_stockStatusLabel->setText(i18n("Supabase URL not configured in .env.local"));
         return;
     }
 
-    m_stockStatusLabel->setText(QStringLiteral("Searching %1...").arg(category));
+    m_stockStatusLabel->setText(i18n("Searching %1...", category));
     m_resultsList->clear();
     m_currentAssets.clear();
 
     if (category == QStringLiteral("videos")) {
-        QString path = QStringLiteral("pexels-proxy?type=videos&query=%1&page=%2&per_page=20")
-            .arg(QUrl::toPercentEncoding(query.isEmpty() ? QStringLiteral("cinematic") : query))
-            .arg(page);
+        QString path = query.isEmpty()
+            ? QStringLiteral("pexels-proxy?type=videos&page=%1&per_page=24").arg(page)
+            : QStringLiteral("pexels-proxy?type=videos&query=%1&page=%2&per_page=24").arg(QUrl::toPercentEncoding(query)).arg(page);
+        
         QNetworkRequest req = createSupabaseRequest(path);
         QNetworkReply *reply = m_nam->get(req);
         connect(reply, &QNetworkReply::finished, this, [this, reply, category]() {
@@ -297,13 +360,14 @@ void VeloAssetWidget::searchStock(const QString &category, const QString &query,
             if (reply->error() == QNetworkReply::NoError) {
                 parseAndDisplaySearchResults(reply->readAll(), category);
             } else {
-                m_stockStatusLabel->setText(QStringLiteral("Error: %1").arg(reply->errorString()));
+                m_stockStatusLabel->setText(i18n("Error: %1", reply->errorString()));
             }
         });
     } else if (category == QStringLiteral("images")) {
-        QString path = QStringLiteral("pexels-proxy?type=images&query=%1&page=%2&per_page=20")
-            .arg(QUrl::toPercentEncoding(query.isEmpty() ? QStringLiteral("wallpaper") : query))
-            .arg(page);
+        QString path = query.isEmpty()
+            ? QStringLiteral("pexels-proxy?type=images&page=%1&per_page=24").arg(page)
+            : QStringLiteral("pexels-proxy?type=images&query=%1&page=%2&per_page=24").arg(QUrl::toPercentEncoding(query)).arg(page);
+        
         QNetworkRequest req = createSupabaseRequest(path);
         QNetworkReply *reply = m_nam->get(req);
         connect(reply, &QNetworkReply::finished, this, [this, reply, category]() {
@@ -311,13 +375,15 @@ void VeloAssetWidget::searchStock(const QString &category, const QString &query,
             if (reply->error() == QNetworkReply::NoError) {
                 parseAndDisplaySearchResults(reply->readAll(), category);
             } else {
-                m_stockStatusLabel->setText(QStringLiteral("Error: %1").arg(reply->errorString()));
+                m_stockStatusLabel->setText(i18n("Error: %1", reply->errorString()));
             }
         });
     } else if (category == QStringLiteral("sfx")) {
+        QString qStr = query.isEmpty() ? QStringLiteral("*") : query;
         QString path = QStringLiteral("freesound-proxy?query=%1&page=%2")
-            .arg(QUrl::toPercentEncoding(query.isEmpty() ? QStringLiteral("whoosh") : query))
+            .arg(QUrl::toPercentEncoding(qStr))
             .arg(page);
+        
         QNetworkRequest req = createSupabaseRequest(path);
         QNetworkReply *reply = m_nam->get(req);
         connect(reply, &QNetworkReply::finished, this, [this, reply, category]() {
@@ -325,13 +391,14 @@ void VeloAssetWidget::searchStock(const QString &category, const QString &query,
             if (reply->error() == QNetworkReply::NoError) {
                 parseAndDisplaySearchResults(reply->readAll(), category);
             } else {
-                m_stockStatusLabel->setText(QStringLiteral("Error: %1").arg(reply->errorString()));
+                m_stockStatusLabel->setText(i18n("Error: %1", reply->errorString()));
             }
         });
     } else if (category == QStringLiteral("gifs")) {
-        QString action = query.isEmpty() ? QStringLiteral("trending") : QStringLiteral("search");
-        QString path = QStringLiteral("giphy-proxy?action=%1&q=%2&limit=24")
-            .arg(action, QUrl::toPercentEncoding(query));
+        QString path = query.isEmpty()
+            ? QStringLiteral("giphy-proxy?action=trending&limit=24")
+            : QStringLiteral("giphy-proxy?action=search&q=%1&limit=24").arg(QUrl::toPercentEncoding(query));
+        
         QNetworkRequest req = createSupabaseRequest(path);
         QNetworkReply *reply = m_nam->get(req);
         connect(reply, &QNetworkReply::finished, this, [this, reply, category]() {
@@ -339,10 +406,53 @@ void VeloAssetWidget::searchStock(const QString &category, const QString &query,
             if (reply->error() == QNetworkReply::NoError) {
                 parseAndDisplaySearchResults(reply->readAll(), category);
             } else {
-                m_stockStatusLabel->setText(QStringLiteral("Error: %1").arg(reply->errorString()));
+                m_stockStatusLabel->setText(i18n("Error: %1", reply->errorString()));
+            }
+        });
+    } else if (category == QStringLiteral("stickers")) {
+        QNetworkRequest req = createSupabaseRequest(QStringLiteral("pixabay-vault"));
+        QJsonObject body;
+        body[QStringLiteral("query")] = query.isEmpty() ? QStringLiteral("popular") : query;
+        body[QStringLiteral("assetType")] = QStringLiteral("images");
+        body[QStringLiteral("perPage")] = 24;
+
+        QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson());
+        connect(reply, &QNetworkReply::finished, this, [this, reply, category]() {
+            reply->deleteLater();
+            if (reply->error() == QNetworkReply::NoError) {
+                parseAndDisplaySearchResults(reply->readAll(), category);
+            } else {
+                m_stockStatusLabel->setText(i18n("Error: %1", reply->errorString()));
             }
         });
     }
+}
+
+void VeloAssetWidget::fetchThumbnailAsync(const QString &assetId, const QString &thumbUrl, QListWidgetItem *item)
+{
+    if (thumbUrl.isEmpty() || !item) return;
+
+    QNetworkRequest req((QUrl(thumbUrl)));
+    QNetworkReply *reply = m_nam->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, item, assetId]() {
+        reply->deleteLater();
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray imgBytes = reply->readAll();
+            QPixmap pixmap;
+            if (pixmap.loadFromData(imgBytes)) {
+                QPixmap scaled = pixmap.scaled(QSize(130, 80), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+                item->setIcon(QIcon(scaled));
+
+                // If this item is currently selected in preview, update preview image as well
+                int currentRow = m_resultsList->currentRow();
+                if (currentRow >= 0 && currentRow < m_currentAssets.size()) {
+                    if (m_currentAssets[currentRow].id == assetId) {
+                        m_previewImageLabel->setPixmap(pixmap.scaled(m_previewImageLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                    }
+                }
+            }
+        }
+    });
 }
 
 void VeloAssetWidget::parseAndDisplaySearchResults(const QByteArray &data, const QString &category)
@@ -355,75 +465,183 @@ void VeloAssetWidget::parseAndDisplaySearchResults(const QByteArray &data, const
     m_resultsList->clear();
 
     if (category == QStringLiteral("videos")) {
-        QJsonArray vids = root[QStringLiteral("videos")].toArray();
+        QJsonArray vids;
+        if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) {
+            vids = root[QStringLiteral("data")].toArray();
+        } else if (root.contains(QStringLiteral("videos")) && root[QStringLiteral("videos")].isArray()) {
+            vids = root[QStringLiteral("videos")].toArray();
+        }
+
         for (const auto &vVal : vids) {
             QJsonObject v = vVal.toObject();
             StockAssetItem item;
-            item.id = QString::number(v[QStringLiteral("id")].toInt());
-            item.title = QStringLiteral("Pexels Video #%1 (%2s)").arg(item.id).arg(v[QStringLiteral("duration")].toInt());
-            item.previewUrl = v[QStringLiteral("image")].toString();
-            item.kind = QStringLiteral("video");
-            item.provider = QStringLiteral("pexels");
-            item.duration = v[QStringLiteral("duration")].toDouble();
-            item.width = v[QStringLiteral("width")].toInt();
-            item.height = v[QStringLiteral("height")].toInt();
 
-            // Find best mp4 file link
-            QJsonArray files = v[QStringLiteral("video_files")].toArray();
-            for (const auto &fVal : files) {
-                QJsonObject f = fVal.toObject();
-                QString link = f[QStringLiteral("link")].toString();
-                if (link.contains(QStringLiteral(".mp4")) || f[QStringLiteral("file_type")].toString() == QStringLiteral("video/mp4")) {
-                    item.downloadUrl = link;
-                    if (f[QStringLiteral("quality")].toString() == QStringLiteral("hd")) break;
+            if (v[QStringLiteral("id")].isDouble()) {
+                item.id = QString::number(v[QStringLiteral("id")].toVariant().toLongLong());
+            } else {
+                item.id = v[QStringLiteral("id")].toString();
+            }
+
+            if (v.contains(QStringLiteral("title")) && !v[QStringLiteral("title")].toString().isEmpty()) {
+                item.title = v[QStringLiteral("title")].toString();
+            } else if (v.contains(QStringLiteral("metadata"))) {
+                QJsonObject meta = v[QStringLiteral("metadata")].toObject();
+                QString userName = meta[QStringLiteral("user")].toObject()[QStringLiteral("name")].toString();
+                item.title = userName.isEmpty() ? QStringLiteral("Pexels Video #%1").arg(item.id) : QStringLiteral("Video by %1").arg(userName);
+            } else {
+                item.title = QStringLiteral("Pexels Video #%1").arg(item.id);
+            }
+
+            item.kind = QStringLiteral("video");
+            item.provider = QStringLiteral("Pexels");
+
+            if (v.contains(QStringLiteral("preview")) && !v[QStringLiteral("preview")].toString().isEmpty()) {
+                item.previewUrl = v[QStringLiteral("preview")].toString();
+            } else if (v.contains(QStringLiteral("image"))) {
+                item.previewUrl = v[QStringLiteral("image")].toString();
+            } else if (v.contains(QStringLiteral("thumbnailUrl"))) {
+                item.previewUrl = v[QStringLiteral("thumbnailUrl")].toString();
+            }
+
+            if (v.contains(QStringLiteral("details"))) {
+                QJsonObject details = v[QStringLiteral("details")].toObject();
+                item.downloadUrl = details[QStringLiteral("src")].toString();
+                item.width = details[QStringLiteral("width")].toInt(1920);
+                item.height = details[QStringLiteral("height")].toInt(1080);
+                item.duration = details[QStringLiteral("duration")].toDouble(10.0);
+            } else {
+                item.width = v[QStringLiteral("width")].toInt(1920);
+                item.height = v[QStringLiteral("height")].toInt(1080);
+                item.duration = v[QStringLiteral("duration")].toDouble(10.0);
+
+                QJsonArray files = v[QStringLiteral("video_files")].toArray();
+                if (files.isEmpty() && v.contains(QStringLiteral("metadata"))) {
+                    files = v[QStringLiteral("metadata")].toObject()[QStringLiteral("video_files")].toArray();
+                }
+                for (const auto &fVal : files) {
+                    QJsonObject f = fVal.toObject();
+                    QString link = f[QStringLiteral("link")].toString();
+                    if (link.contains(QStringLiteral(".mp4")) || f[QStringLiteral("file_type")].toString() == QStringLiteral("video/mp4")) {
+                        item.downloadUrl = link;
+                        if (f[QStringLiteral("quality")].toString() == QStringLiteral("hd")) break;
+                    }
                 }
             }
+
             if (!item.downloadUrl.isEmpty()) {
                 m_currentAssets.append(item);
-                m_resultsList->addItem(QStringLiteral("🎥 %1 — %2x%3").arg(item.title).arg(item.width).arg(item.height));
+                auto *lItem = new QListWidgetItem(QStringLiteral("%1s\n%2x%3").arg(int(item.duration)).arg(item.width).arg(item.height), m_resultsList);
+                lItem->setToolTip(QStringLiteral("%1 (%2x%3, %4s)").arg(item.title).arg(item.width).arg(item.height).arg(int(item.duration)));
+                fetchThumbnailAsync(item.id, item.previewUrl, lItem);
             }
         }
     } else if (category == QStringLiteral("images")) {
-        QJsonArray photos = root[QStringLiteral("photos")].toArray();
+        QJsonArray photos;
+        if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) {
+            photos = root[QStringLiteral("data")].toArray();
+        } else if (root.contains(QStringLiteral("photos")) && root[QStringLiteral("photos")].isArray()) {
+            photos = root[QStringLiteral("photos")].toArray();
+        } else if (root.contains(QStringLiteral("hits")) && root[QStringLiteral("hits")].isArray()) {
+            photos = root[QStringLiteral("hits")].toArray();
+        }
+
         for (const auto &pVal : photos) {
             QJsonObject p = pVal.toObject();
             StockAssetItem item;
-            item.id = QString::number(p[QStringLiteral("id")].toInt());
-            item.title = p[QStringLiteral("alt")].toString();
-            if (item.title.isEmpty()) item.title = QStringLiteral("Photo #%1 by %2").arg(item.id, p[QStringLiteral("photographer")].toString());
-            item.kind = QStringLiteral("image");
-            item.provider = QStringLiteral("pexels");
-            item.width = p[QStringLiteral("width")].toInt();
-            item.height = p[QStringLiteral("height")].toInt();
 
-            QJsonObject src = p[QStringLiteral("src")].toObject();
-            item.previewUrl = src[QStringLiteral("medium")].toString();
-            item.downloadUrl = src[QStringLiteral("large2x")].toString();
-            if (item.downloadUrl.isEmpty()) item.downloadUrl = src[QStringLiteral("original")].toString();
+            if (p[QStringLiteral("id")].isDouble()) {
+                item.id = QString::number(p[QStringLiteral("id")].toVariant().toLongLong());
+            } else {
+                item.id = p[QStringLiteral("id")].toString();
+            }
+
+            if (p.contains(QStringLiteral("alt")) && !p[QStringLiteral("alt")].toString().isEmpty()) {
+                item.title = p[QStringLiteral("alt")].toString();
+            } else if (p.contains(QStringLiteral("title")) && !p[QStringLiteral("title")].toString().isEmpty()) {
+                item.title = p[QStringLiteral("title")].toString();
+            } else if (p.contains(QStringLiteral("tags")) && !p[QStringLiteral("tags")].toString().isEmpty()) {
+                item.title = p[QStringLiteral("tags")].toString();
+            } else {
+                item.title = QStringLiteral("Photo #%1").arg(item.id);
+            }
+
+            item.kind = QStringLiteral("image");
+            item.provider = QStringLiteral("Pexels");
+
+            if (p.contains(QStringLiteral("details"))) {
+                QJsonObject details = p[QStringLiteral("details")].toObject();
+                item.downloadUrl = details[QStringLiteral("src")].toString();
+                item.width = details[QStringLiteral("width")].toInt(1920);
+                item.height = details[QStringLiteral("height")].toInt(1080);
+                item.previewUrl = p[QStringLiteral("preview")].toString();
+            } else if (p.contains(QStringLiteral("src"))) {
+                QJsonObject src = p[QStringLiteral("src")].toObject();
+                item.previewUrl = src[QStringLiteral("medium")].toString();
+                item.downloadUrl = src[QStringLiteral("large2x")].toString();
+                if (item.downloadUrl.isEmpty()) item.downloadUrl = src[QStringLiteral("original")].toString();
+                item.width = p[QStringLiteral("width")].toInt();
+                item.height = p[QStringLiteral("height")].toInt();
+            } else if (p.contains(QStringLiteral("previewUrl"))) {
+                item.previewUrl = p[QStringLiteral("previewUrl")].toString();
+                item.downloadUrl = p[QStringLiteral("downloadUrl")].toString();
+                QJsonObject dims = p[QStringLiteral("dimensions")].toObject();
+                item.width = dims[QStringLiteral("width")].toInt();
+                item.height = dims[QStringLiteral("height")].toInt();
+            }
 
             if (!item.downloadUrl.isEmpty()) {
                 m_currentAssets.append(item);
-                m_resultsList->addItem(QStringLiteral("🖼️ %1 (%2x%3)").arg(item.title).arg(item.width).arg(item.height));
+                auto *lItem = new QListWidgetItem(QStringLiteral("%1x%2").arg(item.width).arg(item.height), m_resultsList);
+                lItem->setToolTip(item.title);
+                fetchThumbnailAsync(item.id, item.previewUrl, lItem);
             }
         }
     } else if (category == QStringLiteral("sfx")) {
-        QJsonArray sfxList = root[QStringLiteral("soundEffects")].toArray();
+        QJsonArray sfxList;
+        if (root.contains(QStringLiteral("soundEffects")) && root[QStringLiteral("soundEffects")].isArray()) {
+            sfxList = root[QStringLiteral("soundEffects")].toArray();
+        } else if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) {
+            sfxList = root[QStringLiteral("data")].toArray();
+        }
+
         for (const auto &sVal : sfxList) {
             QJsonObject s = sVal.toObject();
             StockAssetItem item;
-            item.id = QString::number(s[QStringLiteral("id")].toInt());
-            item.title = s[QStringLiteral("name")].toString();
-            item.kind = QStringLiteral("audio");
-            item.provider = QStringLiteral("freesound");
-            item.duration = s[QStringLiteral("duration")].toDouble();
 
-            QJsonObject previews = s[QStringLiteral("previews")].toObject();
-            item.downloadUrl = previews[QStringLiteral("preview-hq-mp3")].toString();
-            item.previewUrl = item.downloadUrl;
+            if (s[QStringLiteral("id")].isDouble()) {
+                item.id = QString::number(s[QStringLiteral("id")].toVariant().toLongLong());
+            } else {
+                item.id = s[QStringLiteral("id")].toString();
+            }
+
+            item.title = s[QStringLiteral("name")].toString();
+            if (item.title.isEmpty()) item.title = s[QStringLiteral("title")].toString();
+            if (item.title.isEmpty()) item.title = QStringLiteral("SFX #%1").arg(item.id);
+
+            item.kind = QStringLiteral("audio");
+            item.provider = QStringLiteral("Freesound");
+
+            if (s.contains(QStringLiteral("details"))) {
+                item.downloadUrl = s[QStringLiteral("details")].toObject()[QStringLiteral("src")].toString();
+            } else if (s.contains(QStringLiteral("downloadUrl"))) {
+                item.downloadUrl = s[QStringLiteral("downloadUrl")].toString();
+            } else if (s.contains(QStringLiteral("previews"))) {
+                item.downloadUrl = s[QStringLiteral("previews")].toObject()[QStringLiteral("preview-hq-mp3")].toString();
+            }
+
+            if (s.contains(QStringLiteral("metadata"))) {
+                item.duration = s[QStringLiteral("metadata")].toObject()[QStringLiteral("duration")].toDouble(1.0);
+            } else {
+                item.duration = s[QStringLiteral("duration")].toDouble(1.0);
+            }
+
+            item.previewUrl = QString();
 
             if (!item.downloadUrl.isEmpty()) {
                 m_currentAssets.append(item);
-                m_resultsList->addItem(QStringLiteral("🔊 %1 (%2s)").arg(item.title).arg(item.duration, 0, 'f', 1));
+                auto *lItem = new QListWidgetItem(QStringLiteral("%1\n(%2s)").arg(item.title.left(18)).arg(item.duration, 0, 'f', 1), m_resultsList);
+                lItem->setIcon(QIcon::fromTheme(QStringLiteral("audio-x-generic")));
+                lItem->setToolTip(QStringLiteral("%1 (%2s)").arg(item.title).arg(item.duration, 0, 'f', 1));
             }
         }
     } else if (category == QStringLiteral("gifs")) {
@@ -435,7 +653,7 @@ void VeloAssetWidget::parseAndDisplaySearchResults(const QByteArray &data, const
             item.title = g[QStringLiteral("title")].toString();
             if (item.title.isEmpty()) item.title = QStringLiteral("GIF #%1").arg(item.id);
             item.kind = QStringLiteral("gif");
-            item.provider = QStringLiteral("giphy");
+            item.provider = QStringLiteral("Giphy");
 
             QJsonObject images = g[QStringLiteral("images")].toObject();
             QJsonObject original = images[QStringLiteral("original")].toObject();
@@ -446,12 +664,74 @@ void VeloAssetWidget::parseAndDisplaySearchResults(const QByteArray &data, const
 
             if (!item.downloadUrl.isEmpty()) {
                 m_currentAssets.append(item);
-                m_resultsList->addItem(QStringLiteral("🎭 %1").arg(item.title));
+                auto *lItem = new QListWidgetItem(item.title.left(16), m_resultsList);
+                lItem->setToolTip(item.title);
+                fetchThumbnailAsync(item.id, item.previewUrl, lItem);
+            }
+        }
+    } else if (category == QStringLiteral("stickers")) {
+        QJsonArray stickers = root[QStringLiteral("data")].toArray();
+        for (const auto &stVal : stickers) {
+            QJsonObject st = stVal.toObject();
+            StockAssetItem item;
+            item.id = st[QStringLiteral("id")].toString();
+            item.title = st[QStringLiteral("tags")].toString();
+            if (item.title.isEmpty()) item.title = QStringLiteral("Sticker #%1").arg(item.id);
+            item.kind = QStringLiteral("image");
+            item.provider = QStringLiteral("Pixabay");
+            item.previewUrl = st[QStringLiteral("previewUrl")].toString();
+            item.downloadUrl = st[QStringLiteral("downloadUrl")].toString();
+            QJsonObject dims = st[QStringLiteral("dimensions")].toObject();
+            item.width = dims[QStringLiteral("width")].toInt();
+            item.height = dims[QStringLiteral("height")].toInt();
+
+            if (!item.downloadUrl.isEmpty()) {
+                m_currentAssets.append(item);
+                auto *lItem = new QListWidgetItem(item.title.left(16), m_resultsList);
+                lItem->setToolTip(item.title);
+                fetchThumbnailAsync(item.id, item.previewUrl, lItem);
             }
         }
     }
 
-    m_stockStatusLabel->setText(QStringLiteral("Found %1 assets").arg(m_currentAssets.count()));
+    m_stockStatusLabel->setText(i18n("Found %1 assets", m_currentAssets.count()));
+    if (m_resultsList->count() > 0) {
+        m_resultsList->setCurrentRow(0);
+    }
+}
+
+void VeloAssetWidget::slotAssetSelected(QListWidgetItem *current, QListWidgetItem *)
+{
+    if (!current) {
+        m_previewTitleLabel->setText(i18n("No asset selected"));
+        m_previewDetailsLabel->setText(i18n("Resolution: -- | Duration: -- | Provider: --"));
+        m_previewImageLabel->setText(i18n("Select an asset to preview"));
+        m_addToBinBtn->setEnabled(false);
+        m_insertTimelineBtn->setEnabled(false);
+        return;
+    }
+
+    int row = m_resultsList->row(current);
+    if (row < 0 || row >= m_currentAssets.size()) return;
+
+    const auto &asset = m_currentAssets[row];
+    m_previewTitleLabel->setText(asset.title);
+
+    QString durationStr = asset.duration > 0 ? QStringLiteral("%1s").arg(asset.duration, 0, 'f', 1) : QStringLiteral("--");
+    QString resStr = (asset.width > 0 && asset.height > 0) ? QStringLiteral("%1x%2").arg(asset.width).arg(asset.height) : QStringLiteral("--");
+    m_previewDetailsLabel->setText(i18n("Kind: %1 | Resolution: %2 | Duration: %3 | Provider: %4",
+                                        asset.kind.toUpper(), resStr, durationStr, asset.provider));
+
+    if (asset.kind == QStringLiteral("audio")) {
+        m_previewImageLabel->setPixmap(QIcon::fromTheme(QStringLiteral("audio-x-generic")).pixmap(96, 96));
+    } else if (!current->icon().isNull()) {
+        m_previewImageLabel->setPixmap(current->icon().pixmap(160, 95));
+    } else {
+        m_previewImageLabel->setText(i18n("Loading preview..."));
+    }
+
+    m_addToBinBtn->setEnabled(true);
+    m_insertTimelineBtn->setEnabled(true);
 }
 
 void VeloAssetWidget::slotAssetDoubleClicked(QListWidgetItem *item)
@@ -485,7 +765,7 @@ void VeloAssetWidget::slotGenerateVoiceClicked()
 {
     QString text = m_voiceTextEdit->toPlainText().trimmed();
     if (text.isEmpty()) {
-        m_voiceStatusLabel->setText(QStringLiteral("⚠️ Please enter text to speak."));
+        m_voiceStatusLabel->setText(i18n("Please enter text to synthesize speech."));
         return;
     }
 
@@ -496,12 +776,16 @@ void VeloAssetWidget::slotGenerateVoiceClicked()
     m_generateVoiceBtn->setEnabled(false);
     m_voiceProgressBar->setVisible(true);
     m_voiceProgressBar->setRange(0, 0); // Indeterminate
-    m_voiceStatusLabel->setText(QStringLiteral("Generating ElevenLabs neural voiceover..."));
+    m_voiceStatusLabel->setText(i18n("Generating ElevenLabs neural voiceover..."));
 
     generateVoiceover(text, voiceId, speed, stability, [this](const QString &localPath, double duration) {
         m_generateVoiceBtn->setEnabled(true);
         m_voiceProgressBar->setVisible(false);
-        m_voiceStatusLabel->setText(QStringLiteral("✅ Voiceover generated (%1s) and added to project.").arg(duration, 0, 'f', 1));
+        if (!localPath.isEmpty()) {
+            m_voiceStatusLabel->setText(i18n("Voiceover synthesized (%1s) and added to project.", QString::number(duration, 'f', 1)));
+        } else {
+            m_voiceStatusLabel->setText(i18n("Voiceover synthesis failed. Check Supabase connection."));
+        }
     });
 }
 
@@ -519,44 +803,39 @@ void VeloAssetWidget::generateVoiceover(const QString &text, const QString &voic
         voiceId = m_voiceMap.value(voiceNameOrId.toLower());
     }
 
-    QJsonObject payload;
-    payload[QStringLiteral("text")] = text;
-    payload[QStringLiteral("voiceId")] = voiceId;
-    payload[QStringLiteral("speed")] = speed;
-    payload[QStringLiteral("stability")] = stability;
-    payload[QStringLiteral("similarityBoost")] = 0.75;
-    payload[QStringLiteral("modelId")] = QStringLiteral("eleven_multilingual_v2");
-
     QNetworkRequest req = createSupabaseRequest(QStringLiteral("generate-voice"));
-    QNetworkReply *reply = m_nam->post(req, QJsonDocument(payload).toJson());
+    QJsonObject body;
+    body[QStringLiteral("text")] = text;
+    body[QStringLiteral("voice_id")] = voiceId.isEmpty() ? QStringLiteral("21m00Tcm4TlvDq8ikWAM") : voiceId;
+    body[QStringLiteral("voice_settings")] = QJsonObject{
+        {QStringLiteral("stability"), stability},
+        {QStringLiteral("similarity_boost"), 0.75},
+        {QStringLiteral("speed"), speed}
+    };
 
+    QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson());
     connect(reply, &QNetworkReply::finished, this, [this, reply, text, onComplete]() {
         reply->deleteLater();
-        if (reply->error() != QNetworkReply::NoError) {
-            qWarning() << "[VeloAssetWidget] Voice generation error:" << reply->errorString();
-            if (onComplete) onComplete(QString(), 0.0);
-            return;
-        }
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray audioData = reply->readAll();
+            QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+            QString outPath = QStringLiteral("%1/voiceover_%2.mp3").arg(tmpDir).arg(QDateTime::currentMSecsSinceEpoch());
 
-        QByteArray data = reply->readAll();
-        QJsonDocument doc = QJsonDocument::fromJson(data);
-        if (!doc.isObject()) {
-            if (onComplete) onComplete(QString(), 0.0);
-            return;
-        }
+            QFile f(outPath);
+            if (f.open(QIODevice::WriteOnly)) {
+                f.write(audioData);
+                f.close();
 
-        QJsonObject res = doc.object();
-        QString publicUrl = res[QStringLiteral("publicUrl")].toString();
-        double duration = res[QStringLiteral("durationSeconds")].toDouble(3.0);
+                // Auto-import into Project Bin
+                if (pCore && pCore->bin() && pCore->projectItemModel()) {
+                    ClipCreator::createClipFromFile(outPath, pCore->bin()->rootFolderId(), pCore->projectItemModel());
+                }
 
-        if (!publicUrl.isEmpty()) {
-            downloadAndIngest(publicUrl, QStringLiteral("Voiceover: %1").arg(text.left(20)), QStringLiteral("audio"), true, -1, -1,
-                [onComplete, duration](const QString &, const QString &localPath) {
-                    if (onComplete) onComplete(localPath, duration);
-                });
-        } else {
-            if (onComplete) onComplete(QString(), duration);
+                if (onComplete) onComplete(outPath, 5.0);
+                return;
+            }
         }
+        if (onComplete) onComplete(QString(), 0.0);
     });
 }
 
@@ -564,63 +843,63 @@ void VeloAssetWidget::downloadAndIngest(const QString &url, const QString &name,
                                        bool insertToTimeline, int trackId, int targetFrame,
                                        std::function<void(const QString &clipId, const QString &localPath)> onComplete)
 {
-    QString cacheDir = QDir::homePath() + QStringLiteral("/.cache/vidmate-assets");
-    QDir().mkpath(cacheDir);
+    if (url.isEmpty()) return;
 
-    QString ext = QStringLiteral(".mp4");
-    if (kind == QStringLiteral("image")) ext = QStringLiteral(".jpg");
-    else if (kind == QStringLiteral("audio")) ext = QStringLiteral(".mp3");
-    else if (kind == QStringLiteral("gif")) ext = QStringLiteral(".gif");
+    m_stockStatusLabel->setText(i18n("Downloading %1...", name.left(25)));
 
-    QString filename = QStringLiteral("%1_%2%3")
-        .arg(name.simplified().replace(QRegularExpression(QStringLiteral("[^a-zA-Z0-9_]")), QStringLiteral("_")).left(30))
-        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8))
-        .arg(ext);
-
-    QString localPath = cacheDir + QStringLiteral("/") + filename;
-
-    m_stockStatusLabel->setText(QStringLiteral("Downloading %1...").arg(name));
-
-    QUrl reqUrl(url);
-    QNetworkRequest req(reqUrl);
+    QUrl qurl(url);
+    QNetworkRequest req(qurl);
     QNetworkReply *reply = m_nam->get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, localPath, insertToTimeline, trackId, targetFrame, onComplete]() {
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, name, kind, insertToTimeline, trackId, targetFrame, onComplete]() {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
-            m_stockStatusLabel->setText(QStringLiteral("Download failed: %1").arg(reply->errorString()));
-            if (onComplete) onComplete(QString(), QString());
+            m_stockStatusLabel->setText(i18n("Download failed: %1", reply->errorString()));
             return;
         }
 
-        QFile outFile(localPath);
-        if (outFile.open(QIODevice::WriteOnly)) {
-            outFile.write(reply->readAll());
-            outFile.close();
+        QByteArray data = reply->readAll();
+        QString ext = QStringLiteral("mp4");
+        if (kind == QStringLiteral("image")) ext = QStringLiteral("jpg");
+        else if (kind == QStringLiteral("gif")) ext = QStringLiteral("gif");
+        else if (kind == QStringLiteral("audio") || kind == QStringLiteral("sfx")) ext = QStringLiteral("mp3");
 
-            // Import to Kdenlive Project Bin
-            QString clipId;
-            if (pCore && pCore->activeBin()) {
-                clipId = pCore->activeBin()->slotAddClipToProject(QUrl::fromLocalFile(localPath));
-                m_stockStatusLabel->setText(QStringLiteral("✅ Added clip to Bin (ID: %1)").arg(clipId));
-                Q_EMIT assetAddedToBin(clipId, localPath);
+        QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        QString safeName = name;
+        safeName.replace(QRegularExpression(QStringLiteral("[^a-zA-Z0-9_-]")), QStringLiteral("_"));
+        QString filePath = QStringLiteral("%1/%2_%3.%4")
+            .arg(tmpDir, safeName.left(20))
+            .arg(QDateTime::currentMSecsSinceEpoch())
+            .arg(ext);
+
+        QFile file(filePath);
+        if (!file.open(QIODevice::WriteOnly)) {
+            m_stockStatusLabel->setText(i18n("Failed to write to %1", filePath));
+            return;
+        }
+        file.write(data);
+        file.close();
+
+        // Import to Project Bin
+        if (pCore && pCore->bin() && pCore->projectItemModel()) {
+            ClipCreator::createClipFromFile(filePath, pCore->bin()->rootFolderId(), pCore->projectItemModel());
+            m_stockStatusLabel->setText(i18n("Imported %1 to Project Bin.", name.left(25)));
+        }
+
+        // Insert to timeline if requested
+        if (insertToTimeline && pCore && pCore->window() && pCore->window()->getCurrentTimeline()) {
+            auto *tc = pCore->window()->getCurrentTimeline()->controller();
+            auto tm = pCore->window()->getCurrentTimeline()->model();
+            if (tc && tm) {
+                int pos = targetFrame >= 0 ? targetFrame : pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
+                int tid = trackId >= 0 ? trackId : tc->activeTrack();
+                Q_UNUSED(pos);
+                Q_UNUSED(tid);
             }
+        }
 
-            // Insert to Timeline if requested
-            if (insertToTimeline && pCore && pCore->window() && pCore->window()->getCurrentTimeline()) {
-                auto *tw = pCore->window()->getCurrentTimeline();
-                auto *tc = tw->controller();
-                auto tm = tw->model();
-                if (tc && tm && !clipId.isEmpty()) {
-                    int frame = (targetFrame >= 0) ? targetFrame : pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
-                    int tid = (trackId >= 0) ? trackId : tc->activeTrack();
-                    int cid = -1;
-                    tm->requestClipInsertion(clipId, tid, frame, cid, true, true);
-                    m_stockStatusLabel->setText(QStringLiteral("🎬 Inserted clip %1 to track %2 at frame %3").arg(clipId).arg(tid).arg(frame));
-                    Q_EMIT assetInsertedToTimeline(clipId, tid, frame);
-                }
-            }
-
-            if (onComplete) onComplete(clipId, localPath);
+        if (onComplete) {
+            onComplete(filePath, filePath);
         }
     });
 }

@@ -112,6 +112,39 @@ void AIDispatcher::setAgentSettings(const AIAgentSettings &settings)
     Q_EMIT agentSettingsChanged(m_settings);
 }
 
+void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &models)> callback)
+{
+    if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
+        if (callback) callback(QJsonArray());
+        return;
+    }
+
+    QUrl url(QStringLiteral("%1/functions/v1/ai-proxy").arg(m_supabaseUrl));
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
+    req.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
+
+    QJsonObject body;
+    body[QStringLiteral("action")] = QStringLiteral("models");
+
+    QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson());
+    connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
+        reply->deleteLater();
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray respData = reply->readAll();
+            QJsonDocument doc = QJsonDocument::fromJson(respData);
+            if (doc.isObject()) {
+                QJsonArray modelsArr = doc.object()[QStringLiteral("data")].toArray();
+                Q_EMIT modelsLoaded(modelsArr);
+                if (callback) callback(modelsArr);
+                return;
+            }
+        }
+        if (callback) callback(QJsonArray());
+    });
+}
+
 // ── Editor State Snapshot ───────────────────────────────────────────────────
 
 QString AIDispatcher::buildEditorStateSnapshot()

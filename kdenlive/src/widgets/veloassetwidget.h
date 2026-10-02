@@ -73,6 +73,7 @@ private Q_SLOTS:
     void slotCategoryChanged(int index);
     void slotGenerateVoiceClicked();
     void slotAssetDoubleClicked(QListWidgetItem *item);
+    void slotAssetSelected(QListWidgetItem *current, QListWidgetItem *previous);
     void slotAddSelectedToBin();
     void slotInsertSelectedToTimeline();
 
@@ -82,6 +83,7 @@ private:
     void fetchAvailableVoices();
     void parseAndDisplaySearchResults(const QByteArray &data, const QString &category);
     void parseAndDisplayVoices(const QByteArray &data);
+    void fetchThumbnailAsync(const QString &assetId, const QString &thumbUrl, QListWidgetItem *item);
     QNetworkRequest createSupabaseRequest(const QString &functionPath) const;
 
     QTabWidget *m_tabs{nullptr};
@@ -91,9 +93,15 @@ private:
     QComboBox *m_categoryCombo{nullptr};
     QPushButton *m_searchBtn{nullptr};
     QListWidget *m_resultsList{nullptr};
+    QLabel *m_stockStatusLabel{nullptr};
+
+    // Asset Preview Panel
+    QFrame *m_previewPanel{nullptr};
+    QLabel *m_previewImageLabel{nullptr};
+    QLabel *m_previewTitleLabel{nullptr};
+    QLabel *m_previewDetailsLabel{nullptr};
     QPushButton *m_addToBinBtn{nullptr};
     QPushButton *m_insertTimelineBtn{nullptr};
-    QLabel *m_stockStatusLabel{nullptr};
 
     // Voice Studio Tab
     QComboBox *m_voiceCombo{nullptr};

@@ -60,7 +60,9 @@ private Q_SLOTS:
     void slotApplyProposal();
     void slotRejectProposal();
     void slotSaveSettings();
-    void slotFilterModels(const QString &query);
+    void slotFilterModels();
+    void slotRefreshModels();
+    void slotModelsLoaded(const QJsonArray &models);
 
 private:
     void setupUi();
@@ -126,8 +128,17 @@ private:
     QCheckBox *m_cloudAssetsCheck{nullptr};
     QCheckBox *m_planModeCheck{nullptr};
 
+    struct DynamicModelInfo {
+        QString id;
+        QString name;
+        QString provider;
+        int contextLength{0};
+    };
+    QList<DynamicModelInfo> m_dynamicModels;
+    QPushButton *m_refreshModelsBtn{nullptr};
+    QLabel *m_modelsStatusLabel{nullptr};
+
     // Backend Engines
     AIDispatcher *m_dispatcher{nullptr};
     AICommandRouter *m_router{nullptr};
-    QStringList m_allAvailableModels;
 };
