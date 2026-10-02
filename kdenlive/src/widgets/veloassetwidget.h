@@ -86,6 +86,11 @@ private Q_SLOTS:
     void slotAudioStateChanged(QMediaPlayer::PlaybackState state);
     void slotAudioSeek(int position);
 
+    // Voice Studio Result Actions
+    void slotAddVoiceResultToBin();
+    void slotInsertVoiceResultToTimeline();
+    void slotToggleVoiceResultAudio();
+
 private:
     void setupUi();
     void loadEnvCredentials();
@@ -130,11 +135,27 @@ private:
     QProgressBar *m_voiceProgressBar{nullptr};
     QLabel *m_voiceStatusLabel{nullptr};
 
+    // Voice Studio Result Card
+    QFrame *m_voiceResultBox{nullptr};
+    QLabel *m_voiceResultTitle{nullptr};
+    QLabel *m_voiceResultDetails{nullptr};
+    QPushButton *m_voicePlayPauseBtn{nullptr};
+    QSlider *m_voiceProgressSlider{nullptr};
+    QLabel *m_voiceTimeLabel{nullptr};
+    QPushButton *m_voiceAddToBinBtn{nullptr};
+    QPushButton *m_voiceInsertTimelineBtn{nullptr};
+
+    QString m_lastVoicePath;
+    QString m_lastVoiceBinId;
+    QString m_lastVoiceTitle;
+    double m_lastVoiceDuration{0.0};
+
     QNetworkAccessManager *m_nam{nullptr};
     QMediaPlayer *m_audioPlayer{nullptr};
     QAudioOutput *m_audioOutput{nullptr};
     QString m_currentAudioUrl;
     bool m_isSliderSeeking{false};
+    bool m_isVoiceResultPlaying{false};
 
     QString m_supabaseUrl;
     QString m_supabaseAnonKey;

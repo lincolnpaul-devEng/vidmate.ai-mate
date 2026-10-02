@@ -235,7 +235,7 @@ void VeloAssetWidget::setupUi()
     voiceLayout->addLayout(voiceForm);
     voiceLayout->addLayout(sliderRow);
 
-    m_generateVoiceBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("audio-input-microphone")), i18n("Generate Voiceover & Insert to Timeline"), voiceTab);
+    m_generateVoiceBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("audio-input-microphone")), i18n("Generate Voiceover"), voiceTab);
     m_generateVoiceBtn->setStyleSheet(QStringLiteral("font-weight: 600; padding: 6px;"));
     m_voiceProgressBar = new QProgressBar(voiceTab);
     m_voiceProgressBar->setVisible(false);
@@ -245,6 +245,68 @@ void VeloAssetWidget::setupUi()
     voiceLayout->addWidget(m_generateVoiceBtn);
     voiceLayout->addWidget(m_voiceProgressBar);
     voiceLayout->addWidget(m_voiceStatusLabel);
+
+    // Synthesized Result Card
+    m_voiceResultBox = new QFrame(voiceTab);
+    m_voiceResultBox->setObjectName(QStringLiteral("voiceResultBox"));
+    m_voiceResultBox->setStyleSheet(QStringLiteral(
+        "QFrame#voiceResultBox { background-color: palette(alternate-base); border: 1px solid palette(mid); border-radius: 4px; padding: 8px; }"
+    ));
+    auto *resultLayout = new QVBoxLayout(m_voiceResultBox);
+    resultLayout->setContentsMargins(8, 8, 8, 8);
+    resultLayout->setSpacing(6);
+
+    m_voiceResultTitle = new QLabel(i18n("No voiceover generated yet"), m_voiceResultBox);
+    m_voiceResultTitle->setStyleSheet(QStringLiteral("font-weight: bold; font-size: 12px; color: palette(text);"));
+    m_voiceResultTitle->setWordWrap(true);
+
+    m_voiceResultDetails = new QLabel(m_voiceResultBox);
+    m_voiceResultDetails->setStyleSheet(QStringLiteral("color: palette(text-muted); font-size: 11px;"));
+
+    // Audition Row
+    auto *voiceAuditionRow = new QHBoxLayout();
+    voiceAuditionRow->setSpacing(8);
+    m_voicePlayPauseBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("media-playback-start")), i18n("Audition"), m_voiceResultBox);
+    m_voicePlayPauseBtn->setStyleSheet(QStringLiteral("font-weight: 500; font-size: 11px; padding: 2px 8px;"));
+    connect(m_voicePlayPauseBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotToggleVoiceResultAudio);
+
+    m_voiceProgressSlider = new QSlider(Qt::Horizontal, m_voiceResultBox);
+    m_voiceProgressSlider->setRange(0, 0);
+    connect(m_voiceProgressSlider, &QSlider::sliderMoved, this, &VeloAssetWidget::slotAudioSeek);
+    connect(m_voiceProgressSlider, &QSlider::sliderPressed, this, [this]() { m_isSliderSeeking = true; });
+    connect(m_voiceProgressSlider, &QSlider::sliderReleased, this, [this]() {
+        m_isSliderSeeking = false;
+        slotAudioSeek(m_voiceProgressSlider->value());
+    });
+
+    m_voiceTimeLabel = new QLabel(QStringLiteral("00:00 / 00:00"), m_voiceResultBox);
+    m_voiceTimeLabel->setStyleSheet(QStringLiteral("color: palette(text-muted); font-size: 11px; font-family: monospace;"));
+
+    voiceAuditionRow->addWidget(m_voicePlayPauseBtn);
+    voiceAuditionRow->addWidget(m_voiceProgressSlider, 1);
+    voiceAuditionRow->addWidget(m_voiceTimeLabel);
+
+    // Action Row: Add to Project Bin & Insert to Timeline
+    auto *voiceActionRow = new QHBoxLayout();
+    voiceActionRow->setSpacing(6);
+    m_voiceAddToBinBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("list-add")), i18n("Add to Project Bin"), m_voiceResultBox);
+    m_voiceInsertTimelineBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("timeline-insert")), i18n("Insert to Timeline"), m_voiceResultBox);
+    m_voiceInsertTimelineBtn->setStyleSheet(QStringLiteral("font-weight: 600;"));
+
+    connect(m_voiceAddToBinBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotAddVoiceResultToBin);
+    connect(m_voiceInsertTimelineBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotInsertVoiceResultToTimeline);
+
+    voiceActionRow->addWidget(m_voiceAddToBinBtn);
+    voiceActionRow->addWidget(m_voiceInsertTimelineBtn);
+    voiceActionRow->addStretch(1);
+
+    resultLayout->addWidget(m_voiceResultTitle);
+    resultLayout->addWidget(m_voiceResultDetails);
+    resultLayout->addLayout(voiceAuditionRow);
+    resultLayout->addLayout(voiceActionRow);
+
+    m_voiceResultBox->setVisible(false);
+    voiceLayout->addWidget(m_voiceResultBox);
     voiceLayout->addStretch();
 
     m_tabs->addTab(voiceTab, i18n("Voice Studio"));
@@ -808,22 +870,38 @@ void VeloAssetWidget::slotToggleAudioPreview()
 void VeloAssetWidget::slotAudioStateChanged(QMediaPlayer::PlaybackState state)
 {
     if (state == QMediaPlayer::PlayingState) {
-        m_audioPlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
-        m_audioPlayPauseBtn->setText(i18n("Pause"));
+        if (m_isVoiceResultPlaying) {
+            m_voicePlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
+            m_voicePlayPauseBtn->setText(i18n("Pause"));
+        } else {
+            m_audioPlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
+            m_audioPlayPauseBtn->setText(i18n("Pause"));
+        }
     } else {
         m_audioPlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
         m_audioPlayPauseBtn->setText(i18n("Audition"));
+        m_voicePlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
+        m_voicePlayPauseBtn->setText(i18n("Audition"));
+        m_isVoiceResultPlaying = false;
     }
 }
 
 void VeloAssetWidget::slotAudioPositionChanged(qint64 position)
 {
     if (!m_isSliderSeeking) {
-        m_audioProgressSlider->setValue(static_cast<int>(position));
+        if (m_isVoiceResultPlaying) {
+            m_voiceProgressSlider->setValue(static_cast<int>(position));
+        } else {
+            m_audioProgressSlider->setValue(static_cast<int>(position));
+        }
     }
     qint64 duration = m_audioPlayer->duration();
-    if (duration <= 0 && m_resultsList->currentRow() >= 0 && m_resultsList->currentRow() < m_currentAssets.size()) {
-        duration = static_cast<qint64>(m_currentAssets[m_resultsList->currentRow()].duration * 1000);
+    if (duration <= 0) {
+        if (m_isVoiceResultPlaying && m_lastVoiceDuration > 0) {
+            duration = static_cast<qint64>(m_lastVoiceDuration * 1000);
+        } else if (m_resultsList->currentRow() >= 0 && m_resultsList->currentRow() < m_currentAssets.size()) {
+            duration = static_cast<qint64>(m_currentAssets[m_resultsList->currentRow()].duration * 1000);
+        }
     }
     auto formatTime = [](qint64 ms) -> QString {
         qint64 totalSec = ms / 1000;
@@ -831,13 +909,22 @@ void VeloAssetWidget::slotAudioPositionChanged(qint64 position)
         qint64 s = totalSec % 60;
         return QStringLiteral("%1:%2").arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
     };
-    m_audioTimeLabel->setText(QStringLiteral("%1 / %2").arg(formatTime(position), formatTime(duration)));
+    QString timeStr = QStringLiteral("%1 / %2").arg(formatTime(position), formatTime(duration));
+    if (m_isVoiceResultPlaying) {
+        m_voiceTimeLabel->setText(timeStr);
+    } else {
+        m_audioTimeLabel->setText(timeStr);
+    }
 }
 
 void VeloAssetWidget::slotAudioDurationChanged(qint64 duration)
 {
     if (duration > 0) {
-        m_audioProgressSlider->setRange(0, static_cast<int>(duration));
+        if (m_isVoiceResultPlaying) {
+            m_voiceProgressSlider->setRange(0, static_cast<int>(duration));
+        } else {
+            m_audioProgressSlider->setRange(0, static_cast<int>(duration));
+        }
         slotAudioPositionChanged(m_audioPlayer->position());
     }
 }
@@ -858,8 +945,115 @@ void VeloAssetWidget::stopAudioPreview()
         m_audioPlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
         m_audioPlayPauseBtn->setText(i18n("Audition"));
     }
+    if (m_voicePlayPauseBtn) {
+        m_voicePlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
+        m_voicePlayPauseBtn->setText(i18n("Audition"));
+    }
     if (m_audioProgressSlider) {
         m_audioProgressSlider->setValue(0);
+    }
+    if (m_voiceProgressSlider) {
+        m_voiceProgressSlider->setValue(0);
+    }
+    m_isVoiceResultPlaying = false;
+}
+
+void VeloAssetWidget::slotToggleVoiceResultAudio()
+{
+    if (!m_audioPlayer || m_lastVoicePath.isEmpty()) return;
+
+    if (m_audioPlayer->playbackState() == QMediaPlayer::PlayingState && m_isVoiceResultPlaying) {
+        m_audioPlayer->pause();
+        m_isVoiceResultPlaying = false;
+        m_voicePlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
+        m_voicePlayPauseBtn->setText(i18n("Audition"));
+    } else {
+        m_isVoiceResultPlaying = true;
+        m_audioPlayer->setSource(QUrl::fromLocalFile(m_lastVoicePath));
+        m_audioPlayer->play();
+        m_voicePlayPauseBtn->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
+        m_voicePlayPauseBtn->setText(i18n("Pause"));
+    }
+}
+
+void VeloAssetWidget::slotAddVoiceResultToBin()
+{
+    if (m_lastVoicePath.isEmpty()) return;
+
+    if (!m_lastVoiceBinId.isEmpty()) {
+        m_voiceStatusLabel->setText(i18n("Voiceover is already in Project Bin (ID: %1).", m_lastVoiceBinId));
+        return;
+    }
+
+    if (pCore && pCore->bin() && pCore->projectItemModel()) {
+        Fun undo = []() { return true; };
+        Fun redo = []() { return true; };
+        QString createdId = ClipCreator::createClipFromFile(m_lastVoicePath, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo,
+            [this](const QString &binId) {
+                if (!binId.isEmpty() && binId != QStringLiteral("-1")) {
+                    m_lastVoiceBinId = binId;
+                    m_voiceStatusLabel->setText(i18n("Added voiceover to Project Bin (ID: %1).", binId));
+                    Q_EMIT assetAddedToBin(binId, m_lastVoicePath);
+                }
+            });
+        if (createdId != QStringLiteral("-1")) {
+            m_lastVoiceBinId = createdId;
+            pCore->pushUndo(undo, redo, i18nc("@action", "Add clip"));
+            m_voiceStatusLabel->setText(i18n("Added voiceover to Project Bin."));
+        }
+    }
+}
+
+void VeloAssetWidget::slotInsertVoiceResultToTimeline()
+{
+    if (m_lastVoicePath.isEmpty()) return;
+
+    auto doTimelineInsert = [this](const QString &binId) {
+        if (binId.isEmpty() || binId == QStringLiteral("-1")) return;
+        m_lastVoiceBinId = binId;
+
+        if (pCore && pCore->window() && pCore->window()->getCurrentTimeline()) {
+            auto *tc = pCore->window()->getCurrentTimeline()->controller();
+            auto tm = pCore->window()->getCurrentTimeline()->model();
+            if (tc && tm) {
+                int pos = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
+                int tid = -1;
+                int active = tc->activeTrack();
+                if (active >= 0 && tm->isAudioTrack(active)) {
+                    tid = active;
+                } else {
+                    for (int t : tm->getAllTracksIds()) {
+                        if (tm->isAudioTrack(t)) {
+                            tid = t;
+                            break;
+                        }
+                    }
+                }
+                if (tid >= 0) {
+                    int newClipId = -1;
+                    bool ok = tm->requestClipInsertion(binId, tid, pos, newClipId, true, true, false);
+                    if (ok) {
+                        m_voiceStatusLabel->setText(i18n("Inserted voiceover onto audio track %1 at frame %2.", tid, pos));
+                        Q_EMIT assetInsertedToTimeline(binId, tid, pos);
+                    } else {
+                        m_voiceStatusLabel->setText(i18n("Could not insert voiceover onto audio track %1 at frame %2.", tid, pos));
+                    }
+                }
+            }
+        }
+    };
+
+    if (!m_lastVoiceBinId.isEmpty()) {
+        doTimelineInsert(m_lastVoiceBinId);
+    } else if (pCore && pCore->bin() && pCore->projectItemModel()) {
+        Fun undo = []() { return true; };
+        Fun redo = []() { return true; };
+        QString createdId = ClipCreator::createClipFromFile(m_lastVoicePath, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo, doTimelineInsert);
+        if (createdId != QStringLiteral("-1")) {
+            m_lastVoiceBinId = createdId;
+            pCore->pushUndo(undo, redo, i18nc("@action", "Add clip"));
+            doTimelineInsert(createdId);
+        }
     }
 }
 
@@ -899,6 +1093,7 @@ void VeloAssetWidget::slotGenerateVoiceClicked()
     }
 
     QString voiceId = m_voiceCombo->currentData().toString();
+    QString voiceName = m_voiceCombo->currentText();
     double speed = m_speedSlider->value() / 100.0;
     double stability = m_stabilitySlider->value() / 100.0;
 
@@ -907,11 +1102,29 @@ void VeloAssetWidget::slotGenerateVoiceClicked()
     m_voiceProgressBar->setRange(0, 0); // Indeterminate
     m_voiceStatusLabel->setText(i18n("Generating ElevenLabs neural voiceover..."));
 
-    generateVoiceover(text, voiceId, speed, stability, [this](const QString &localPath, double duration) {
+    generateVoiceover(text, voiceId, speed, stability, [this, voiceName, text](const QString &localPath, double duration) {
         m_generateVoiceBtn->setEnabled(true);
         m_voiceProgressBar->setVisible(false);
         if (!localPath.isEmpty()) {
-            m_voiceStatusLabel->setText(i18n("Voiceover synthesized (%1s) and added to project.", QString::number(duration, 'f', 1)));
+            m_lastVoicePath = localPath;
+            m_lastVoiceBinId.clear();
+            m_lastVoiceDuration = duration;
+            m_lastVoiceTitle = QStringLiteral("%1: \"%2\"").arg(voiceName.section(QLatin1Char('('), 0, 0).trimmed(), text.left(45));
+
+            m_voiceResultTitle->setText(m_lastVoiceTitle);
+            m_voiceResultDetails->setText(i18n("Duration: %1s | Speed: %2x | Stability: %3",
+                QString::number(duration, 'f', 1),
+                QString::number(m_speedSlider->value() / 100.0, 'f', 2),
+                QString::number(m_stabilitySlider->value() / 100.0, 'f', 2)));
+            m_voiceProgressSlider->setRange(0, static_cast<int>(duration * 1000));
+            m_voiceProgressSlider->setValue(0);
+            qint64 totalSec = static_cast<qint64>(duration);
+            m_voiceTimeLabel->setText(QStringLiteral("00:00 / %1:%2")
+                .arg(totalSec / 60, 2, 10, QLatin1Char('0'))
+                .arg(totalSec % 60, 2, 10, QLatin1Char('0')));
+
+            m_voiceResultBox->setVisible(true);
+            m_voiceStatusLabel->setText(i18n("Voiceover synthesized successfully. Ready to audition or add to timeline."));
         } else {
             m_voiceStatusLabel->setText(i18n("Voiceover synthesis failed. Check Supabase connection."));
         }
@@ -954,18 +1167,6 @@ void VeloAssetWidget::generateVoiceover(const QString &text, const QString &voic
             if (f.open(QIODevice::WriteOnly)) {
                 f.write(audioData);
                 f.close();
-
-                // Auto-import into Project Bin
-                if (pCore && pCore->bin() && pCore->projectItemModel()) {
-                    Fun undo = []() { return true; };
-                    Fun redo = []() { return true; };
-                    ClipCreator::createClipFromFile(outPath, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo,
-                        [this, outPath](const QString &binId) {
-                            if (!binId.isEmpty() && binId != QStringLiteral("-1")) {
-                                Q_EMIT assetAddedToBin(binId, outPath);
-                            }
-                        });
-                }
 
                 if (onComplete) onComplete(outPath, 5.0);
                 return;
