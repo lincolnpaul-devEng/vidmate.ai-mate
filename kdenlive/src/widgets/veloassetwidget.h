@@ -24,6 +24,8 @@
 #include <QLabel>
 #include <QProgressBar>
 #include <QTabWidget>
+#include <QMediaPlayer>
+#include <QAudioOutput>
 #include <functional>
 
 struct StockAssetItem {
@@ -48,7 +50,7 @@ class VeloAssetWidget : public QWidget
 
 public:
     explicit VeloAssetWidget(QWidget *parent = nullptr);
-    ~VeloAssetWidget() override = default;
+    ~VeloAssetWidget() override;
 
     /** @brief Triggers search programmatically (for AI copilot tools) */
     void searchStock(const QString &category, const QString &query, int page = 1);
@@ -77,6 +79,13 @@ private Q_SLOTS:
     void slotAddSelectedToBin();
     void slotInsertSelectedToTimeline();
 
+    // Audio Preview Audition Slots
+    void slotToggleAudioPreview();
+    void slotAudioPositionChanged(qint64 position);
+    void slotAudioDurationChanged(qint64 duration);
+    void slotAudioStateChanged(QMediaPlayer::PlaybackState state);
+    void slotAudioSeek(int position);
+
 private:
     void setupUi();
     void loadEnvCredentials();
@@ -84,6 +93,7 @@ private:
     void parseAndDisplaySearchResults(const QByteArray &data, const QString &category);
     void parseAndDisplayVoices(const QByteArray &data);
     void fetchThumbnailAsync(const QString &assetId, const QString &thumbUrl, QListWidgetItem *item);
+    void stopAudioPreview();
     QNetworkRequest createSupabaseRequest(const QString &functionPath) const;
 
     QTabWidget *m_tabs{nullptr};
@@ -103,6 +113,12 @@ private:
     QPushButton *m_addToBinBtn{nullptr};
     QPushButton *m_insertTimelineBtn{nullptr};
 
+    // Audio Audition Controls
+    QWidget *m_audioControlsWidget{nullptr};
+    QPushButton *m_audioPlayPauseBtn{nullptr};
+    QSlider *m_audioProgressSlider{nullptr};
+    QLabel *m_audioTimeLabel{nullptr};
+
     // Voice Studio Tab
     QComboBox *m_voiceCombo{nullptr};
     QPlainTextEdit *m_voiceTextEdit{nullptr};
@@ -115,6 +131,11 @@ private:
     QLabel *m_voiceStatusLabel{nullptr};
 
     QNetworkAccessManager *m_nam{nullptr};
+    QMediaPlayer *m_audioPlayer{nullptr};
+    QAudioOutput *m_audioOutput{nullptr};
+    QString m_currentAudioUrl;
+    bool m_isSliderSeeking{false};
+
     QString m_supabaseUrl;
     QString m_supabaseAnonKey;
     QString m_supabaseServiceKey;
