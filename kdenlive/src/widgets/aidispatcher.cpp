@@ -299,6 +299,7 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
     m_lastEngine = targetEngine;
     m_lastPrompt = prompt;
 
+    m_requestTimer.start();
     Q_EMIT requestStarted();
 
     QUrl url(m_apiUrl);
@@ -363,6 +364,8 @@ void AIDispatcher::slotReplyFinished(QNetworkReply *reply)
 
 void AIDispatcher::processAiResponse(const QByteArray &data)
 {
+    qint64 latencyMs = m_requestTimer.isValid() ? m_requestTimer.elapsed() : 0;
+
     QJsonDocument doc = QJsonDocument::fromJson(data);
     if (!doc.isObject()) {
         processFallbackLocalIntent(m_lastPrompt, m_lastEngine);
@@ -372,6 +375,17 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
     QJsonObject root = doc.object();
     QString aiText;
     QJsonObject actionObj;
+
+    int totalTokens = 0;
+    if (root.contains(QStringLiteral("usage"))) {
+        QJsonObject usage = root[QStringLiteral("usage")].toObject();
+        totalTokens = usage[QStringLiteral("total_tokens")].toInt(0);
+        if (totalTokens == 0) {
+            totalTokens = usage[QStringLiteral("prompt_tokens")].toInt(0) + usage[QStringLiteral("completion_tokens")].toInt(0);
+        }
+    }
+
+    QString modelUsed = root.contains(QStringLiteral("model")) ? root[QStringLiteral("model")].toString() : m_model;
 
     if (root.contains(QStringLiteral("choices"))) {
         QJsonArray choices = root[QStringLiteral("choices")].toArray();
@@ -394,6 +408,10 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
                     actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
                     actionObj[QStringLiteral("params")] = argsDoc.isObject() ? argsDoc.object() : QJsonObject();
 
+                    if (totalTokens <= 0) {
+                        totalTokens = qMax(1, (m_lastPrompt.length() + fnName.length() + fnArgs.length()) / 4);
+                    }
+                    Q_EMIT metricsUpdated(totalTokens, latencyMs, modelUsed);
                     Q_EMIT responseReceived(aiText.isEmpty() ? fnName : aiText, actionObj);
                     return;
                 }
@@ -407,6 +425,11 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
         processFallbackLocalIntent(m_lastPrompt, m_lastEngine);
         return;
     }
+
+    if (totalTokens <= 0) {
+        totalTokens = qMax(1, (m_lastPrompt.length() + aiText.length()) / 4);
+    }
+    Q_EMIT metricsUpdated(totalTokens, latencyMs, modelUsed);
 
     // Extract JSON block from markdown code fence
     static const QRegularExpression jsonRegex(QStringLiteral("```json\\s*([\\s\\S]*?)\\s*```"));
@@ -422,7 +445,6 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
             QJsonArray actions = actionDoc.array();
             if (!actions.isEmpty()) {
                 actionObj = actions[0].toObject();
-                // TODO: queue remaining actions for sequential execution
             }
         }
     }
@@ -434,6 +456,7 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
 
 void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QString &targetEngine)
 {
+    qint64 latencyMs = m_requestTimer.isValid() ? m_requestTimer.elapsed() : 1;
     QString lower = prompt.toLower();
     QJsonObject actionObj;
     QString summary;
@@ -443,14 +466,14 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         lower.contains(QStringLiteral("slice"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("cut_at_playhead");
         actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("✂️ Cutting all clips at current playhead position.");
+        summary = QStringLiteral("[Cut] Cutting all clips at current playhead position.");
     }
     // Delete intents
     else if (lower.contains(QStringLiteral("delete")) || lower.contains(QStringLiteral("remove clip")) ||
              lower.contains(QStringLiteral("erase"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("delete_clips");
         actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("🗑️ Deleting selected clips.");
+        summary = QStringLiteral("[Delete] Deleting selected clips.");
     }
     // Speed intents
     else if (lower.contains(QStringLiteral("slow")) || lower.contains(QStringLiteral("slow motion"))) {
@@ -459,7 +482,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("speed")] = 0.5;
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("🐢 Applying 0.5x slow motion to selected clip.");
+        summary = QStringLiteral("[Speed] Applying 0.5x slow motion to selected clip.");
     }
     else if (lower.contains(QStringLiteral("fast")) || lower.contains(QStringLiteral("speed up"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("set_clip_speed");
@@ -467,7 +490,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("speed")] = 2.0;
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("⚡ Applying 2x speed to selected clip.");
+        summary = QStringLiteral("[Speed] Applying 2x speed to selected clip.");
     }
     // Effect intents
     else if (lower.contains(QStringLiteral("glitch"))) {
@@ -476,7 +499,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("effect_id")] = QStringLiteral("frei0r.glitch0r");
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("🔥 Applying Glitch effect to selected clip.");
+        summary = QStringLiteral("[Effect] Applying Glitch effect to selected clip.");
     }
     else if (lower.contains(QStringLiteral("glow"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("add_effect");
@@ -484,7 +507,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("effect_id")] = QStringLiteral("frei0r.glow");
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("✨ Applying Glow effect to selected clip.");
+        summary = QStringLiteral("[Effect] Applying Glow effect to selected clip.");
     }
     else if (lower.contains(QStringLiteral("blur"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("add_effect");
@@ -492,7 +515,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("effect_id")] = QStringLiteral("boxblur");
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("🌫️ Applying Box Blur effect to selected clip.");
+        summary = QStringLiteral("[Effect] Applying Box Blur effect to selected clip.");
     }
     else if (lower.contains(QStringLiteral("sepia")) || lower.contains(QStringLiteral("vintage"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("add_effect");
@@ -500,7 +523,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("effect_id")] = QStringLiteral("sepia");
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("📷 Applying Sepia/Vintage tone to selected clip.");
+        summary = QStringLiteral("[Effect] Applying Sepia/Vintage tone to selected clip.");
     }
     // Subtitle intents
     else if (lower.contains(QStringLiteral("subtitle")) || lower.contains(QStringLiteral("caption"))) {
@@ -509,7 +532,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("text")] = prompt;
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("📝 Adding subtitle at current position.");
+        summary = QStringLiteral("[Subtitle] Adding subtitle at current position.");
     }
     // Title intents
     else if (lower.contains(QStringLiteral("title")) || lower.contains(QStringLiteral("intro"))) {
@@ -518,13 +541,13 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("text")] = prompt;
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("🎬 Inserting title card.");
+        summary = QStringLiteral("[Title] Inserting title card.");
     }
     // Undo intents
     else if (lower.contains(QStringLiteral("undo")) || lower.contains(QStringLiteral("revert"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("undo_last");
         actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("↩️ Undoing last action.");
+        summary = QStringLiteral("[Undo] Undoing last action.");
     }
     // Transition intents
     else if (lower.contains(QStringLiteral("transition")) || lower.contains(QStringLiteral("dissolve")) ||
@@ -534,7 +557,7 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         QJsonObject params;
         params[QStringLiteral("transition_id")] = QStringLiteral("dissolve");
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("🔄 Adding dissolve transition.");
+        summary = QStringLiteral("[Transition] Adding dissolve transition.");
     }
     // VFX / Natron intents
     else if (targetEngine == QStringLiteral("natron") || lower.contains(QStringLiteral("vfx")) ||
@@ -553,21 +576,23 @@ void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QStri
         else
             params[QStringLiteral("pipeline")] = QStringLiteral("custom");
         actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("🎭 Launching Natron VFX headless pipeline.");
+        summary = QStringLiteral("[VFX] Launching Natron VFX headless pipeline.");
     }
     // Render intents
     else if (lower.contains(QStringLiteral("render")) || lower.contains(QStringLiteral("export")) ||
              lower.contains(QStringLiteral("save video"))) {
         actionObj[QStringLiteral("action")] = QStringLiteral("render_project");
         actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("📤 Opening render/export dialog.");
+        summary = QStringLiteral("[Render] Opening render/export dialog.");
     }
     // Default: acknowledge but no action
     else {
-        summary = QStringLiteral("🤖 Understood: \"%1\". Ready on %2 engine. "
+        summary = QStringLiteral("[Agent] Understood: \"%1\". Ready on %2 engine. "
                                  "Try: cut, delete, glow, glitch, blur, slow motion, undo, render, "
                                  "or describe any edit you want.").arg(prompt, targetEngine);
     }
 
+    int totalTokens = qMax(1, (prompt.length() + summary.length()) / 4);
+    Q_EMIT metricsUpdated(totalTokens, latencyMs, m_model);
     Q_EMIT responseReceived(summary, actionObj);
 }

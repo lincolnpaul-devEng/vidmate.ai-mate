@@ -25,6 +25,7 @@ AIChatWidget::AIChatWidget(QWidget *parent)
 
     connect(this, &AIChatWidget::sendPromptRequested, m_dispatcher, &AIDispatcher::sendPrompt);
     connect(m_dispatcher, &AIDispatcher::responseReceived, this, &AIChatWidget::slotResponseReceived);
+    connect(m_dispatcher, &AIDispatcher::metricsUpdated, this, &AIChatWidget::slotMetricsUpdated);
     connect(m_dispatcher, &AIDispatcher::errorOccurred, this, [&](const QString &err) {
         appendSystemMessage(i18n("Network error: %1", err));
         slotRequestFinished();
@@ -37,6 +38,9 @@ AIChatWidget::AIChatWidget(QWidget *parent)
     connect(m_router, &AICommandRouter::dataOutput, this, &AIChatWidget::slotToolDataOutput);
 
     connect(m_statusTimer, &QTimer::timeout, this, &AIChatWidget::slotUpdateLiveTimer);
+
+    // Initial metrics setup
+    updateMetricsDisplay(0, 0, m_dispatcher->currentModel());
 
     // Initial fetch of live models from ai-proxy
     m_dispatcher->fetchAvailableModels();
@@ -66,6 +70,10 @@ void AIChatWidget::setupUi()
 
 void AIChatWidget::setupWorkspacePage(QWidget *page)
 {
+    page->setStyleSheet(QStringLiteral(
+        "QWidget { background-color: #1e1e1e; color: #cccccc; }"
+    ));
+
     auto *mainLayout = new QVBoxLayout(page);
     mainLayout->setContentsMargins(8, 8, 8, 8);
     mainLayout->setSpacing(6);
@@ -75,12 +83,12 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     headerLayout->setSpacing(6);
 
     auto *brandLabel = new QLabel(QStringLiteral("<b>VidMate Agent</b>"), page);
-    brandLabel->setStyleSheet(QStringLiteral("font-size: 13px; font-weight: 600;"));
+    brandLabel->setStyleSheet(QStringLiteral("font-size: 12px; font-weight: 700; color: #e1e4e8;"));
 
     m_modeBadge = new QLabel(page);
     m_modeBadge->setStyleSheet(QStringLiteral(
-        "background-color: #2b3a4a; color: #5dade2; border: 1px solid #3498db; "
-        "border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600;"
+        "background-color: #252526; color: #4ec9b0; border: 1px solid #3c3c3c; "
+        "border-radius: 2px; padding: 2px 6px; font-size: 10px; font-weight: 600; font-family: monospace;"
     ));
 
     m_engineTargetSelector = new QComboBox(page);
@@ -88,17 +96,31 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     m_engineTargetSelector->addItem(i18n("Kdenlive (NLE / Cuts)"), QStringLiteral("kdenlive"));
     m_engineTargetSelector->addItem(i18n("Natron (VFX / Compositing)"), QStringLiteral("natron"));
     m_engineTargetSelector->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_engineTargetSelector->setStyleSheet(QStringLiteral(
+        "QComboBox { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 3px 6px; color: #cccccc; font-size: 11px; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox QAbstractItemView { background-color: #252526; border: 1px solid #3c3c3c; selection-background-color: #0e639c; color: #cccccc; }"
+    ));
+
+    const QString headerBtnStyle = QStringLiteral(
+        "QPushButton { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 3px 8px; color: #cccccc; font-size: 11px; }"
+        "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; color: #ffffff; }"
+        "QPushButton:pressed { background-color: #0e639c; }"
+    );
 
     m_assetStudioBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-media-playlist")), i18n("Assets"), page);
     m_assetStudioBtn->setToolTip(i18n("Open Stock Media & Voiceover Studio"));
+    m_assetStudioBtn->setStyleSheet(headerBtnStyle);
     connect(m_assetStudioBtn, &QPushButton::clicked, this, &AIChatWidget::openAssetStudioRequested);
 
     m_settingsBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("configure")), i18n("Settings"), page);
     m_settingsBtn->setToolTip(i18n("Open Agent Settings"));
+    m_settingsBtn->setStyleSheet(headerBtnStyle);
     connect(m_settingsBtn, &QPushButton::clicked, this, &AIChatWidget::slotToggleSettings);
 
     m_clearBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-clear")), QString(), page);
     m_clearBtn->setToolTip(i18n("Clear History"));
+    m_clearBtn->setStyleSheet(headerBtnStyle);
     connect(m_clearBtn, &QPushButton::clicked, this, &AIChatWidget::slotClearChat);
 
     headerLayout->addWidget(brandLabel);
@@ -113,20 +135,20 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     m_liveStatusBar = new QFrame(page);
     m_liveStatusBar->setObjectName(QStringLiteral("liveStatusBar"));
     m_liveStatusBar->setStyleSheet(QStringLiteral(
-        "QFrame#liveStatusBar { background-color: #1e2530; border: 1px solid #3a4a5e; border-radius: 4px; padding: 4px; }"
+        "QFrame#liveStatusBar { background-color: #252526; border: 1px solid #007acc; border-radius: 2px; padding: 4px; }"
     ));
     auto *liveLayout = new QHBoxLayout(m_liveStatusBar);
-    liveLayout->setContentsMargins(6, 4, 6, 4);
+    liveLayout->setContentsMargins(6, 3, 6, 3);
     liveLayout->setSpacing(8);
 
     m_liveStatusDot = new QLabel(QStringLiteral("●"), m_liveStatusBar);
-    m_liveStatusDot->setStyleSheet(QStringLiteral("color: #3498db; font-size: 13px;"));
+    m_liveStatusDot->setStyleSheet(QStringLiteral("color: #007acc; font-size: 11px;"));
 
     m_liveStatusText = new QLabel(i18n("Processing timeline task..."), m_liveStatusBar);
-    m_liveStatusText->setStyleSheet(QStringLiteral("color: #ecf0f1; font-size: 11px;"));
+    m_liveStatusText->setStyleSheet(QStringLiteral("color: #d4d4d4; font-size: 11px;"));
 
     m_liveStatusTimer = new QLabel(QStringLiteral("0.0s"), m_liveStatusBar);
-    m_liveStatusTimer->setStyleSheet(QStringLiteral("color: #bdc3c7; font-family: monospace; font-size: 11px;"));
+    m_liveStatusTimer->setStyleSheet(QStringLiteral("color: #9cdcfe; font-family: monospace; font-size: 11px;"));
 
     liveLayout->addWidget(m_liveStatusDot);
     liveLayout->addWidget(m_liveStatusText, 1);
@@ -134,18 +156,19 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     m_liveStatusBar->setVisible(false);
     mainLayout->addWidget(m_liveStatusBar);
 
-    // ── Message Stream (No speech bubble container) ─────────────────────────
+    // ── Message Stream (Flat borderless stream) ─────────────────────────────
     m_messageStream = new QTextBrowser(page);
     m_messageStream->setOpenExternalLinks(true);
     m_messageStream->setReadOnly(true);
     m_messageStream->setStyleSheet(QStringLiteral(
         "QTextBrowser {"
-        "  background-color: palette(base);"
-        "  border: 1px solid palette(mid);"
-        "  border-radius: 6px;"
+        "  background-color: #1e1e1e;"
+        "  border: 1px solid #2d2d2d;"
+        "  border-radius: 2px;"
         "  padding: 8px;"
         "  font-size: 12px;"
         "  line-height: 1.5;"
+        "  color: #d4d4d4;"
         "}"
     ));
     mainLayout->addWidget(m_messageStream, 1);
@@ -155,10 +178,10 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     m_proposalCard->setObjectName(QStringLiteral("proposalCard"));
     m_proposalCard->setStyleSheet(QStringLiteral(
         "QFrame#proposalCard {"
-        "  background-color: #21262d;"
-        "  border: 1px solid #30363d;"
-        "  border-left: 4px solid #3498db;"
-        "  border-radius: 6px;"
+        "  background-color: #252526;"
+        "  border: 1px solid #3c3c3c;"
+        "  border-left: 3px solid #007acc;"
+        "  border-radius: 2px;"
         "  padding: 8px;"
         "}"
     ));
@@ -167,20 +190,20 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     proposalLayout->setSpacing(4);
 
     m_proposalTitle = new QLabel(i18n("Proposed Timeline Modification"), m_proposalCard);
-    m_proposalTitle->setStyleSheet(QStringLiteral("font-weight: bold; color: #5dade2; font-size: 11px;"));
+    m_proposalTitle->setStyleSheet(QStringLiteral("font-weight: bold; color: #4ec9b0; font-size: 11px;"));
 
     m_proposalSummary = new QLabel(m_proposalCard);
     m_proposalSummary->setWordWrap(true);
-    m_proposalSummary->setStyleSheet(QStringLiteral("color: #c9d1d9; font-size: 11px;"));
+    m_proposalSummary->setStyleSheet(QStringLiteral("color: #cccccc; font-size: 11px;"));
 
     auto *proposalBtnLayout = new QHBoxLayout();
     proposalBtnLayout->setSpacing(6);
     m_applyProposalBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("dialog-ok")), i18n("Apply Changes"), m_proposalCard);
-    m_applyProposalBtn->setStyleSheet(QStringLiteral("background-color: #238636; color: white; font-weight: bold; border-radius: 4px; padding: 4px 10px;"));
+    m_applyProposalBtn->setStyleSheet(QStringLiteral("background-color: #0e639c; color: white; font-weight: bold; border: none; border-radius: 2px; padding: 4px 12px; font-size: 11px;"));
     connect(m_applyProposalBtn, &QPushButton::clicked, this, &AIChatWidget::slotApplyProposal);
 
     m_rejectProposalBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("dialog-cancel")), i18n("Reject"), m_proposalCard);
-    m_rejectProposalBtn->setStyleSheet(QStringLiteral("background-color: #30363d; color: #c9d1d9; border-radius: 4px; padding: 4px 10px;"));
+    m_rejectProposalBtn->setStyleSheet(QStringLiteral("background-color: #2d2d2d; color: #cccccc; border: 1px solid #3c3c3c; border-radius: 2px; padding: 4px 12px; font-size: 11px;"));
     connect(m_rejectProposalBtn, &QPushButton::clicked, this, &AIChatWidget::slotRejectProposal);
 
     proposalBtnLayout->addStretch(1);
@@ -195,16 +218,18 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
 
     // ── Quick Workflow Starters ─────────────────────────────────────────────
     auto *quickScroll = new QScrollArea(page);
-    quickScroll->setFixedHeight(36);
+    quickScroll->setFixedHeight(32);
     quickScroll->setWidgetResizable(true);
     quickScroll->setFrameShape(QFrame::NoFrame);
     quickScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     quickScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    quickScroll->setStyleSheet(QStringLiteral("background: transparent;"));
 
     auto *quickContainer = new QWidget(quickScroll);
+    quickContainer->setStyleSheet(QStringLiteral("background: transparent;"));
     auto *quickLayout = new QHBoxLayout(quickContainer);
     quickLayout->setContentsMargins(0, 0, 0, 0);
-    quickLayout->setSpacing(6);
+    quickLayout->setSpacing(5);
 
     const struct { QString label; QString prompt; } starters[] = {
         {i18n("Split Scenes"), QStringLiteral("Detect all scene and shot changes using PySceneDetect and split clips on the timeline.")},
@@ -219,8 +244,8 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
         auto *btn = new QPushButton(s.label, quickContainer);
         btn->setProperty("promptText", s.prompt);
         btn->setStyleSheet(QStringLiteral(
-            "QPushButton { background-color: palette(alternate-base); border: 1px solid palette(mid); border-radius: 12px; padding: 2px 8px; font-size: 11px; color: palette(text); }"
-            "QPushButton:hover { background-color: palette(highlight); color: palette(highlighted-text); }"
+            "QPushButton { background-color: #252526; border: 1px solid #333333; border-radius: 2px; padding: 2px 8px; font-size: 11px; color: #9da5b4; }"
+            "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; color: #ffffff; }"
         ));
         connect(btn, &QPushButton::clicked, this, &AIChatWidget::slotQuickActionTriggered);
         quickLayout->addWidget(btn);
@@ -236,15 +261,78 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     m_promptInput = new QLineEdit(page);
     m_promptInput->setPlaceholderText(i18n("Direct AI edits, cuts, transitions, or ask questions..."));
     m_promptInput->setClearButtonEnabled(true);
+    m_promptInput->setStyleSheet(QStringLiteral(
+        "QLineEdit {"
+        "  background-color: #252526;"
+        "  border: 1px solid #3c3c3c;"
+        "  border-radius: 2px;"
+        "  padding: 6px 10px;"
+        "  font-size: 12px;"
+        "  color: #cccccc;"
+        "}"
+        "QLineEdit:focus {"
+        "  border: 1px solid #007acc;"
+        "}"
+    ));
     connect(m_promptInput, &QLineEdit::returnPressed, this, &AIChatWidget::slotSendMessage);
 
     m_sendBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("document-send")), i18n("Send"), page);
-    m_sendBtn->setStyleSheet(QStringLiteral("font-weight: 600; padding: 4px 12px;"));
+    m_sendBtn->setStyleSheet(QStringLiteral(
+        "QPushButton {"
+        "  background-color: #0e639c;"
+        "  color: #ffffff;"
+        "  border: none;"
+        "  border-radius: 2px;"
+        "  padding: 6px 14px;"
+        "  font-size: 12px;"
+        "  font-weight: 600;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #1177bb;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #094771;"
+        "}"
+    ));
     connect(m_sendBtn, &QPushButton::clicked, this, &AIChatWidget::slotSendMessage);
 
     inputLayout->addWidget(m_promptInput, 1);
     inputLayout->addWidget(m_sendBtn);
     mainLayout->addLayout(inputLayout);
+
+    // ── Bottom Metrics Footer (Model, Tokens, Latency) ──────────────────────
+    m_metricsFooter = new QWidget(page);
+    m_metricsFooter->setStyleSheet(QStringLiteral("background: transparent;"));
+    auto *metricsLayout = new QHBoxLayout(m_metricsFooter);
+    metricsLayout->setContentsMargins(0, 0, 0, 0);
+    metricsLayout->setSpacing(6);
+    metricsLayout->addStretch(1);
+
+    const QString tagStyle = QStringLiteral(
+        "QLabel {"
+        "  font-family: monospace;"
+        "  font-size: 10px;"
+        "  color: #9da5b4;"
+        "  background-color: #21252b;"
+        "  border: 1px solid #333842;"
+        "  border-radius: 2px;"
+        "  padding: 1px 6px;"
+        "}"
+    );
+
+    m_modelTag = new QLabel(m_metricsFooter);
+    m_modelTag->setStyleSheet(tagStyle);
+
+    m_tokensTag = new QLabel(m_metricsFooter);
+    m_tokensTag->setStyleSheet(tagStyle);
+
+    m_latencyTag = new QLabel(m_metricsFooter);
+    m_latencyTag->setStyleSheet(tagStyle);
+
+    metricsLayout->addWidget(m_modelTag);
+    metricsLayout->addWidget(m_tokensTag);
+    metricsLayout->addWidget(m_latencyTag);
+    mainLayout->addWidget(m_metricsFooter);
 
     // Initial greeting
     appendSystemMessage(i18n("VidMate AI Agent ready. Direct edits, camera cuts, or Natron VFX pipelines."));
@@ -252,6 +340,15 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
 
 void AIChatWidget::setupSettingsPage(QWidget *page)
 {
+    page->setStyleSheet(QStringLiteral(
+        "QWidget { background-color: #1e1e1e; color: #cccccc; }"
+        "QGroupBox { font-weight: bold; border: 1px solid #333333; border-radius: 2px; margin-top: 10px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 4px; color: #9cdcfe; }"
+        "QComboBox { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 3px 6px; color: #cccccc; }"
+        "QLineEdit { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 4px 6px; color: #cccccc; }"
+        "QLineEdit:focus { border: 1px solid #007acc; }"
+    ));
+
     auto *pageLayout = new QVBoxLayout(page);
     pageLayout->setContentsMargins(8, 8, 8, 8);
     pageLayout->setSpacing(8);
@@ -259,10 +356,14 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     // Header with Back Button
     auto *topBar = new QHBoxLayout();
     auto *backBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("go-previous")), i18n("Back to Workspace"), page);
+    backBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 4px 10px; color: #cccccc; font-size: 11px; }"
+        "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; color: #ffffff; }"
+    ));
     connect(backBtn, &QPushButton::clicked, this, &AIChatWidget::slotToggleSettings);
 
     auto *titleLabel = new QLabel(QStringLiteral("<b>Agent Configuration</b>"), page);
-    titleLabel->setStyleSheet(QStringLiteral("font-size: 13px; font-weight: 600;"));
+    titleLabel->setStyleSheet(QStringLiteral("font-size: 12px; font-weight: 700; color: #e1e4e8;"));
 
     topBar->addWidget(backBtn);
     topBar->addWidget(titleLabel);
@@ -273,11 +374,13 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     auto *scrollArea = new QScrollArea(page);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setStyleSheet(QStringLiteral("background: transparent;"));
 
     auto *formContainer = new QWidget(scrollArea);
+    formContainer->setStyleSheet(QStringLiteral("background: transparent;"));
     auto *formLayout = new QVBoxLayout(formContainer);
     formLayout->setContentsMargins(4, 4, 4, 4);
-    formLayout->setSpacing(12);
+    formLayout->setSpacing(10);
 
     // 1. Execution Mode Group
     auto *modeGroup = new QGroupBox(i18n("Execution Mode"), formContainer);
@@ -309,6 +412,10 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     connect(m_providerFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotFilterModels);
 
     m_refreshModelsBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Refresh"), modelGroup);
+    m_refreshModelsBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 3px 8px; color: #cccccc; font-size: 11px; }"
+        "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; color: #ffffff; }"
+    ));
     connect(m_refreshModelsBtn, &QPushButton::clicked, this, &AIChatWidget::slotRefreshModels);
 
     filterLayout->addWidget(m_modelSearchInput, 1);
@@ -321,7 +428,7 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     modelLayout->addWidget(m_editingModelSelector);
 
     m_modelsStatusLabel = new QLabel(i18n("Fetching live models from AI proxy..."), modelGroup);
-    m_modelsStatusLabel->setStyleSheet(QStringLiteral("color: palette(text-muted); font-size: 10.5px;"));
+    m_modelsStatusLabel->setStyleSheet(QStringLiteral("color: #858585; font-size: 10.5px;"));
     modelLayout->addWidget(m_modelsStatusLabel);
 
     formLayout->addWidget(modelGroup);
@@ -404,17 +511,60 @@ void AIChatWidget::updateModeBadge()
         if (isYolo) {
             m_modeBadge->setText(i18n("YOLO Mode"));
             m_modeBadge->setStyleSheet(QStringLiteral(
-                "background-color: #2b3a4a; color: #5dade2; border: 1px solid #3498db; "
-                "border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600;"
+                "background-color: #252526; color: #4ec9b0; border: 1px solid #3c3c3c; "
+                "border-radius: 2px; padding: 2px 6px; font-size: 10px; font-weight: 600; font-family: monospace;"
             ));
         } else {
             m_modeBadge->setText(i18n("Ask Mode"));
             m_modeBadge->setStyleSheet(QStringLiteral(
-                "background-color: #3e332a; color: #f39c12; border: 1px solid #e67e22; "
-                "border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600;"
+                "background-color: #252526; color: #ce9178; border: 1px solid #3c3c3c; "
+                "border-radius: 2px; padding: 2px 6px; font-size: 10px; font-weight: 600; font-family: monospace;"
             ));
         }
     }
+}
+
+void AIChatWidget::updateMetricsDisplay(int totalTokens, qint64 latencyMs, const QString &modelId)
+{
+    QString modelDisplay = modelId.isEmpty() ? m_dispatcher->currentModel() : modelId;
+    if (modelDisplay.contains(QLatin1Char('/'))) {
+        modelDisplay = modelDisplay.section(QLatin1Char('/'), -1);
+    }
+    if (modelDisplay.isEmpty() || modelDisplay == QStringLiteral("auto")) {
+        modelDisplay = QStringLiteral("auto");
+    }
+
+    QString tokensDisplay;
+    if (totalTokens >= 1000) {
+        tokensDisplay = QStringLiteral("%1k").arg(totalTokens / 1000.0, 0, 'f', 1);
+    } else {
+        tokensDisplay = QString::number(totalTokens);
+    }
+
+    QString latencyDisplay;
+    if (latencyMs >= 1000) {
+        latencyDisplay = QStringLiteral("%1s").arg(latencyMs / 1000.0, 0, 'f', 2);
+    } else {
+        latencyDisplay = QStringLiteral("%1ms").arg(latencyMs);
+    }
+
+    if (m_modelTag) {
+        m_modelTag->setText(QStringLiteral("[Model: %1]").arg(modelDisplay));
+        m_modelTag->setToolTip(i18n("Active AI Model: %1", modelId));
+    }
+    if (m_tokensTag) {
+        m_tokensTag->setText(QStringLiteral("[Tokens: %1]").arg(tokensDisplay));
+        m_tokensTag->setToolTip(i18n("Token Usage: %1 tokens", totalTokens));
+    }
+    if (m_latencyTag) {
+        m_latencyTag->setText(QStringLiteral("[Latency: %1]").arg(latencyDisplay));
+        m_latencyTag->setToolTip(i18n("Response Latency: %1ms", latencyMs));
+    }
+}
+
+void AIChatWidget::slotMetricsUpdated(int totalTokens, qint64 latencyMs, const QString &modelId)
+{
+    updateMetricsDisplay(totalTokens, latencyMs, modelId);
 }
 
 void AIChatWidget::slotToggleSettings()
@@ -536,6 +686,7 @@ void AIChatWidget::slotSaveSettings()
 
     m_dispatcher->setAgentSettings(s);
     updateModeBadge();
+    updateMetricsDisplay(0, 0, s.editingModelId);
 }
 
 QString AIChatWidget::formatMarkdownHtml(const QString &rawText)
@@ -547,11 +698,11 @@ QString AIChatWidget::formatMarkdownHtml(const QString &rawText)
 
     // Inline code `code`
     formatted.replace(QRegularExpression(QStringLiteral("`([^`]+)`")),
-                      QStringLiteral("<code style='background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 3px; font-family: monospace;'>\\1</code>"));
+                      QStringLiteral("<code style='background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 2px; font-family: monospace;'>\\1</code>"));
 
     // Code blocks ```...```
     formatted.replace(QRegularExpression(QStringLiteral("```(?:json|python|text)?\\n([\\s\\S]*?)```")),
-                      QStringLiteral("<pre style='background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 6px; font-family: monospace; font-size: 11px;'>\\1</pre>"));
+                      QStringLiteral("<pre style='background: #181818; border: 1px solid #2d2d2d; border-radius: 2px; padding: 6px; font-family: monospace; font-size: 11px; color: #d4d4d4;'>\\1</pre>"));
 
     // Bullet lists
     formatted.replace(QRegularExpression(QStringLiteral("(?m)^\\s*-\\s+(.*)$")), QStringLiteral(" • \\1<br/>"));
@@ -567,11 +718,11 @@ void AIChatWidget::appendUserMessage(const QString &text)
     QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm"));
 
     QString html = QStringLiteral(
-        "<div style='margin: 12px 0; text-align: right;'>"
-        "  <div style='display: inline-block; max-width: 85%; background: #262c38; border: 1px solid #3b4556; color: #f0f6fc; border-radius: 8px; padding: 8px 12px; text-align: left; word-break: break-word; font-size: 12px; line-height: 1.45;'>"
+        "<div style='margin: 10px 0; text-align: right;'>"
+        "  <div style='display: inline-block; max-width: 85%; background: #252526; border: 1px solid #3c3c3c; color: #d4d4d4; border-radius: 2px; padding: 6px 10px; text-align: left; word-break: break-word; font-size: 12px; line-height: 1.45;'>"
         "    %1"
         "  </div>"
-        "  <div style='font-size: 10px; color: #8b949e; margin-top: 2px;'>%2</div>"
+        "  <div style='font-size: 9.5px; color: #858585; margin-top: 2px;'>%2</div>"
         "</div>"
     ).arg(text.toHtmlEscaped().replace(QLatin1Char('\n'), QLatin1String("<br/>")), timestamp);
 
@@ -586,7 +737,7 @@ void AIChatWidget::appendAssistantResponse(const QString &text)
     QString htmlText = formatMarkdownHtml(text);
 
     QString html = QStringLiteral(
-        "<div style='margin: 14px 0; color: #e6edf3; font-size: 12px; line-height: 1.55; word-break: break-word;'>"
+        "<div style='margin: 12px 0; color: #d4d4d4; font-size: 12px; line-height: 1.5; word-break: break-word;'>"
         "  %1"
         "</div>"
     ).arg(htmlText);
@@ -597,19 +748,19 @@ void AIChatWidget::appendAssistantResponse(const QString &text)
 
 void AIChatWidget::appendToolExecution(const QString &toolName, const QString &paramsSummary, bool success, const QString &errorMsg)
 {
-    QString statusColor = success ? QStringLiteral("#27ae60") : QStringLiteral("#e74c3c");
+    QString statusColor = success ? QStringLiteral("#4ec9b0") : QStringLiteral("#f14c4c");
     QString statusTag = success ? QStringLiteral("[OK]") : QStringLiteral("[FAIL]");
 
     QString html = QStringLiteral(
-        "<div style='margin: 6px 0; font-family: monospace; font-size: 11px; color: #8b949e; line-height: 1.4;'>"
+        "<div style='margin: 4px 0; font-family: monospace; font-size: 11px; color: #858585; line-height: 1.4;'>"
         "  <span style='color: %1; font-weight: bold;'>%2</span> "
-        "  <span style='color: #c9d1d9; font-weight: 600;'>%3</span>"
-        "  <span style='color: #8b949e;'> %4</span>"
+        "  <span style='color: #9cdcfe; font-weight: 600;'>%3</span>"
+        "  <span style='color: #858585;'> %4</span>"
         "  %5"
         "</div>"
     ).arg(statusColor, statusTag, toolName,
           paramsSummary.isEmpty() ? QString() : QStringLiteral("· %1").arg(paramsSummary.toHtmlEscaped()),
-          errorMsg.isEmpty() ? QString() : QStringLiteral("<div style='color: #e74c3c; margin-left: 18px;'>%1</div>").arg(errorMsg.toHtmlEscaped()));
+          errorMsg.isEmpty() ? QString() : QStringLiteral("<div style='color: #f14c4c; margin-left: 18px;'>%1</div>").arg(errorMsg.toHtmlEscaped()));
 
     m_messageStream->append(html);
     m_messageStream->verticalScrollBar()->setValue(m_messageStream->verticalScrollBar()->maximum());
@@ -618,7 +769,7 @@ void AIChatWidget::appendToolExecution(const QString &toolName, const QString &p
 void AIChatWidget::appendSystemMessage(const QString &text)
 {
     QString html = QStringLiteral(
-        "<div style='margin: 8px 0; text-align: center; color: #8b949e; font-size: 11px; font-style: italic;'>"
+        "<div style='margin: 6px 0; text-align: center; color: #858585; font-size: 10.5px; font-style: italic;'>"
         "  %1"
         "</div>"
     ).arg(text.toHtmlEscaped());

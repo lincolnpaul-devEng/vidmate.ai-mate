@@ -63,12 +63,14 @@ private Q_SLOTS:
     void slotFilterModels();
     void slotRefreshModels();
     void slotModelsLoaded(const QJsonArray &models);
+    void slotMetricsUpdated(int totalTokens, qint64 latencyMs, const QString &modelId);
 
 private:
     void setupUi();
     void setupWorkspacePage(QWidget *page);
     void setupSettingsPage(QWidget *page);
     void updateModeBadge();
+    void updateMetricsDisplay(int totalTokens, qint64 latencyMs, const QString &modelId);
     QString formatMarkdownHtml(const QString &rawText);
 
     QStackedWidget *m_stackedWidget{nullptr};
@@ -83,6 +85,12 @@ private:
     QPushButton *m_assetStudioBtn{nullptr};
     QLabel *m_modeBadge{nullptr};
     QComboBox *m_engineTargetSelector{nullptr};
+
+    // Bottom Metrics Chips (Tokens, Latency, Model)
+    QWidget *m_metricsFooter{nullptr};
+    QLabel *m_modelTag{nullptr};
+    QLabel *m_tokensTag{nullptr};
+    QLabel *m_latencyTag{nullptr};
 
     // Live Run Status Bar
     QWidget *m_liveStatusBar{nullptr};

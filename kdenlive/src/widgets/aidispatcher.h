@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QElapsedTimer>
 
 class AIToolRegistry;
 
@@ -59,9 +60,11 @@ public:
     AIToolRegistry *toolRegistry() const { return m_toolRegistry; }
     QString supabaseUrl() const { return m_supabaseUrl; }
     QString supabaseAnonKey() const { return m_supabaseAnonKey; }
+    QString currentModel() const { return m_model; }
 
 Q_SIGNALS:
     void responseReceived(const QString &summaryText, const QJsonObject &actionPayload);
+    void metricsUpdated(int totalTokens, qint64 latencyMs, const QString &modelId);
     void errorOccurred(const QString &errorMessage);
     void requestStarted();
     void requestFinished();
@@ -79,6 +82,7 @@ private:
 
     QNetworkAccessManager *m_nam{nullptr};
     AIToolRegistry *m_toolRegistry{nullptr};
+    QElapsedTimer m_requestTimer;
     QString m_apiUrl{QStringLiteral("http://localhost:8080/v1/chat/completions")};
     QString m_apiKey;
     QString m_model{QStringLiteral("gpt-4o")};
