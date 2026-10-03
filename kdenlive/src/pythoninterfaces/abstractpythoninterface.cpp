@@ -35,14 +35,14 @@ PythonDependencyMessage::PythonDependencyMessage(QWidget *parent, AbstractPython
     m_abortAction = new QAction(i18n("Abort installation"), this);
     addAction(m_installAction);
     connect(m_abortAction, &QAction::triggered, m_interface, &AbstractPythonInterface::abortScript);
-    connect(m_interface, &AbstractPythonInterface::setupError, this, [&](const QString &message) {
+    connect(m_interface, &AbstractPythonInterface::setupError, this, [this](const QString &message) {
         if (m_interface->m_installStatus == AbstractPythonInterface::NotInstalled) {
             removeAction(m_abortAction);
             m_installAction->setEnabled(true);
         }
         doShowMessage(message, KMessageWidget::Warning);
     });
-    connect(m_interface, &AbstractPythonInterface::installStatusChanged, this, [&]() {
+    connect(m_interface, &AbstractPythonInterface::installStatusChanged, this, [this]() {
         switch (m_interface->status()) {
         case AbstractPythonInterface::Installed:
             hide();
@@ -65,10 +65,10 @@ PythonDependencyMessage::PythonDependencyMessage(QWidget *parent, AbstractPython
     });
 
     connect(m_interface, &AbstractPythonInterface::setupMessage, this,
-            [&](const QString &message, int messageType) { doShowMessage(message, KMessageWidget::MessageType(messageType)); });
+            [this](const QString &message, int messageType) { doShowMessage(message, KMessageWidget::MessageType(messageType)); });
 
     if (!setupErrorOnly) {
-        connect(m_interface, &AbstractPythonInterface::checkVersionsResult, this, [&](const QStringList &list) {
+        connect(m_interface, &AbstractPythonInterface::checkVersionsResult, this, [this](const QStringList &list) {
             removeAction(m_abortAction);
             if (list.isEmpty()) {
                 if (m_interface->featureName().isEmpty()) {
@@ -87,14 +87,14 @@ PythonDependencyMessage::PythonDependencyMessage(QWidget *parent, AbstractPython
             Q_EMIT m_interface->venvSetupChanged();
         });
 
-        connect(m_interface, &AbstractPythonInterface::dependenciesMissing, this, [&](const QStringList &messages) {
+        connect(m_interface, &AbstractPythonInterface::dependenciesMissing, this, [this](const QStringList &messages) {
             m_installAction->setEnabled(true);
             removeAction(m_abortAction);
             m_installAction->setText(m_interface->installMessage());
             doShowMessage(messages.join(QStringLiteral("\n")), KMessageWidget::Warning);
         });
 
-        connect(m_interface, &AbstractPythonInterface::proposeUpdate, this, [&](const QString &message) {
+        connect(m_interface, &AbstractPythonInterface::proposeUpdate, this, [this](const QString &message) {
             // only allow upgrading python modules once
             m_installAction->setText(i18n("Check for update"));
             m_installAction->setEnabled(true);
@@ -102,7 +102,7 @@ PythonDependencyMessage::PythonDependencyMessage(QWidget *parent, AbstractPython
             doShowMessage(message, KMessageWidget::Warning);
         });
 
-        connect(m_interface, &AbstractPythonInterface::dependenciesAvailable, this, [&]() {
+        connect(m_interface, &AbstractPythonInterface::dependenciesAvailable, this, [this]() {
             if (!m_updated) {
                 // only allow upgrading python modules once
                 m_installAction->setEnabled(false);
@@ -113,7 +113,7 @@ PythonDependencyMessage::PythonDependencyMessage(QWidget *parent, AbstractPython
             }
         });
 
-        connect(m_installAction, &QAction::triggered, this, [&]() {
+        connect(m_installAction, &QAction::triggered, this, [this]() {
             switch (m_interface->status()) {
             case AbstractPythonInterface::Unknown:
                 m_interface->checkVenv(false, false);
@@ -168,6 +168,7 @@ AbstractPythonInterface::AbstractPythonInterface(QObject *parent)
 AbstractPythonInterface::~AbstractPythonInterface()
 {
     qDebug() << ":::: DELETING ABSTRACT PYTHON INTERFACE.....";
+    Q_EMIT abortScript();
     if (m_watcher.isRunning()) {
         m_watcher.waitForFinished();
     }
@@ -779,7 +780,8 @@ QString AbstractPythonInterface::runPackageScript(QString mode, bool concurrent,
     QStringList deps = parseDependencies(m_dependencies.keys(), !installAction);
 
     if (concurrent) {
-        (void)QtConcurrent::run(&AbstractPythonInterface::runScript, this, QStringLiteral("checkpackages.py"), deps, mode, concurrent, displayFeedback);
+        m_scriptJob = QtConcurrent::run(&AbstractPythonInterface::runScript, this, QStringLiteral("checkpackages.py"), deps, mode, concurrent, displayFeedback);
+        m_watcher.setFuture(m_scriptJob);
         return {};
     } else {
         return runScript(QStringLiteral("checkpackages.py"), deps, mode, concurrent, displayFeedback);
@@ -796,12 +798,13 @@ bool AbstractPythonInterface::installRequirements(QString reqFile)
     bool newInstall = false;
     if (!checkSetup(false, &newInstall)) {
         qDebug() << "=== CHECKING SETUP...NO!!!";
-        return {};
+        return false;
     }
     qDebug() << "=== CHECKING SETUP...OK";
 
     const QStringList deps = {reqFile};
-    (void)QtConcurrent::run(&AbstractPythonInterface::runScript, this, QStringLiteral("checkpackages.py"), deps, QStringLiteral("--force-install"), true, true);
+    m_scriptJob = QtConcurrent::run(&AbstractPythonInterface::runScript, this, QStringLiteral("checkpackages.py"), deps, QStringLiteral("--force-install"), true, true);
+    m_watcher.setFuture(m_scriptJob);
     return true;
 }
 
@@ -848,22 +851,28 @@ QString AbstractPythonInterface::runScript(const QString &script, QStringList ar
         setStatus(InProgress);
     }
 
+    QMetaObject::Connection readConnection;
     if (packageFeedback) {
         if (concurrent) {
             scriptJob.setProcessChannelMode(QProcess::MergedChannels);
         }
-        connect(&scriptJob, &QProcess::readyReadStandardOutput, this, [this, &scriptJob]() {
+        readConnection = connect(&scriptJob, &QProcess::readyReadStandardOutput, &scriptJob, [this, &scriptJob]() {
             const QString processData = QString::fromUtf8(scriptJob.readAllStandardOutput());
             if (!processData.isEmpty()) {
                 Q_EMIT installFeedback(processData.simplified());
             }
-        });
+        }, Qt::DirectConnection);
     }
 
     scriptJob.start(pythonExe, args);
     // Don't timeout
     qDebug() << "::: RUNNING SCRIPT: " << pythonExe << " = " << args;
     scriptJob.waitForFinished(-1);
+
+    if (packageFeedback) {
+        QObject::disconnect(readConnection);
+    }
+    disconnect(this, &AbstractPythonInterface::abortScript, &scriptJob, &QProcess::kill);
 
     if (scriptJob.exitStatus() != QProcess::NormalExit || scriptJob.exitCode() != 0) {
         const QString errorMessage = concurrent ? scriptJob.readAllStandardOutput() : scriptJob.readAllStandardError();

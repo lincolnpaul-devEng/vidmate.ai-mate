@@ -9,6 +9,8 @@
 #include "pythoninterfaces/speechtotext.h"
 
 #include <QDialog>
+#include <QFuture>
+#include <QFutureWatcher>
 #include <QMutex>
 #include <QProcess>
 
@@ -32,6 +34,8 @@ private:
     QString m_scriptPath;
     QStringList m_args;
     int m_downloadProgress{-1};
+    QFuture<void> m_downloadJob;
+    QFutureWatcher<void> m_watcher;
 
 private Q_SLOTS:
     void processDownload();

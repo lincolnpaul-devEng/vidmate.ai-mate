@@ -861,7 +861,11 @@ void ProjectManager::finalizeDocumentOpening(KdenliveDoc *document)
 
 void ProjectManager::doOpenFile(const QUrl &url, KAutoSaveFile *stale, bool isBackup)
 {
-    Q_ASSERT(m_project == nullptr);
+    if (m_project) {
+        if (!closeCurrentDocument(false)) {
+            return;
+        }
+    }
     m_fileRevert->setEnabled(true);
     ThumbnailCache::get()->clearCache();
     if (m_project) {
@@ -1176,7 +1180,9 @@ void ProjectManager::abortProjectLoad(const QUrl &url)
 
 void ProjectManager::doOpenFileHeadless(const QUrl &url)
 {
-    Q_ASSERT(m_project == nullptr);
+    if (m_project) {
+        closeCurrentDocument(false);
+    }
     QUndoGroup *undoGroup = new QUndoGroup();
     std::shared_ptr<DocUndoStack> undoStack = std::make_shared<DocUndoStack>(nullptr);
     undoGroup->addStack(undoStack.get());

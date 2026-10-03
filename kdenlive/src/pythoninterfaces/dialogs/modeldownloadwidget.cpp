@@ -38,12 +38,16 @@ ModelDownloadWidget::ModelDownloadWidget(SpeechToText *engine, const QString &sc
 ModelDownloadWidget::~ModelDownloadWidget()
 {
     Q_EMIT abortScript();
+    if (m_watcher.isRunning()) {
+        m_watcher.waitForFinished();
+    }
 }
 
 void ModelDownloadWidget::startDownload()
 {
     m_pb->setVisible(true);
-    (void)QtConcurrent::run(&ModelDownloadWidget::processDownload, this);
+    m_downloadJob = QtConcurrent::run(&ModelDownloadWidget::processDownload, this);
+    m_watcher.setFuture(m_downloadJob);
 }
 
 void ModelDownloadWidget::processDownload()
@@ -53,7 +57,7 @@ void ModelDownloadWidget::processDownload()
 
     connect(this, &ModelDownloadWidget::abortScript, &scriptJob, &QProcess::kill, Qt::DirectConnection);
     scriptJob.setProcessChannelMode(QProcess::MergedChannels);
-    QMetaObject::Connection readConnection = connect(&scriptJob, &QProcess::readyReadStandardOutput, this, [this, &scriptJob]() {
+    QMetaObject::Connection readConnection = connect(&scriptJob, &QProcess::readyReadStandardOutput, &scriptJob, [this, &scriptJob]() {
         if (scriptJob.state() == QProcess::NotRunning) {
             return;
         }
@@ -64,27 +68,28 @@ void ModelDownloadWidget::processDownload()
             int progress = processData.section(QLatin1Char('%'), 0, 0).section(QLatin1Char(' '), -1).simplified().toInt(&ok);
             if (ok && progress != m_downloadProgress) {
                 if (m_downloadProgress == -1) {
-                    QMetaObject::invokeMethod(m_pb, "setRange", Q_ARG(int, 0), Q_ARG(int, 100));
+                    QMetaObject::invokeMethod(m_pb, "setRange", Qt::QueuedConnection, Q_ARG(int, 0), Q_ARG(int, 100));
                 }
                 // Display download progress
                 m_downloadProgress = progress;
-                QMetaObject::invokeMethod(m_pb, "setValue", Q_ARG(int, m_downloadProgress));
+                QMetaObject::invokeMethod(m_pb, "setValue", Qt::QueuedConnection, Q_ARG(int, m_downloadProgress));
             }
         }
-    });
+    }, Qt::DirectConnection);
     scriptJob.start(m_engine->venvPythonExecs().python, m_args);
     // Don't timeout
     scriptJob.waitForFinished(-1);
     // Disconnect read
     QObject::disconnect(readConnection);
-    QMetaObject::invokeMethod(m_pb, "setVisible", Q_ARG(bool, false));
+    disconnect(this, &ModelDownloadWidget::abortScript, &scriptJob, &QProcess::kill);
+    QMetaObject::invokeMethod(m_pb, "setVisible", Qt::QueuedConnection, Q_ARG(bool, false));
     if (scriptJob.exitStatus() != QProcess::NormalExit || scriptJob.exitCode() != 0) {
         const QString errorMessage = scriptJob.readAllStandardOutput();
         Q_EMIT installFeedback(i18n("Error downloading model:\n %1\n%2", m_scriptPath, errorMessage));
         Q_EMIT jobDone(false);
         return;
     }
-    QMetaObject::invokeMethod(this, "jobSuccess");
+    QMetaObject::invokeMethod(this, "jobSuccess", Qt::QueuedConnection);
     Q_EMIT jobDone(true);
 }
 
