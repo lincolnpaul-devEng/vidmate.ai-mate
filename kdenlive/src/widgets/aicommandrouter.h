@@ -72,6 +72,7 @@ private:
     void handleGenerateVoiceover(const QJsonObject &params);
     void handleInsertMediaUrl(const QJsonObject &params);
     void handleDetectScenes(const QJsonObject &params);
+    void handleGenerateGlslShader(const QJsonObject &params);
 
     // Natron VFX handler
     void executeNatronVfxJob(const QJsonObject &params);

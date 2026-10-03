@@ -18,4 +18,6 @@ set(kdenlive_SRCS
   effects/effectstack/view/collapsibleeffectview.cpp
   effects/effectstack/view/effectstackview.cpp
   effects/effectstack/view/maskmanager.cpp
+  effects/shadervalidationengine.cpp
+  effects/glslshaderrenderer.cpp
   PARENT_SCOPE)

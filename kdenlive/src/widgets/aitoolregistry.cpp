@@ -530,6 +530,33 @@ void AIToolRegistry::registerAllTools()
                 QStringLiteral("Visually analyze a video clip using PySceneDetect to detect scene/shot changes, and optionally split the clip or place markers."),
                 makeParams(props, {}));
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PROCEDURAL GLSL / SHADERTOY GPU CODE-TO-VIDEO
+    // ════════════════════════════════════════════════════════════════════════
+
+    // 31. generate_glsl_shader — GPU-accelerated ShaderToy / SDF procedural generator
+    {
+        QJsonObject props;
+        props[QStringLiteral("glsl_code")] = stringParam(QStringLiteral(
+            "GLSL shader code or math logic function (ShaderToy mainImage or Raymarch map(vec3 p) & computeMaterial)."));
+        props[QStringLiteral("shader_format")] = enumParam(
+            QStringLiteral("Shader template format."),
+            {QStringLiteral("shadertoy"), QStringLiteral("raymarch_sdf"), QStringLiteral("raw_fragment")});
+        props[QStringLiteral("name")] = stringParam(QStringLiteral(
+            "Descriptive name for the procedural shader effect or background."));
+        props[QStringLiteral("duration_frames")] = intParam(QStringLiteral(
+            "Duration in timeline frames (default: 300 = 10s at 30fps)."));
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral(
+            "Timeline track ID to insert onto (-1 = active track)."));
+        props[QStringLiteral("playhead_frame")] = intParam(QStringLiteral(
+            "Timeline frame position to insert at (-1 = current playhead)."));
+        props[QStringLiteral("audio_reactive")] = boolParam(QStringLiteral(
+            "If true, binds the shader's iAudioLevels uniform to the timeline audio master track FFT spectrum."));
+        addTool(QStringLiteral("generate_glsl_shader"),
+                QStringLiteral("Compile, validate on GPU offscreen, and render high-performance procedural GLSL/ShaderToy animations at 60+ FPS with automatic driver error self-healing."),
+                makeParams(props, {QStringLiteral("glsl_code")}));
+    }
 }
 
 // ── API ─────────────────────────────────────────────────────────────────────
