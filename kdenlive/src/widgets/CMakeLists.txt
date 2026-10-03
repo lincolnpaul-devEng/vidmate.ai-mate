@@ -27,6 +27,7 @@ set(kdenlive_SRCS
   widgets/natrondopesheetview.cpp
   widgets/natronworkspacewidget.cpp
   widgets/veloassetwidget.cpp
+  widgets/authmanager.cpp
   PARENT_SCOPE
 )
 

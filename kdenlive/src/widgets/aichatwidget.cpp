@@ -18,6 +18,8 @@
 
 #include "aidispatcher.h"
 #include "aicommandrouter.h"
+#include "authmanager.h"
+#include <QTabWidget>
 
 #include <cmath>
 
@@ -137,6 +139,7 @@ AIChatWidget::AIChatWidget(QWidget *parent)
     connect(m_router, &AICommandRouter::dataOutput, this, &AIChatWidget::slotToolDataOutput);
 
     connect(m_statusTimer, &QTimer::timeout, this, &AIChatWidget::slotUpdateLiveTimer);
+    connect(AuthManager::instance(), &AuthManager::authStateChanged, this, &AIChatWidget::slotAuthStateChanged);
 
     updateMetricsDisplay(0, 0, m_dispatcher->currentModel());
     m_dispatcher->fetchAvailableModels();
@@ -220,6 +223,14 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     m_assetStudioBtn->setStyleSheet(headerBtnStyle);
     connect(m_assetStudioBtn, &QPushButton::clicked, this, &AIChatWidget::openAssetStudioRequested);
 
+    m_authBtn = new QPushButton(headerWidget);
+    m_authBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 2px 8px; color: #cccccc; font-size: 10.5px; }"
+        "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; }"
+    ));
+    connect(m_authBtn, &QPushButton::clicked, this, &AIChatWidget::slotShowAuthDialog);
+    updateAuthButton();
+
     m_settingsBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("configure")), QString(), headerWidget);
     m_settingsBtn->setToolTip(i18n("Agent Settings"));
     m_settingsBtn->setStyleSheet(headerBtnStyle);
@@ -235,6 +246,7 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     headerLayout->addWidget(m_engineTargetSelector, 1);
     headerLayout->addWidget(m_inspectorBtn);
     headerLayout->addWidget(m_assetStudioBtn);
+    headerLayout->addWidget(m_authBtn);
     headerLayout->addWidget(m_settingsBtn);
     headerLayout->addWidget(m_clearBtn);
     mainLayout->addWidget(headerWidget);
@@ -540,6 +552,15 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
 
     m_editingModelSelector = new QComboBox(modelGroup);
     m_editingModelSelector->addItem(QStringLiteral("Auto (Default AI Proxy Resolution)"), QStringLiteral("auto"));
+    connect(m_editingModelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+        if (idx >= 0) {
+            QString modelId = m_editingModelSelector->itemData(idx).toString();
+            if (!modelId.isEmpty()) {
+                m_dispatcher->setModel(modelId);
+                updateMetricsDisplay(0, 0, modelId);
+            }
+        }
+    });
     modelLayout->addWidget(m_editingModelSelector);
 
     m_modelsStatusLabel = new QLabel(i18n("Fetching live models from AI proxy..."), modelGroup);
@@ -1569,4 +1590,280 @@ void AIChatWidget::slotToolDataOutput(const QString &toolName, const QJsonObject
         int sceneCount = data[QStringLiteral("scene_count")].toInt(0);
         appendToolExecution(toolName, i18n("%1 scene cuts identified", sceneCount), true);
     }
+}
+
+void AIChatWidget::updateAuthButton()
+{
+    if (!m_authBtn) return;
+
+    if (AuthManager::instance()->isLoggedIn()) {
+        QString email = AuthManager::instance()->userEmail();
+        QString display = email.contains(QLatin1Char('@')) ? email.section(QLatin1Char('@'), 0, 0) : email;
+        m_authBtn->setText(QStringLiteral("Account: %1").arg(display));
+        m_authBtn->setToolTip(i18n("Logged in as %1 (Click to manage account)", email));
+        m_authBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 2px 8px; color: #4ec9b0; font-size: 10.5px; }"
+            "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; }"
+        ));
+    } else {
+        m_authBtn->setText(i18n("Sign In"));
+        m_authBtn->setToolTip(i18n("Sign in to your Velo/VidMate account to enable AI Agent features"));
+        m_authBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 2px 8px; color: #ce9178; font-size: 10.5px; font-weight: 600; }"
+            "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; }"
+        ));
+    }
+}
+
+void AIChatWidget::slotAuthStateChanged(bool isLoggedIn, const QString &email)
+{
+    updateAuthButton();
+    if (isLoggedIn) {
+        appendSystemMessage(i18n("Signed in as %1. Live AI agent active.", email));
+    } else {
+        appendSystemMessage(i18n("Signed out. AI agent requires sign-in."));
+    }
+}
+
+void AIChatWidget::slotShowAuthDialog()
+{
+    auto *dialog = new QDialog(this);
+    dialog->setWindowTitle(i18n("Velo Account & Authentication"));
+    dialog->setMinimumSize(360, 320);
+    dialog->setStyleSheet(QStringLiteral(
+        "QDialog { background-color: #1e1e1e; color: #cccccc; }"
+        "QLabel { color: #cccccc; font-size: 12px; }"
+        "QLineEdit { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 6px 10px; color: #cccccc; font-size: 12px; }"
+        "QLineEdit:focus { border: 1px solid #007acc; }"
+        "QTabWidget::pane { border: 1px solid #2d2d2d; background-color: #1e1e1e; }"
+        "QTabBar::tab { background-color: #252526; color: #858585; padding: 6px 16px; border: 1px solid #2d2d2d; font-size: 11px; }"
+        "QTabBar::tab:selected { background-color: #1e1e1e; color: #ffffff; border-bottom: 2px solid #007acc; }"
+    ));
+
+    auto *mainLayout = new QVBoxLayout(dialog);
+    mainLayout->setContentsMargins(16, 16, 16, 16);
+    mainLayout->setSpacing(12);
+
+    auto *headerLabel = new QLabel(QStringLiteral("<b style='font-size: 13px; color: #e1e4e8;'>VidMate / Velo AI Account</b>"), dialog);
+    mainLayout->addWidget(headerLabel);
+
+    if (AuthManager::instance()->isLoggedIn()) {
+        // Logged In View
+        auto *infoLayout = new QVBoxLayout();
+        infoLayout->setSpacing(6);
+
+        auto *emailLabel = new QLabel(i18n("Logged in as: <b>%1</b>", AuthManager::instance()->userEmail()), dialog);
+        emailLabel->setStyleSheet(QStringLiteral("color: #4ec9b0; font-size: 12px;"));
+        infoLayout->addWidget(emailLabel);
+
+        auto *statusLabel = new QLabel(i18n("Status: Active AI Agent Access"), dialog);
+        statusLabel->setStyleSheet(QStringLiteral("color: #858585; font-size: 11px;"));
+        infoLayout->addWidget(statusLabel);
+
+        infoLayout->addSpacing(16);
+
+        auto *signOutBtn = new QPushButton(i18n("Sign Out"), dialog);
+        signOutBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background-color: #333333; color: #f14c4c; border: 1px solid #444444; border-radius: 2px; padding: 6px 14px; font-size: 11.5px; font-weight: 600; }"
+            "QPushButton:hover { background-color: #444444; border-color: #f14c4c; }"
+        ));
+        connect(signOutBtn, &QPushButton::clicked, dialog, [dialog]() {
+            AuthManager::instance()->signOut();
+            dialog->close();
+        });
+        infoLayout->addWidget(signOutBtn);
+
+        mainLayout->addLayout(infoLayout);
+    } else {
+        // One-Click Web Portal / Google OAuth Sign In (VeloAuthGate pattern)
+        auto *webPortalBtn = new QPushButton(i18n("Sign In with Velo Web Portal"), dialog);
+        webPortalBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background-color: #007acc; color: #ffffff; border: none; border-radius: 3px; padding: 9px 16px; font-size: 12.5px; font-weight: 700; }"
+            "QPushButton:hover { background-color: #1188dd; }"
+            "QPushButton:pressed { background-color: #0066aa; }"
+        ));
+        webPortalBtn->setToolTip(i18n("Opens browser to sign in via Google, GitHub, or Email and automatically logs in desktop"));
+
+        auto *webStatusLabel = new QLabel(dialog);
+        webStatusLabel->setStyleSheet(QStringLiteral("color: #9cdcfe; font-size: 11px; font-style: italic;"));
+        webStatusLabel->setVisible(false);
+
+        connect(webPortalBtn, &QPushButton::clicked, dialog, [webPortalBtn, webStatusLabel, dialog]() {
+            webPortalBtn->setEnabled(false);
+            webStatusLabel->setVisible(true);
+            webStatusLabel->setText(i18n("Browser opened. Waiting for authorization..."));
+
+            auto connSuccess = std::make_shared<QMetaObject::Connection>();
+            *connSuccess = QObject::connect(AuthManager::instance(), &AuthManager::authSuccess, dialog, [dialog, connSuccess](const QString &) {
+                QObject::disconnect(*connSuccess);
+                dialog->close();
+            });
+
+            AuthManager::instance()->signInWithWebPortal();
+        });
+
+        mainLayout->addWidget(webPortalBtn);
+        mainLayout->addWidget(webStatusLabel);
+
+        auto *orDivider = new QLabel(QStringLiteral("<div style='text-align: center; color: #555555; font-size: 10.5px; margin: 4px 0;'>— or sign in with email credentials —</div>"), dialog);
+        mainLayout->addWidget(orDivider);
+
+        // Logged Out: Tabbed Sign In / Sign Up
+        auto *tabs = new QTabWidget(dialog);
+
+        // Sign In Tab
+        auto *signInTab = new QWidget(tabs);
+        auto *signInLayout = new QVBoxLayout(signInTab);
+        signInLayout->setContentsMargins(12, 12, 12, 12);
+        signInLayout->setSpacing(8);
+
+        auto *signInEmail = new QLineEdit(signInTab);
+        signInEmail->setPlaceholderText(i18n("Email address"));
+
+        auto *signInPass = new QLineEdit(signInTab);
+        signInPass->setPlaceholderText(i18n("Password"));
+        signInPass->setEchoMode(QLineEdit::Password);
+
+        auto *signInStatus = new QLabel(signInTab);
+        signInStatus->setWordWrap(true);
+        signInStatus->setStyleSheet(QStringLiteral("color: #f14c4c; font-size: 11px;"));
+
+        auto *signInBtn = new QPushButton(i18n("Sign In"), signInTab);
+        signInBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background-color: #0e639c; color: #ffffff; border: none; border-radius: 2px; padding: 7px 16px; font-size: 12px; font-weight: 600; }"
+            "QPushButton:hover { background-color: #1177bb; }"
+        ));
+
+        signInLayout->addWidget(new QLabel(i18n("Email:"), signInTab));
+        signInLayout->addWidget(signInEmail);
+        signInLayout->addWidget(new QLabel(i18n("Password:"), signInTab));
+        signInLayout->addWidget(signInPass);
+        signInLayout->addWidget(signInStatus);
+        signInLayout->addWidget(signInBtn);
+        signInLayout->addStretch(1);
+
+        tabs->addTab(signInTab, i18n("Sign In"));
+
+        // Sign Up Tab
+        auto *signUpTab = new QWidget(tabs);
+        auto *signUpLayout = new QVBoxLayout(signUpTab);
+        signUpLayout->setContentsMargins(12, 12, 12, 12);
+        signUpLayout->setSpacing(8);
+
+        auto *signUpEmail = new QLineEdit(signUpTab);
+        signUpEmail->setPlaceholderText(i18n("Email address"));
+
+        auto *signUpPass = new QLineEdit(signUpTab);
+        signUpPass->setPlaceholderText(i18n("Password (min 6 characters)"));
+        signUpPass->setEchoMode(QLineEdit::Password);
+
+        auto *signUpStatus = new QLabel(signUpTab);
+        signUpStatus->setWordWrap(true);
+        signUpStatus->setStyleSheet(QStringLiteral("color: #f14c4c; font-size: 11px;"));
+
+        auto *signUpBtn = new QPushButton(i18n("Create Account"), signUpTab);
+        signUpBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background-color: #0e639c; color: #ffffff; border: none; border-radius: 2px; padding: 7px 16px; font-size: 12px; font-weight: 600; }"
+            "QPushButton:hover { background-color: #1177bb; }"
+        ));
+
+        signUpLayout->addWidget(new QLabel(i18n("Email:"), signUpTab));
+        signUpLayout->addWidget(signUpEmail);
+        signUpLayout->addWidget(new QLabel(i18n("Password:"), signUpTab));
+        signUpLayout->addWidget(signUpPass);
+        signUpLayout->addWidget(signUpStatus);
+        signUpLayout->addWidget(signUpBtn);
+        signUpLayout->addStretch(1);
+
+        tabs->addTab(signUpTab, i18n("Create Account"));
+
+        mainLayout->addWidget(tabs);
+
+        // Connect Sign In
+        auto doSignIn = [signInEmail, signInPass, signInStatus, signInBtn, dialog]() {
+            QString email = signInEmail->text().trimmed();
+            QString pass = signInPass->text();
+            if (email.isEmpty() || pass.isEmpty()) {
+                signInStatus->setText(i18n("Please enter email and password."));
+                return;
+            }
+            signInStatus->setStyleSheet(QStringLiteral("color: #9cdcfe; font-size: 11px;"));
+            signInStatus->setText(i18n("Signing in..."));
+            signInBtn->setEnabled(false);
+
+            auto connSuccess = std::make_shared<QMetaObject::Connection>();
+            auto connError = std::make_shared<QMetaObject::Connection>();
+
+            *connSuccess = QObject::connect(AuthManager::instance(), &AuthManager::authSuccess, dialog, [dialog, connSuccess, connError](const QString &) {
+                QObject::disconnect(*connSuccess);
+                QObject::disconnect(*connError);
+                dialog->close();
+            });
+
+            *connError = QObject::connect(AuthManager::instance(), &AuthManager::authError, dialog, [signInStatus, signInBtn, connSuccess, connError](const QString &err) {
+                QObject::disconnect(*connSuccess);
+                QObject::disconnect(*connError);
+                signInStatus->setStyleSheet(QStringLiteral("color: #f14c4c; font-size: 11px;"));
+                signInStatus->setText(err);
+                signInBtn->setEnabled(true);
+            });
+
+            AuthManager::instance()->signInWithEmail(email, pass);
+        };
+
+        connect(signInBtn, &QPushButton::clicked, dialog, doSignIn);
+        connect(signInPass, &QLineEdit::returnPressed, dialog, doSignIn);
+
+        // Connect Sign Up
+        auto doSignUp = [signUpEmail, signUpPass, signUpStatus, signUpBtn, dialog]() {
+            QString email = signUpEmail->text().trimmed();
+            QString pass = signUpPass->text();
+            if (email.isEmpty() || pass.isEmpty()) {
+                signUpStatus->setText(i18n("Please enter email and password."));
+                return;
+            }
+            if (pass.length() < 6) {
+                signUpStatus->setText(i18n("Password must be at least 6 characters."));
+                return;
+            }
+            signUpStatus->setStyleSheet(QStringLiteral("color: #9cdcfe; font-size: 11px;"));
+            signUpStatus->setText(i18n("Creating account..."));
+            signUpBtn->setEnabled(false);
+
+            auto connSuccess = std::make_shared<QMetaObject::Connection>();
+            auto connError = std::make_shared<QMetaObject::Connection>();
+
+            *connSuccess = QObject::connect(AuthManager::instance(), &AuthManager::authSuccess, dialog, [dialog, connSuccess, connError](const QString &) {
+                QObject::disconnect(*connSuccess);
+                QObject::disconnect(*connError);
+                dialog->close();
+            });
+
+            *connError = QObject::connect(AuthManager::instance(), &AuthManager::authError, dialog, [signUpStatus, signUpBtn, connSuccess, connError](const QString &err) {
+                QObject::disconnect(*connSuccess);
+                QObject::disconnect(*connError);
+                signUpStatus->setStyleSheet(QStringLiteral("color: #f14c4c; font-size: 11px;"));
+                signUpStatus->setText(err);
+                signUpBtn->setEnabled(true);
+            });
+
+            AuthManager::instance()->signUpWithEmail(email, pass);
+        };
+
+        connect(signUpBtn, &QPushButton::clicked, dialog, doSignUp);
+        connect(signUpPass, &QLineEdit::returnPressed, dialog, doSignUp);
+    }
+
+    mainLayout->addStretch(1);
+
+    auto *closeBtn = new QPushButton(i18n("Close"), dialog);
+    closeBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #252526; border: 1px solid #3c3c3c; border-radius: 2px; padding: 5px 16px; color: #cccccc; }"
+        "QPushButton:hover { background-color: #2d2d2d; border-color: #007acc; }"
+    ));
+    connect(closeBtn, &QPushButton::clicked, dialog, &QDialog::close);
+    mainLayout->addWidget(closeBtn, 0, Qt::AlignRight);
+
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
 }

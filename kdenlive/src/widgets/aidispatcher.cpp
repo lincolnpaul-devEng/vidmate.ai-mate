@@ -12,6 +12,7 @@
 
 #include "aidispatcher.h"
 #include "aitoolregistry.h"
+#include "authmanager.h"
 #include "core.h"
 #include "mainwindow.h"
 #include "timeline2/view/timelinewidget.h"
@@ -319,12 +320,23 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
     m_requestTimer.start();
     Q_EMIT requestStarted();
 
+    // Check authentication
+    QString authToken = m_apiKey;
+    if (authToken.isEmpty() && AuthManager::instance()->isLoggedIn()) {
+        authToken = AuthManager::instance()->accessToken();
+    }
+
+    if (authToken.isEmpty()) {
+        Q_EMIT requestFinished();
+        Q_EMIT errorOccurred(QStringLiteral("Authentication required. Please click 'Account' to sign in to your Velo/VidMate account."));
+        return;
+    }
+
     QUrl url(m_apiUrl);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    if (!m_apiKey.isEmpty()) {
-        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_apiKey).toUtf8());
-    }
+    request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(authToken).toUtf8());
+
     if (!m_supabaseAnonKey.isEmpty()) {
         request.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
     }
@@ -342,6 +354,7 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
     messages.append(userMsg);
 
     QJsonObject rootObj;
+    rootObj[QStringLiteral("action")] = QStringLiteral("chat");
     rootObj[QStringLiteral("model")] = m_model;
     rootObj[QStringLiteral("messages")] = messages;
     rootObj[QStringLiteral("temperature")] = 0.2;
@@ -367,13 +380,41 @@ void AIDispatcher::slotReplyFinished(QNetworkReply *reply)
     Q_EMIT requestFinished();
 
     if (!reply) {
-        processFallbackLocalIntent(m_lastPrompt, m_lastEngine);
+        Q_EMIT errorOccurred(QStringLiteral("Network error: No reply received from server."));
         return;
     }
 
     if (reply->error() != QNetworkReply::NoError) {
-        processFallbackLocalIntent(m_lastPrompt, m_lastEngine);
+        QByteArray respData = reply->readAll();
+        QString errMsg;
+
+        QJsonDocument doc = QJsonDocument::fromJson(respData);
+        if (doc.isObject()) {
+            QJsonObject obj = doc.object();
+            if (obj.contains(QStringLiteral("error"))) {
+                QJsonValue errVal = obj[QStringLiteral("error")];
+                if (errVal.isObject()) {
+                    errMsg = errVal.toObject()[QStringLiteral("message")].toString();
+                } else {
+                    errMsg = errVal.toString();
+                }
+            } else if (obj.contains(QStringLiteral("message"))) {
+                errMsg = obj[QStringLiteral("message")].toString();
+            }
+        }
+
+        if (errMsg.isEmpty()) {
+            errMsg = reply->errorString();
+        }
+
+        int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (statusCode == 401) {
+            errMsg = QStringLiteral("Authentication expired or invalid (401). Please click 'Account' to sign in again.");
+            AuthManager::instance()->refreshSession();
+        }
+
         reply->deleteLater();
+        Q_EMIT errorOccurred(errMsg);
         return;
     }
 
@@ -388,7 +429,7 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
 
     QJsonDocument doc = QJsonDocument::fromJson(data);
     if (!doc.isObject()) {
-        processFallbackLocalIntent(m_lastPrompt, m_lastEngine);
+        Q_EMIT errorOccurred(QStringLiteral("Invalid JSON response received from AI model."));
         return;
     }
 
@@ -439,10 +480,18 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
         }
     } else if (root.contains(QStringLiteral("response"))) {
         aiText = root[QStringLiteral("response")].toString();
+    } else if (root.contains(QStringLiteral("content"))) {
+        aiText = root[QStringLiteral("content")].toString();
     }
 
     if (aiText.isEmpty()) {
-        processFallbackLocalIntent(m_lastPrompt, m_lastEngine);
+        if (root.contains(QStringLiteral("error"))) {
+            QJsonValue errVal = root[QStringLiteral("error")];
+            QString msg = errVal.isObject() ? errVal.toObject()[QStringLiteral("message")].toString() : errVal.toString();
+            Q_EMIT errorOccurred(msg);
+        } else {
+            Q_EMIT errorOccurred(QStringLiteral("Empty content returned from AI model."));
+        }
         return;
     }
 
@@ -451,7 +500,7 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
     }
     Q_EMIT metricsUpdated(totalTokens, latencyMs, modelUsed);
 
-    // Extract JSON block from markdown code fence
+    // Extract JSON block from markdown code fence if present
     static const QRegularExpression jsonRegex(QStringLiteral("```json\\s*([\\s\\S]*?)\\s*```"));
     auto match = jsonRegex.match(aiText);
     if (match.hasMatch()) {
@@ -461,7 +510,6 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
         if (actionDoc.isObject()) {
             actionObj = actionDoc.object();
         } else if (actionDoc.isArray()) {
-            // Multiple actions — take the first one, queue the rest
             QJsonArray actions = actionDoc.array();
             if (!actions.isEmpty()) {
                 actionObj = actions[0].toObject();
@@ -470,149 +518,4 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
     }
 
     Q_EMIT responseReceived(aiText, actionObj);
-}
-
-// ── Offline Fallback Intent Parser ──────────────────────────────────────────
-
-void AIDispatcher::processFallbackLocalIntent(const QString &prompt, const QString &targetEngine)
-{
-    qint64 latencyMs = m_requestTimer.isValid() ? m_requestTimer.elapsed() : 1;
-    QString lower = prompt.toLower();
-    QJsonObject actionObj;
-    QString summary;
-
-    // Timeline editing intents
-    if (lower.contains(QStringLiteral("cut")) || lower.contains(QStringLiteral("split")) ||
-        lower.contains(QStringLiteral("slice"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("cut_at_playhead");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("[Cut] Cutting all clips at current playhead position.");
-    }
-    // Delete intents
-    else if (lower.contains(QStringLiteral("delete")) || lower.contains(QStringLiteral("remove clip")) ||
-             lower.contains(QStringLiteral("erase"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("delete_clips");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("[Delete] Deleting selected clips.");
-    }
-    // Speed intents
-    else if (lower.contains(QStringLiteral("slow")) || lower.contains(QStringLiteral("slow motion"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("set_clip_speed");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("speed")] = 0.5;
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Speed] Applying 0.5x slow motion to selected clip.");
-    }
-    else if (lower.contains(QStringLiteral("fast")) || lower.contains(QStringLiteral("speed up"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("set_clip_speed");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("speed")] = 2.0;
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Speed] Applying 2x speed to selected clip.");
-    }
-    // Effect intents
-    else if (lower.contains(QStringLiteral("glitch"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("add_effect");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("effect_id")] = QStringLiteral("frei0r.glitch0r");
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Effect] Applying Glitch effect to selected clip.");
-    }
-    else if (lower.contains(QStringLiteral("glow"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("add_effect");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("effect_id")] = QStringLiteral("frei0r.glow");
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Effect] Applying Glow effect to selected clip.");
-    }
-    else if (lower.contains(QStringLiteral("blur"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("add_effect");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("effect_id")] = QStringLiteral("boxblur");
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Effect] Applying Box Blur effect to selected clip.");
-    }
-    else if (lower.contains(QStringLiteral("sepia")) || lower.contains(QStringLiteral("vintage"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("add_effect");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("effect_id")] = QStringLiteral("sepia");
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Effect] Applying Sepia/Vintage tone to selected clip.");
-    }
-    // Subtitle intents
-    else if (lower.contains(QStringLiteral("subtitle")) || lower.contains(QStringLiteral("caption"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("add_subtitle");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("text")] = prompt;
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Subtitle] Adding subtitle at current position.");
-    }
-    // Title intents
-    else if (lower.contains(QStringLiteral("title")) || lower.contains(QStringLiteral("intro"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("insert_title");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("text")] = prompt;
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Title] Inserting title card.");
-    }
-    // Undo intents
-    else if (lower.contains(QStringLiteral("undo")) || lower.contains(QStringLiteral("revert"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("undo_last");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("[Undo] Undoing last action.");
-    }
-    // Transition intents
-    else if (lower.contains(QStringLiteral("transition")) || lower.contains(QStringLiteral("dissolve")) ||
-             lower.contains(QStringLiteral("crossfade"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("add_transition");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        QJsonObject params;
-        params[QStringLiteral("transition_id")] = QStringLiteral("dissolve");
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[Transition] Adding dissolve transition.");
-    }
-    // VFX / Natron intents
-    else if (targetEngine == QStringLiteral("natron") || lower.contains(QStringLiteral("vfx")) ||
-             lower.contains(QStringLiteral("roto")) || lower.contains(QStringLiteral("green screen")) ||
-             lower.contains(QStringLiteral("chroma")) || lower.contains(QStringLiteral("track")) ||
-             lower.contains(QStringLiteral("particle"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("natron_vfx");
-        actionObj[QStringLiteral("target")] = QStringLiteral("natron");
-        QJsonObject params;
-        if (lower.contains(QStringLiteral("chroma")) || lower.contains(QStringLiteral("green screen")))
-            params[QStringLiteral("pipeline")] = QStringLiteral("chroma_key");
-        else if (lower.contains(QStringLiteral("roto")))
-            params[QStringLiteral("pipeline")] = QStringLiteral("rotoscope");
-        else if (lower.contains(QStringLiteral("particle")))
-            params[QStringLiteral("pipeline")] = QStringLiteral("particle_system");
-        else
-            params[QStringLiteral("pipeline")] = QStringLiteral("custom");
-        actionObj[QStringLiteral("params")] = params;
-        summary = QStringLiteral("[VFX] Launching Natron VFX headless pipeline.");
-    }
-    // Render intents
-    else if (lower.contains(QStringLiteral("render")) || lower.contains(QStringLiteral("export")) ||
-             lower.contains(QStringLiteral("save video"))) {
-        actionObj[QStringLiteral("action")] = QStringLiteral("render_project");
-        actionObj[QStringLiteral("target")] = QStringLiteral("kdenlive");
-        summary = QStringLiteral("[Render] Opening render/export dialog.");
-    }
-    // Default: acknowledge but no action
-    else {
-        summary = QStringLiteral("[Agent] Understood: \"%1\". Ready on %2 engine. "
-                                 "Try: cut, delete, glow, glitch, blur, slow motion, undo, render, "
-                                 "or describe any edit you want.").arg(prompt, targetEngine);
-    }
-
-    int totalTokens = qMax(1, (prompt.length() + summary.length()) / 4);
-    Q_EMIT metricsUpdated(totalTokens, latencyMs, m_model);
-    Q_EMIT responseReceived(summary, actionObj);
 }

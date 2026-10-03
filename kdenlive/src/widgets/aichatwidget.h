@@ -122,12 +122,15 @@ private Q_SLOTS:
     void slotModelsLoaded(const QJsonArray &models);
     void slotMetricsUpdated(int totalTokens, qint64 latencyMs, const QString &modelId);
     void slotShowInspector();
+    void slotShowAuthDialog();
+    void slotAuthStateChanged(bool isLoggedIn, const QString &email);
 
 private:
     void setupUi();
     void setupWorkspacePage(QWidget *page);
     void setupSettingsPage(QWidget *page);
     void updateModeBadge();
+    void updateAuthButton();
     void updateMetricsDisplay(int totalTokens, qint64 latencyMs, const QString &modelId);
     QString formatMarkdownHtml(const QString &rawText);
 
@@ -148,6 +151,7 @@ private:
     QTextBrowser *m_messageStream{nullptr};
     QLineEdit *m_promptInput{nullptr};
     QPushButton *m_sendBtn{nullptr};
+    QPushButton *m_authBtn{nullptr};
     QPushButton *m_settingsBtn{nullptr};
     QPushButton *m_clearBtn{nullptr};
     QPushButton *m_assetStudioBtn{nullptr};

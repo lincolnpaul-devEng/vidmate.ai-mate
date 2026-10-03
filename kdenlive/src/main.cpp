@@ -16,6 +16,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 // Required for MacOS definition of MLT_LC_NAME
 #include "lib/localeHandling.h"
 #include "render/renderrequest.h"
+#include "widgets/authmanager.h"
 #include <config-kdenlive.h>
 #include <project/projectmanager.h>
 
@@ -600,6 +601,13 @@ int main(int argc, char *argv[])
     }
 
     KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
+
+    // Check for OAuth deep-link callback parameters
+    for (const QString &arg : parser.positionalArguments()) {
+        if (arg.startsWith(QStringLiteral("velo://")) || arg.startsWith(QStringLiteral("kdenlive://"))) {
+            AuthManager::instance()->handleOAuthCallbackUrl(arg);
+        }
+    }
 
     if (!Core::build(packageType, false, parser.isSet(debugOption), app.url.isEmpty() && clipsToLoad.isEmpty() && !parser.isSet(disableWelcome))) {
         // App is crashing, delete config files and restart

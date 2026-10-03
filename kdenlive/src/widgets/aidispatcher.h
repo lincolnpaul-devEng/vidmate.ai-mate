@@ -76,7 +76,6 @@ private Q_SLOTS:
 
 private:
     void processAiResponse(const QByteArray &data);
-    void processFallbackLocalIntent(const QString &prompt, const QString &targetEngine);
     QString buildEditorStateSnapshot();
     QString buildSystemPrompt();
 
