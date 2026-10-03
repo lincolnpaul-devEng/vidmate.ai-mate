@@ -51,9 +51,13 @@ WhisperDownload::WhisperDownload(SpeechToText *engine, const QString &modelName,
     l->addWidget(m_mw);
     m_downloadGroup = new QGroupBox(this);
     m_downloadLayout = new QHBoxLayout;
-    QLabel *lab = new QLabel(i18n("Downloading"), this);
+    QLabel *lab = new QLabel(i18n("Downloading:"), this);
     m_downloadLayout->addWidget(lab);
     m_pb = new QProgressBar(this);
+    m_pb->setRange(0, 100);
+    m_pb->setValue(0);
+    m_pb->setTextVisible(true);
+    m_pb->setFormat(QStringLiteral("%p%"));
     m_downloadLayout->addWidget(m_pb);
     m_downloadGroup->setLayout(m_downloadLayout);
     l->addWidget(m_downloadGroup);
