@@ -51,10 +51,16 @@ void RotatedRectHelper::refreshParams(int pos)
         if (name == QLatin1String("rotation")) {
             rotation = keyframes->getInterpolatedValue(pos, ix).toDouble();
         } else if (name == QLatin1String("rotate_anchor")) {
-            const QString anchorData = keyframes->getInterpolatedValue(pos, ix).toString();
+            const QString anchorData = keyframes->getInterpolatedValue(pos, ix).toString().trimmed();
             qDebug() << "::: GOT ANCHOR DATA: " << anchorData;
-            QStringList anchors = anchorData.split(QLatin1Char(' '));
-            rotation_anchor = QPointF(anchors.at(0).toDouble(), anchors.at(1).toDouble());
+            if (!anchorData.isEmpty()) {
+                QStringList anchors = anchorData.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                if (anchors.size() >= 2) {
+                    rotation_anchor = QPointF(anchors.at(0).toDouble(), anchors.at(1).toDouble());
+                } else if (anchors.size() == 1) {
+                    rotation_anchor = QPointF(anchors.at(0).toDouble(), anchors.at(0).toDouble());
+                }
+            }
         }
     }
 
