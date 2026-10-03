@@ -504,7 +504,22 @@ bool AbstractPythonInterface::setupVenv()
 
 const QString AbstractPythonInterface::locateScript(const QString &script)
 {
-    const QString path = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/%1").arg(script));
+    QString path = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/%1").arg(script));
+    if (path.isEmpty()) {
+        const QString appDir = QCoreApplication::applicationDirPath();
+        const QStringList candidatePaths = {
+            appDir + QStringLiteral("/../../data/scripts/") + script,
+            appDir + QStringLiteral("/../data/scripts/") + script,
+            appDir + QStringLiteral("/data/scripts/") + script,
+            appDir + QStringLiteral("/../share/kdenlive/scripts/") + script
+        };
+        for (const QString &cand : candidatePaths) {
+            if (QFileInfo::exists(cand)) {
+                path = QDir::cleanPath(cand);
+                break;
+            }
+        }
+    }
     if (path.isEmpty()) {
         Q_EMIT setupError(i18n("The %1 script was not found, check your install.", script));
     }

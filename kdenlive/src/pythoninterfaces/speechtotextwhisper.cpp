@@ -39,11 +39,25 @@ void SpeechToTextWhisper::buildWhisperDeps(bool enableSeamless)
     m_dependencies.clear();
     m_optionalDeps.clear();
     QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/whisper/requirements-whisper.txt"));
+    if (scriptPath.isEmpty()) {
+        const QString appDir = QCoreApplication::applicationDirPath();
+        const QString cand = appDir + QStringLiteral("/../../data/scripts/whisper/requirements-whisper.txt");
+        if (QFileInfo::exists(cand)) {
+            scriptPath = QDir::cleanPath(cand);
+        }
+    }
     if (!scriptPath.isEmpty()) {
         m_dependencies.insert(scriptPath, QString());
     }
     if (enableSeamless) {
         scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/whisper/requirements-seamless.txt"));
+        if (scriptPath.isEmpty()) {
+            const QString appDir = QCoreApplication::applicationDirPath();
+            const QString cand = appDir + QStringLiteral("/../../data/scripts/whisper/requirements-seamless.txt");
+            if (QFileInfo::exists(cand)) {
+                scriptPath = QDir::cleanPath(cand);
+            }
+        }
         if (!scriptPath.isEmpty()) {
             m_dependencies.insert(scriptPath, QString());
             m_optionalDeps << QStringLiteral("srt_equalizer");
@@ -252,6 +266,13 @@ const QString SpeechToTextWhisper::installMessage() const
 bool SpeechToTextWhisper::installRequirements(QString reqFile)
 {
     QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/whisper/%1").arg(reqFile));
+    if (scriptPath.isEmpty()) {
+        const QString appDir = QCoreApplication::applicationDirPath();
+        const QString cand = appDir + QStringLiteral("/../../data/scripts/whisper/%1").arg(reqFile);
+        if (QFileInfo::exists(cand)) {
+            scriptPath = QDir::cleanPath(cand);
+        }
+    }
     if (!scriptPath.isEmpty()) {
         return AbstractPythonInterface::installRequirements(scriptPath);
     }
