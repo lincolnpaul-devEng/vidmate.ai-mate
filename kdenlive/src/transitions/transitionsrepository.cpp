@@ -130,6 +130,22 @@ QStringList TransitionsRepository::assetDirs() const
 
     dirs << qtDataDir(QStringLiteral("transitions"));
 
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidateDirs = {
+        appDir + QStringLiteral("/../../data/transitions"),
+        appDir + QStringLiteral("/../data/transitions"),
+        appDir + QStringLiteral("/data/transitions"),
+        appDir + QStringLiteral("/../share/kdenlive/transitions")
+    };
+    for (const QString &cand : candidateDirs) {
+        if (QDir(cand).exists()) {
+            QString clean = QDir::cleanPath(cand);
+            if (!dirs.contains(clean)) {
+                dirs << clean;
+            }
+        }
+    }
+
     return dirs;
 }
 

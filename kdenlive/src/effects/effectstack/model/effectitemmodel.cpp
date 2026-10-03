@@ -39,10 +39,17 @@ EffectItemModel::EffectItemModel(const QList<QVariant> &effectData, std::unique_
 // static
 std::shared_ptr<EffectItemModel> EffectItemModel::construct(const QString &effectId, std::shared_ptr<AbstractTreeModel> stack, bool effectEnabled)
 {
-    Q_ASSERT(EffectsRepository::get()->exists(effectId));
+    if (!EffectsRepository::get()->exists(effectId)) {
+        qWarning() << "Effect not found in repository:" << effectId;
+        return nullptr;
+    }
     QDomElement xml = EffectsRepository::get()->getXml(effectId);
 
     std::unique_ptr<Mlt::Properties> effect = EffectsRepository::get()->getEffect(effectId);
+    if (!effect) {
+        qWarning() << "Could not instantiate effect:" << effectId;
+        return nullptr;
+    }
     effect->set("kdenlive_id", effectId.toUtf8().constData());
 
     QList<QVariant> data;
@@ -57,11 +64,17 @@ std::shared_ptr<EffectItemModel> EffectItemModel::construct(const QString &effec
 std::shared_ptr<EffectItemModel> EffectItemModel::construct(std::unique_ptr<Mlt::Properties> effect, std::shared_ptr<AbstractTreeModel> stack,
                                                             const QString &originalDecimalPoint)
 {
+    if (!effect) {
+        return nullptr;
+    }
     QString effectId = effect->get("kdenlive_id");
     if (effectId.isEmpty()) {
         effectId = effect->get("mlt_service");
     }
-    Q_ASSERT(EffectsRepository::get()->exists(effectId));
+    if (!EffectsRepository::get()->exists(effectId)) {
+        qWarning() << "Effect not found in repository:" << effectId;
+        return nullptr;
+    }
 
     // Get the effect XML and add parameter values from the project file
     QDomElement xml = EffectsRepository::get()->getXml(effectId);

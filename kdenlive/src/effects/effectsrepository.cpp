@@ -216,6 +216,26 @@ QStringList EffectsRepository::assetDirs() const
     dirs << qtDataDir(QStringLiteral("effect-templates"));
     dirs << qtDataDir(QStringLiteral("effects"));
 
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidateDirs = {
+        appDir + QStringLiteral("/../../data/effects"),
+        appDir + QStringLiteral("/../data/effects"),
+        appDir + QStringLiteral("/data/effects"),
+        appDir + QStringLiteral("/../share/kdenlive/effects"),
+        appDir + QStringLiteral("/../../data/effect-templates"),
+        appDir + QStringLiteral("/../data/effect-templates"),
+        appDir + QStringLiteral("/data/effect-templates"),
+        appDir + QStringLiteral("/../share/kdenlive/effect-templates")
+    };
+    for (const QString &cand : candidateDirs) {
+        if (QDir(cand).exists()) {
+            QString clean = QDir::cleanPath(cand);
+            if (!dirs.contains(clean)) {
+                dirs << clean;
+            }
+        }
+    }
+
     return dirs;
 }
 

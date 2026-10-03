@@ -481,6 +481,9 @@ bool EffectStackModel::fromXml(const QDomElement &effectsXml, Fun &undo, Fun &re
             }
         }
         auto effect = EffectItemModel::construct(effectId, shared_from_this(), effectEnabled);
+        if (!effect) {
+            continue;
+        }
         const QString in = node.attribute(QStringLiteral("in"));
         const QString out = node.attribute(QStringLiteral("out"));
         if (!out.isEmpty()) {
@@ -635,6 +638,9 @@ bool EffectStackModel::copyEffectWithUndo(const std::shared_ptr<AbstractEffectIt
         }
     }
     auto effect = EffectItemModel::construct(effectId, shared_from_this(), enabled);
+    if (!effect) {
+        return false;
+    }
     effect->setParameters(sourceEffect->getAllParameters());
     if (sourceEffect->isBuiltIn()) {
         effect->setBuiltIn();
@@ -754,6 +760,9 @@ std::pair<bool, bool> EffectStackModel::doAppendEffect(const QString &effectId, 
         return {copyXmlEffect(doc), false};
     }
     auto effect = EffectItemModel::construct(effectId, shared_from_this());
+    if (!effect) {
+        return {false, true};
+    }
     PlaylistState::ClipState state = pCore->getItemState(m_ownerId).first;
     if (state == PlaylistState::VideoOnly) {
         if (effect->isAudio()) {
@@ -1551,6 +1560,9 @@ void EffectStackModel::importEffects(const std::weak_ptr<Mlt::Service> &service,
                 asset->inherit(*(filter));
                 effect = EffectItemModel::construct(std::move(asset), shared_from_this(), originalDecimalPoint);
             }
+            if (!effect) {
+                continue;
+            }
             if (state == PlaylistState::VideoOnly) {
                 if (effect->isAudio()) {
                     // Don't import effect
@@ -2174,6 +2186,9 @@ void EffectStackModel::appendAudioBuildInEffects()
     }
     QWriteLocker lock(&m_lock);
     auto effect = EffectItemModel::construct(QStringLiteral("volume"), shared_from_this(), false);
+    if (!effect) {
+        return;
+    }
     effect->filter().set("disable", 1);
     effect->filter().set("kdenlive:kfrhidden", 1);
     effect->setBuiltIn();
@@ -2201,6 +2216,9 @@ void EffectStackModel::appendVideoBuildInEffects()
         }
         QWriteLocker locker(&m_lock);
         std::shared_ptr<EffectItemModel> effect = EffectItemModel::construct(QStringLiteral("qtblend"), shared_from_this(), false);
+        if (!effect) {
+            return;
+        }
         effect->prepareKeyframes();
         effect->filter().set("disable", 1);
         // effect->filter().set("kdenlive:kfrhidden", 1);
