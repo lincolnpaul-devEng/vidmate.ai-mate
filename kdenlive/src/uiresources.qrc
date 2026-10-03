@@ -2,6 +2,9 @@
     <qresource prefix="/kxmlgui5/kdenlive">
         <file>kdenliveui.rc</file>
     </qresource>
+    <qresource prefix="/theme">
+        <file alias="vidmate-theme.qss">theme/vidmate-theme.qss</file>
+    </qresource>
     <qresource prefix="/data">
         <file alias="included_effects.txt">../data/included_effects.txt</file>
         <file alias="excluded_effects.txt">../data/excluded_effects.txt</file>

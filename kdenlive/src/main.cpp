@@ -52,6 +52,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFile>
 #include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -330,6 +331,14 @@ int main(int argc, char *argv[])
 #endif
 
     app.setAttribute(Qt::AA_DontCreateNativeWidgetSiblings, true);
+
+    // VidMate flat dark theme (set VIDMATE_CLASSIC_UI=1 to keep the stock look)
+    if (qEnvironmentVariableIsEmpty("VIDMATE_CLASSIC_UI")) {
+        QFile themeFile(QStringLiteral(":/theme/vidmate-theme.qss"));
+        if (themeFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            app.setStyleSheet(QString::fromUtf8(themeFile.readAll()));
+        }
+    }
 
     // Create command line parser with options
     QCommandLineParser parser;
