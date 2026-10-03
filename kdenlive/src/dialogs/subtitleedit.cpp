@@ -410,10 +410,11 @@ SubtitleEdit::SubtitleEdit(QWidget *parent)
         }
         applyFontSize();
     });
-    QAction *checkSimpleEditor = new QAction(QIcon::fromTheme(QStringLiteral("document-edit")), i18n("Simple Editor"), this);
+    QAction *checkSimpleEditor = new QAction(QIcon::fromTheme(QStringLiteral("document-edit")), i18n("Simple Editor (Hide Tags)"), this);
     checkSimpleEditor->setCheckable(true);
-    checkSimpleEditor->setChecked(false);
-    simpleSubText->hide();
+    checkSimpleEditor->setChecked(true);
+    subText->hide();
+    simpleSubText->show();
     connect(checkSimpleEditor, &QAction::triggered, this, [this](bool checked) {
         if (checked) {
             subText->hide();
@@ -899,6 +900,28 @@ void SubtitleEdit::syncSimpleText()
                 break;
             default:
                 break;
+            }
+        }
+
+        const static QRegularExpression fontNameRegex("\\\\fn([^\\\\}]+)");
+        const static QRegularExpression fontSizeRegex("\\\\fs(\\d+)");
+        const static QRegularExpression fontColorRegex("\\\\(?:1?c)&H([0-9a-fA-F]{6})&?");
+        QRegularExpressionMatch fontNameMatch = fontNameRegex.match(tags);
+        QRegularExpressionMatch fontSizeMatch = fontSizeRegex.match(tags);
+        QRegularExpressionMatch fontColorMatch = fontColorRegex.match(tags);
+        if (fontNameMatch.hasMatch()) {
+            format.setFontFamilies({fontNameMatch.captured(1).trimmed()});
+        }
+        if (fontSizeMatch.hasMatch()) {
+            format.setFontPointSize(fontSizeMatch.captured(1).toDouble());
+        }
+        if (fontColorMatch.hasMatch()) {
+            QString hex = fontColorMatch.captured(1);
+            if (hex.length() == 6) {
+                int b = hex.mid(0, 2).toInt(nullptr, 16);
+                int g = hex.mid(2, 2).toInt(nullptr, 16);
+                int r = hex.mid(4, 2).toInt(nullptr, 16);
+                format.setForeground(QColor(r, g, b));
             }
         }
 

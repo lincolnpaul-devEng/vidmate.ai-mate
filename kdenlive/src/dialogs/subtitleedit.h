@@ -61,7 +61,7 @@ private:
     std::shared_ptr<SubtitleModel> m_model;
     int m_activeSub{-1};
     int m_layer;
-    bool m_isSimpleEdit{false};
+    bool m_isSimpleEdit{true};
     /** @brief A list as the pos, original length and simplified length of each
      *  override block and escape sequences. This is used to sync the cursor position
      */
