@@ -23,8 +23,10 @@
 #include <KZip>
 
 #include <QButtonGroup>
+#include <QLabel>
 #include <QMimeData>
 #include <QMimeDatabase>
+#include <QProgressBar>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -149,6 +151,20 @@ PluginsSettings::PluginsSettings(QWidget *parent)
 
     m_msgWhisper = new PythonDependencyMessage(this, m_sttWhisper);
     message_layout_wr->addWidget(m_msgWhisper);
+
+    m_installStatusLabel = new QLabel(this);
+    m_installStatusLabel->setWordWrap(true);
+    m_installStatusLabel->setStyleSheet(QStringLiteral("color: #8a8a92; font-size: 11px; padding: 2px 0;"));
+    m_installStatusLabel->setVisible(false);
+    message_layout_wr->addWidget(m_installStatusLabel);
+
+    m_installProgressBar = new QProgressBar(this);
+    m_installProgressBar->setRange(0, 0);
+    m_installProgressBar->setTextVisible(true);
+    m_installProgressBar->setFixedHeight(18);
+    m_installProgressBar->setVisible(false);
+    message_layout_wr->addWidget(m_installProgressBar);
+
     QMap<QString, QString> whisperLanguages = m_sttWhisper->speechLanguages();
     QMapIterator<QString, QString> j(whisperLanguages);
     while (j.hasNext()) {
@@ -161,15 +177,33 @@ PluginsSettings::PluginsSettings(QWidget *parent)
     }
     script_log->hide();
     script_log->setCenterOnScroll(true);
-    connect(m_sttWhisper, &SpeechToText::scriptStarted, this, [this]() { QMetaObject::invokeMethod(script_log, "clear"); });
+    connect(m_sttWhisper, &SpeechToText::scriptStarted, this, [this]() {
+        m_installProgressBar->setRange(0, 0);
+        m_installProgressBar->setVisible(true);
+        m_installStatusLabel->setText(i18n("Starting installation…"));
+        m_installStatusLabel->setVisible(true);
+        script_log->hide();
+        QMetaObject::invokeMethod(script_log, "clear");
+    });
     connect(m_sttWhisper, &SpeechToText::installFeedback, this, &PluginsSettings::showSpeechLog, Qt::QueuedConnection);
     connect(m_sttWhisper, &SpeechToText::scriptFinished, this, [this, modelDownload](const QStringList &args) {
+        m_installProgressBar->setRange(0, 100);
+        m_installProgressBar->setValue(100);
+        m_installStatusLabel->setText(i18n("Installation complete"));
+        QTimer::singleShot(2500, this, [this]() {
+            if (m_installProgressBar) m_installProgressBar->setVisible(false);
+            if (m_installStatusLabel) m_installStatusLabel->setVisible(false);
+        });
         if (args.join(QLatin1Char(' ')).contains("requirements-seamless.txt")) {
             install_seamless->setText(i18n("Downloading multilingual model…"));
             modelDownload->setVisible(true);
             modelDownload->startDownload();
         }
         QMetaObject::invokeMethod(m_msgWhisper, "checkAfterInstall", Qt::QueuedConnection);
+    });
+    connect(m_sttWhisper, &SpeechToText::setupError, this, [this](const QString &) {
+        if (m_installProgressBar) m_installProgressBar->setVisible(false);
+        if (m_installStatusLabel) m_installStatusLabel->setVisible(false);
     });
     connect(downloadButton, &QPushButton::clicked, this, [this]() {
         disconnect(m_sttWhisper, &SpeechToText::installFeedback, this, &PluginsSettings::showSpeechLog);
@@ -281,15 +315,49 @@ PluginsSettings::PluginsSettings(QWidget *parent)
     // Sam
     m_pythonSamLabel = new PythonDependencyMessage(this, m_samInterface, false);
     message_layout_sam->addWidget(m_pythonSamLabel);
+
+    m_samInstallStatusLabel = new QLabel(this);
+    m_samInstallStatusLabel->setWordWrap(true);
+    m_samInstallStatusLabel->setStyleSheet(QStringLiteral("color: #8a8a92; font-size: 11px; padding: 2px 0;"));
+    m_samInstallStatusLabel->setVisible(false);
+    message_layout_sam->addWidget(m_samInstallStatusLabel);
+
+    m_samInstallProgressBar = new QProgressBar(this);
+    m_samInstallProgressBar->setRange(0, 0);
+    m_samInstallProgressBar->setTextVisible(true);
+    m_samInstallProgressBar->setFixedHeight(18);
+    m_samInstallProgressBar->setVisible(false);
+    message_layout_sam->addWidget(m_samInstallProgressBar);
+
     connect(m_samInterface, &AbstractPythonInterface::gotPythonSize, this, [this](const QString &label) {
         sam_venv_size->setText(label);
         deleteSamVenv->setEnabled(!label.isEmpty());
         sam_rebuild->setEnabled(!label.isEmpty());
     });
     m_samInterface->checkVenv(true);
+    connect(m_samInterface, &AbstractPythonInterface::scriptStarted, this, [this]() {
+        m_samInstallProgressBar->setRange(0, 0);
+        m_samInstallProgressBar->setVisible(true);
+        m_samInstallStatusLabel->setText(i18n("Starting installation…"));
+        m_samInstallStatusLabel->setVisible(true);
+        script_sam_log->hide();
+    });
     connect(m_samInterface, &AbstractPythonInterface::installFeedback, this, &PluginsSettings::showSamLog, Qt::QueuedConnection);
     connect(m_samInterface, &AbstractPythonInterface::scriptFinished, this,
-            [this]() { QMetaObject::invokeMethod(m_pythonSamLabel, "checkAfterInstall", Qt::QueuedConnection); });
+            [this]() {
+                m_samInstallProgressBar->setRange(0, 100);
+                m_samInstallProgressBar->setValue(100);
+                m_samInstallStatusLabel->setText(i18n("Installation complete"));
+                QTimer::singleShot(2500, this, [this]() {
+                    if (m_samInstallProgressBar) m_samInstallProgressBar->setVisible(false);
+                    if (m_samInstallStatusLabel) m_samInstallStatusLabel->setVisible(false);
+                });
+                QMetaObject::invokeMethod(m_pythonSamLabel, "checkAfterInstall", Qt::QueuedConnection);
+            });
+    connect(m_samInterface, &AbstractPythonInterface::setupError, this, [this](const QString &) {
+        if (m_samInstallProgressBar) m_samInstallProgressBar->setVisible(false);
+        if (m_samInstallStatusLabel) m_samInstallStatusLabel->setVisible(false);
+    });
     combo_sam_model->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     connect(downloadSamButton, &QPushButton::clicked, this, &PluginsSettings::downloadSamModels);
     connect(deleteSamVenv, &QPushButton::clicked, this, &PluginsSettings::doDeleteSamVenv);
@@ -745,16 +813,81 @@ void PluginsSettings::checkWhisperFolderSize()
 
 void PluginsSettings::showSpeechLog(const QString &jobData)
 {
-    script_log->show();
+    if (m_installProgressBar && !m_installProgressBar->isVisible()) {
+        m_installProgressBar->setVisible(true);
+        m_installStatusLabel->setVisible(true);
+    }
+
+    const QString trimmed = jobData.trimmed();
+    if (trimmed.startsWith(QLatin1String("Downloading "))) {
+        QString pkg = trimmed.section(QLatin1Char(' '), 1, 1);
+        if (pkg.contains(QLatin1Char('-'))) {
+            pkg = pkg.section(QLatin1Char('-'), 0, 0);
+        }
+        if (!pkg.isEmpty()) {
+            m_installStatusLabel->setText(i18n("Downloading %1…", pkg));
+        }
+    } else if (trimmed.startsWith(QLatin1String("Collecting "))) {
+        QString pkg = trimmed.section(QLatin1Char(' '), 1, 1);
+        m_installStatusLabel->setText(i18n("Resolving %1…", pkg));
+    } else if (trimmed.startsWith(QLatin1String("Installing collected packages")) || trimmed.startsWith(QLatin1String("Installing "))) {
+        m_installStatusLabel->setText(i18n("Installing packages…"));
+    } else if (trimmed.startsWith(QLatin1String("Successfully installed"))) {
+        m_installStatusLabel->setText(i18n("Packages installed successfully"));
+        m_installProgressBar->setRange(0, 100);
+        m_installProgressBar->setValue(100);
+    }
+
+    if (trimmed.contains(QLatin1Char('%'))) {
+        bool ok;
+        int progress = trimmed.section(QLatin1Char('%'), 0, 0).section(QLatin1Char(' '), -1).simplified().toInt(&ok);
+        if (ok && progress >= 0 && progress <= 100) {
+            if (m_installProgressBar->maximum() == 0) {
+                m_installProgressBar->setRange(0, 100);
+            }
+            m_installProgressBar->setValue(progress);
+        }
+    }
+
     script_log->appendPlainText(jobData);
-    script_log->ensureCursorVisible();
 }
 
 void PluginsSettings::showSamLog(const QString &jobData)
 {
-    script_sam_log->show();
+    if (m_samInstallProgressBar && !m_samInstallProgressBar->isVisible()) {
+        m_samInstallProgressBar->setVisible(true);
+        m_samInstallStatusLabel->setVisible(true);
+    }
+
+    const QString trimmed = jobData.trimmed();
+    if (trimmed.startsWith(QLatin1String("Downloading "))) {
+        QString pkg = trimmed.section(QLatin1Char(' '), 1, 1);
+        if (!pkg.isEmpty()) {
+            m_samInstallStatusLabel->setText(i18n("Downloading %1…", pkg));
+        }
+    } else if (trimmed.startsWith(QLatin1String("Collecting "))) {
+        QString pkg = trimmed.section(QLatin1Char(' '), 1, 1);
+        m_samInstallStatusLabel->setText(i18n("Resolving %1…", pkg));
+    } else if (trimmed.startsWith(QLatin1String("Installing collected packages")) || trimmed.startsWith(QLatin1String("Installing "))) {
+        m_samInstallStatusLabel->setText(i18n("Installing packages…"));
+    } else if (trimmed.startsWith(QLatin1String("Successfully installed"))) {
+        m_samInstallStatusLabel->setText(i18n("Packages installed successfully"));
+        m_samInstallProgressBar->setRange(0, 100);
+        m_samInstallProgressBar->setValue(100);
+    }
+
+    if (trimmed.contains(QLatin1Char('%'))) {
+        bool ok;
+        int progress = trimmed.section(QLatin1Char('%'), 0, 0).section(QLatin1Char(' '), -1).simplified().toInt(&ok);
+        if (ok && progress >= 0 && progress <= 100) {
+            if (m_samInstallProgressBar->maximum() == 0) {
+                m_samInstallProgressBar->setRange(0, 100);
+            }
+            m_samInstallProgressBar->setValue(progress);
+        }
+    }
+
     script_sam_log->appendPlainText(jobData);
-    script_sam_log->ensureCursorVisible();
 }
 
 void PluginsSettings::slotCheckSttConfig()

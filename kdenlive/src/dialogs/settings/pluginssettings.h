@@ -15,6 +15,8 @@
 class SamInterface;
 class PythonDependencyMessage;
 class KJob;
+class QProgressBar;
+class QLabel;
 
 class SpeechList : public QListWidget
 {
@@ -52,6 +54,10 @@ private:
     SamInterface *m_samInterface;
     SpeechList *m_speechListWidget;
     QAction *m_downloadModelAction;
+    QProgressBar *m_installProgressBar{nullptr};
+    QLabel *m_installStatusLabel{nullptr};
+    QProgressBar *m_samInstallProgressBar{nullptr};
+    QLabel *m_samInstallStatusLabel{nullptr};
 
     /** @brief Check folder size */
     void checkWhisperFolderSize();
