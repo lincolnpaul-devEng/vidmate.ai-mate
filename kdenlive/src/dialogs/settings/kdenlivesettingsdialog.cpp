@@ -87,7 +87,9 @@ KdenliveSettingsDialog::KdenliveSettingsDialog(QMap<QString, QString> mappable_a
     m_configColors.setupUi(p11);
 
     // Initialize clip color buttons with live computed colors
-    if (auto *tc = pCore->window()->getCurrentTimeline()->controller()) {
+    TimelineWidget *tw = pCore->window() ? pCore->window()->getCurrentTimeline() : nullptr;
+    if (tw && tw->controller()) {
+        auto *tc = tw->controller();
         m_configColors.videoColor->setColor(tc->getTimelineClipColor(ClipType::Video));
         m_configColors.audioColor->setColor(tc->getTimelineClipColor(ClipType::Audio));
         m_configColors.titleColor->setColor(tc->getTimelineClipColor(ClipType::Text));
@@ -246,9 +248,14 @@ void KdenliveSettingsDialog::initMiscPage()
     connect(m_configMisc.preferredcomposite, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [&]() {
         if (m_configMisc.preferredcomposite->currentText() != KdenliveSettings::preferredcomposite()) {
             KdenliveSettings::setPreferredcomposite(m_configMisc.preferredcomposite->currentText());
-            int mode = pCore->currentDoc()->getSequenceProperty(pCore->window()->getCurrentTimeline()->getUuid(), QStringLiteral("compositing")).toInt();
-            pCore->window()->getCurrentTimeline()->controller()->switchCompositing(mode);
-            pCore->currentDoc()->setModified();
+            if (pCore->currentDoc() && pCore->window() && pCore->window()->getCurrentTimeline()) {
+                auto *tw = pCore->window()->getCurrentTimeline();
+                int mode = pCore->currentDoc()->getSequenceProperty(tw->getUuid(), QStringLiteral("compositing")).toInt();
+                if (tw->controller()) {
+                    tw->controller()->switchCompositing(mode);
+                }
+                pCore->currentDoc()->setModified();
+            }
         }
     });
 }
@@ -1400,7 +1407,9 @@ void KdenliveSettingsDialog::updateSettings()
     }
 
     bool colorsChanged = false;
-    if (auto *tc = pCore->window()->getCurrentTimeline()->controller()) {
+    TimelineWidget *tw = pCore->window() ? pCore->window()->getCurrentTimeline() : nullptr;
+    if (tw && tw->controller()) {
+        auto *tc = tw->controller();
         QColor videoCol = m_configColors.videoColor->color();
         QColor videoDefault = tc->getDefaultClipColor(ClipType::Video);
         QColor videoToStore = (videoCol == videoDefault) ? QColor(0,0,0,0) : videoCol;
