@@ -211,18 +211,20 @@ Window {
                     anchors.right: parent.right
                     anchors.margins: 10
                     color: "#FFFFFF"
-                    text: KI18n.i18n("Made by KDE")
+                    font.bold: true
+                    text: KI18n.i18n("VidMate AI-Mate")
                 }
 
-                // Made By KDE
+                // VidMate Logo
                 Image {
                     id: kdelogo
                     asynchronous: true
                     anchors.verticalCenter: kdelabel.verticalCenter
                     anchors.right: kdelabel.left
-                    height: kdelabel.height
+                    anchors.rightMargin: 6
+                    height: kdelabel.height * 1.2
                     width: height
-                    source: "qrc:/pics/kde-logo.png"
+                    source: "qrc:/pics/vidmate-logo.png"
                     fillMode: Image.PreserveAspectFit
                 }
             }

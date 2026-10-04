@@ -99,23 +99,25 @@ Window {
                 source: "qrc:/pics/splash-background.webp"
                 verticalAlignment: Image.AlignTop
                 fillMode: Image.PreserveAspectCrop
-                // Made By KDE
+                // VidMate Logo
                 Image {
                     id: kdelogo
                     asynchronous: true
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.margins: 10
-                    height: kdelabel.height
+                    height: kdelabel.height * 1.2
                     width: height
-                    source: "qrc:/pics/kde-logo.png"
+                    source: "qrc:/pics/vidmate-logo.png"
                     fillMode: Image.PreserveAspectFit
                 }
                 Label {
                     id: kdelabel
                     anchors.verticalCenter: kdelogo.verticalCenter
                     anchors.left: kdelogo.right
-                    text: KI18n.i18n("Made by KDE")
+                    anchors.leftMargin: 6
+                    text: KI18n.i18n("VidMate AI-Mate")
+                    font.bold: true
                     color: "#ffffff"
                 }
             }
