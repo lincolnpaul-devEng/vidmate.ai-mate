@@ -156,6 +156,8 @@ private Q_SLOTS:
     void slotProcessWhisperSpeech();
     void slotProcessSpeechError();
     void slotProcessSpeechStatus(int, QProcess::ExitStatus status);
+    /** @brief Apply speech transcript directly as subtitles to the timeline */
+    void applyAsSubtitles();
     /** @brief insert currently selected zones to timeline */
     void insertToTimeline();
     /** @brief Preview current edited text in the clip monitor */

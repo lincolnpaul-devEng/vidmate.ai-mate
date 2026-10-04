@@ -5,6 +5,7 @@
 
 #include "textbasededit.h"
 #include "bin/bin.h"
+#include "bin/model/subtitlemodel.hpp"
 #include "bin/projectclip.h"
 #include "bin/projectitemmodel.h"
 #include "bin/projectsubclip.h"
@@ -14,6 +15,7 @@
 #include "monitor/monitor.h"
 #include "pythoninterfaces/speechtotextvosk.h"
 #include "pythoninterfaces/speechtotextwhisper.h"
+#include "timeline2/model/timelineitemmodel.hpp"
 #include "timeline2/view/timelinecontroller.h"
 #include "timeline2/view/timelinewidget.h"
 #include <profiles/profilemodel.hpp>
@@ -24,6 +26,7 @@
 #include <KUrlRequesterDialog>
 
 #include <QAbstractTextDocumentLayout>
+#include <QDir>
 #include <QEvent>
 #include <QFontDatabase>
 #include <QJsonArray>
@@ -35,6 +38,7 @@
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextDocumentFragment>
+#include <QTextStream>
 #include <QToolButton>
 
 #include <memory>
@@ -703,19 +707,22 @@ TextBasedEdit::TextBasedEdit(QWidget *parent)
     });
 
     QMenu *insertMenu = new QMenu(this);
+    QAction *applyAsSubtitles = new QAction(QIcon::fromTheme(QStringLiteral("add-subtitle")), i18n("Apply as Subtitles to Timeline"), this);
     QAction *createSequence = new QAction(QIcon::fromTheme(QStringLiteral("list-add")), i18n("Create new sequence with edit"), this);
     QAction *insertSelection = new QAction(QIcon::fromTheme(QStringLiteral("timeline-insert")), i18n("Insert selection in timeline"), this);
     QAction *saveAsPlaylist = new QAction(QIcon::fromTheme(QStringLiteral("document-save-as")), i18n("Save edited text in a playlist file"), this);
+    insertMenu->addAction(applyAsSubtitles);
     insertMenu->addAction(createSequence);
     insertMenu->addAction(insertSelection);
     insertMenu->addSeparator();
     insertMenu->addAction(saveAsPlaylist);
     button_insert->setMenu(insertMenu);
-    button_insert->setDefaultAction(createSequence);
-    button_insert->setToolTip(i18n("Create new sequence with text edit"));
+    button_insert->setDefaultAction(applyAsSubtitles);
+    button_insert->setToolTip(i18n("Apply transcript as subtitles or create sequence"));
     button_search->setToolTip(i18n("Search in text"));
     language_box->setToolTip(i18n("Language"));
 
+    connect(applyAsSubtitles, &QAction::triggered, this, &TextBasedEdit::applyAsSubtitles);
     connect(createSequence, &QAction::triggered, this, &TextBasedEdit::createSequence);
     connect(insertSelection, &QAction::triggered, this, &TextBasedEdit::insertToTimeline);
     connect(saveAsPlaylist, &QAction::triggered, this, [&]() { previewPlaylist(true); });
@@ -1582,6 +1589,137 @@ void TextBasedEdit::deleteItem()
             curs.movePosition(QTextCursor::NextBlock, QTextCursor::MoveAnchor);
         }
     }
+}
+
+static QString formatSrtTimestamp(double seconds)
+{
+    int totalMs = qRound(seconds * 1000.0);
+    if (totalMs < 0) {
+        totalMs = 0;
+    }
+    int ms = totalMs % 1000;
+    int totalSec = totalMs / 1000;
+    int sec = totalSec % 60;
+    int totalMin = totalSec / 60;
+    int min = totalMin % 60;
+    int hours = totalMin / 60;
+    return QStringLiteral("%1:%2:%3,%4")
+        .arg(hours, 2, 10, QLatin1Char('0'))
+        .arg(min, 2, 10, QLatin1Char('0'))
+        .arg(sec, 2, 10, QLatin1Char('0'))
+        .arg(ms, 3, 10, QLatin1Char('0'));
+}
+
+void TextBasedEdit::applyAsSubtitles()
+{
+    if (m_visualEditor->toPlainText().trimmed().isEmpty()) {
+        showMessage(i18n("No speech text to export"), KMessageWidget::Information);
+        return;
+    }
+
+    if (!pCore->window() || !pCore->window()->getCurrentTimeline()) {
+        showMessage(i18n("No active timeline found"), KMessageWidget::Warning);
+        return;
+    }
+
+    // Ensure subtitle track is created and visible
+    pCore->window()->showSubtitleTrack();
+
+    TimelineWidget *timelineWidget = pCore->window()->getCurrentTimeline();
+    std::shared_ptr<TimelineItemModel> timelineModel = timelineWidget ? timelineWidget->model() : nullptr;
+    if (!timelineModel) {
+        showMessage(i18n("No active timeline found"), KMessageWidget::Warning);
+        return;
+    }
+
+    std::shared_ptr<SubtitleModel> subModel = timelineModel->getSubtitleModel();
+    if (!subModel) {
+        showMessage(i18n("Failed to initialize subtitle track"), KMessageWidget::Warning);
+        return;
+    }
+
+    // Rebuild speech zones to match current edited document
+    m_visualEditor->rebuildZones();
+
+    // Determine target timeline frame offset
+    int offsetFrame = 0;
+    bool foundPlacement = false;
+
+    // First check if any clip currently selected in the timeline matches m_binId
+    const std::unordered_set<int> selection = timelineModel->getCurrentSelection();
+    for (const auto &s : selection) {
+        if (timelineModel->isClip(s) && timelineModel->getClipBinId(s) == m_binId) {
+            offsetFrame = timelineModel->getClipPosition(s) - timelineModel->getClipIn(s);
+            foundPlacement = true;
+            break;
+        }
+    }
+
+    // If no matching selected clip, search the timeline for any placed instance of m_binId
+    if (!foundPlacement) {
+        for (int t = 0; t < timelineModel->rowCount(); ++t) {
+            QModelIndex trackIndex = timelineModel->index(t, 0);
+            for (int c = 0; c < timelineModel->rowCount(trackIndex); ++c) {
+                QModelIndex clipIndex = timelineModel->index(c, 0, trackIndex);
+                int cid = int(clipIndex.internalId());
+                if (timelineModel->isClip(cid) && timelineModel->getClipBinId(cid) == m_binId) {
+                    offsetFrame = timelineModel->getClipPosition(cid) - timelineModel->getClipIn(cid);
+                    foundPlacement = true;
+                    break;
+                }
+            }
+            if (foundPlacement) {
+                break;
+            }
+        }
+    }
+
+    // If clip is not on timeline at all, fallback to current timeline cursor position
+    if (!foundPlacement) {
+        offsetFrame = pCore->getMonitorPosition();
+    }
+
+    // Build temporary SRT file
+    QTemporaryFile tmpSrt(QDir::temp().filePath(QStringLiteral("kdenlive_speech_XXXXXX.srt")));
+    tmpSrt.setAutoRemove(false);
+    if (!tmpSrt.open()) {
+        showMessage(i18n("Cannot create temporary subtitle file"), KMessageWidget::Warning);
+        return;
+    }
+
+    QTextStream out(&tmpSrt);
+    int srtIndex = 1;
+    QTextBlock block = m_document.begin();
+    int blockIdx = 0;
+    const QString noSpeechStr = i18n("No speech");
+
+    while (block.isValid()) {
+        QString text = block.text().trimmed();
+        if (!text.isEmpty() && text != noSpeechStr && blockIdx < m_visualEditor->speechZones.size()) {
+            QPair<double, double> zone = m_visualEditor->speechZones.at(blockIdx);
+            if (zone.second > zone.first) {
+                out << srtIndex++ << "\n";
+                out << formatSrtTimestamp(zone.first) << " --> " << formatSrtTimestamp(zone.second) << "\n";
+                out << text << "\n\n";
+            }
+        }
+        block = block.next();
+        blockIdx++;
+    }
+    out.flush();
+    const QString tmpPath = tmpSrt.fileName();
+    tmpSrt.close();
+
+    if (srtIndex == 1) {
+        QFile::remove(tmpPath);
+        showMessage(i18n("No subtitles found in transcript"), KMessageWidget::Information);
+        return;
+    }
+
+    subModel->importSubtitle(tmpPath, offsetFrame, true);
+    QFile::remove(tmpPath);
+
+    showMessage(i18n("Subtitles successfully applied to timeline track"), KMessageWidget::Positive);
 }
 
 void TextBasedEdit::insertToTimeline()

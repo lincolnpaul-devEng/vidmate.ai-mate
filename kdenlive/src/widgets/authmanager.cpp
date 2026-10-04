@@ -80,6 +80,13 @@ void AuthManager::loadCredentialsFromEnv()
             }
         }
     }
+
+    if (m_supabaseUrl.isEmpty()) {
+        m_supabaseUrl = QStringLiteral("https://mgurbmoubtqzsgfdlgur.supabase.co");
+    }
+    if (m_supabaseAnonKey.isEmpty()) {
+        m_supabaseAnonKey = QStringLiteral("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ndXJibW91YnRxenNnZmRsZ3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMjYyMTAsImV4cCI6MjEwMjYwMjIxMH0.fcjlhwoln44uisxPfddIlWD1zmLm9nJaoYIfTYTMaV0");
+    }
 }
 
 void AuthManager::setSupabaseCredentials(const QString &url, const QString &anonKey)

@@ -73,6 +73,10 @@ public:
     QString supabaseUrl() const { return m_supabaseUrl; }
     QString supabaseAnonKey() const { return m_supabaseAnonKey; }
     QString currentModel() const { return m_model; }
+    QString openRouterKey() const { return m_openRouterKey; }
+    void setOpenRouterKey(const QString &key) { m_openRouterKey = key; }
+    QString groqKey() const { return m_groqKey; }
+    void setGroqKey(const QString &key) { m_groqKey = key; }
 
 Q_SIGNALS:
     void responseReceived(const QString &summaryText, const QJsonObject &actionPayload);
@@ -101,6 +105,8 @@ private:
     QElapsedTimer m_requestTimer;
     QString m_apiUrl{QStringLiteral("http://localhost:8080/v1/chat/completions")};
     QString m_apiKey;
+    QString m_openRouterKey;
+    QString m_groqKey;
     QString m_model{QStringLiteral("groq/openai/gpt-oss-120b")};
     QString m_supabaseUrl;
     QString m_supabaseAnonKey;

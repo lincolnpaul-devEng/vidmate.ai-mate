@@ -93,6 +93,9 @@ void AIDispatcher::saveSettings()
 
 void AIDispatcher::loadEnvConfig(const QString &customPath)
 {
+    static const QString DEFAULT_SUPABASE_URL = QStringLiteral("https://mgurbmoubtqzsgfdlgur.supabase.co");
+    static const QString DEFAULT_SUPABASE_ANON = QStringLiteral("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ndXJibW91YnRxenNnZmRsZ3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMjYyMTAsImV4cCI6MjEwMjYwMjIxMH0.fcjlhwoln44uisxPfddIlWD1zmLm9nJaoYIfTYTMaV0");
+
     QStringList searchPaths;
     if (!customPath.isEmpty()) searchPaths << customPath;
 
@@ -131,6 +134,10 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
                     m_supabaseAnonKey = val;
                 } else if (key == QStringLiteral("SUPABASE_SERVICE_ROLE_KEY")) {
                     m_supabaseServiceKey = val;
+                } else if (key == QStringLiteral("OPENROUTER_API_KEY") || key == QStringLiteral("LLM_OPENROUTER_API_KEY") || key == QStringLiteral("VITE_OPENROUTER_API_KEY")) {
+                    m_openRouterKey = val;
+                } else if (key == QStringLiteral("GROQ_API_KEY") || key == QStringLiteral("LLM_GROQ_API_KEY") || key == QStringLiteral("VITE_GROQ_API_KEY")) {
+                    m_groqKey = val;
                 } else if (key == QStringLiteral("LLM_OPENAI_API_KEY") || key == QStringLiteral("OPENAI_API_KEY")) {
                     if (m_apiKey.isEmpty()) m_apiKey = val;
                 } else if (key == QStringLiteral("LLM_ANTHROPIC_API_KEY") || key == QStringLiteral("ANTHROPIC_API_KEY")) {
@@ -143,11 +150,12 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
         }
     }
 
-    // Configure default endpoint using Supabase ai-proxy if configured
-    if (!m_supabaseUrl.isEmpty() && !m_supabaseAnonKey.isEmpty()) {
-        m_apiUrl = QStringLiteral("%1/functions/v1/ai-proxy").arg(m_supabaseUrl);
-        qDebug() << "[AIDispatcher] Configured Supabase AI proxy endpoint:" << m_apiUrl;
-    }
+    if (m_supabaseUrl.isEmpty()) m_supabaseUrl = DEFAULT_SUPABASE_URL;
+    if (m_supabaseAnonKey.isEmpty()) m_supabaseAnonKey = DEFAULT_SUPABASE_ANON;
+
+    // Configure default endpoint using Supabase ai-proxy
+    m_apiUrl = QStringLiteral("%1/functions/v1/ai-proxy").arg(m_supabaseUrl);
+    qDebug() << "[AIDispatcher] Configured Supabase AI proxy endpoint:" << m_apiUrl;
 }
 
 void AIDispatcher::setApiEndpoint(const QString &url) { m_apiUrl = url; }
@@ -185,6 +193,9 @@ void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &mod
         QUrl orUrl(QStringLiteral("https://openrouter.ai/api/v1/models"));
         QNetworkRequest orReq(orUrl);
         orReq.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("VidMate-AI-Agent/2.0"));
+        if (!m_openRouterKey.isEmpty()) {
+            orReq.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_openRouterKey).toUtf8());
+        }
 
         QNetworkReply *orReply = m_nam->get(orReq);
         connect(orReply, &QNetworkReply::finished, this, [this, orReply, callback]() {
@@ -237,6 +248,14 @@ void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &mod
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     req.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
     req.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
+    if (!m_openRouterKey.isEmpty()) {
+        req.setRawHeader("x-openrouter-key", m_openRouterKey.toUtf8());
+    } else if (!m_apiKey.isEmpty()) {
+        req.setRawHeader("x-openrouter-key", m_apiKey.toUtf8());
+    }
+    if (!m_groqKey.isEmpty()) {
+        req.setRawHeader("x-groq-key", m_groqKey.toUtf8());
+    }
 
     QJsonObject body;
     body[QStringLiteral("action")] = QStringLiteral("models");
@@ -464,30 +483,48 @@ void AIDispatcher::sendCurrentMessages()
     m_requestTimer.start();
     Q_EMIT requestStarted();
 
-    // Check authentication
-    QString authToken;
-    if (AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {
-        authToken = AuthManager::instance()->accessToken();
-    } else if (!m_supabaseAnonKey.isEmpty()) {
-        authToken = m_supabaseAnonKey;
-    } else if (!m_apiKey.isEmpty()) {
-        authToken = m_apiKey;
-    }
-
-    if (authToken.isEmpty()) {
-        m_goalActive = false;
-        Q_EMIT requestFinished();
-        Q_EMIT errorOccurred(QStringLiteral("Authentication required. Please click 'Account' to sign in to your Velo/VidMate account."));
-        return;
+    if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
+        loadEnvConfig();
     }
 
     QUrl url(m_apiUrl);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(authToken).toUtf8());
 
-    if (!m_supabaseAnonKey.isEmpty()) {
-        request.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
+    // Check if request is targeting Supabase Edge Functions (e.g. ai-proxy) or a direct provider
+    bool isSupabaseProxy = m_apiUrl.contains(QStringLiteral("functions/v1/ai-proxy")) || 
+                           m_apiUrl.contains(QStringLiteral("supabase.co"));
+
+    if (isSupabaseProxy) {
+        // EXACT MIRROR OF VELO (server/plugins/llm-proxy.ts):
+        // Always authenticate the Supabase Kong Gateway using the Supabase Anon Key.
+        QString gatewayKey = !m_supabaseAnonKey.isEmpty() ? m_supabaseAnonKey : QStringLiteral("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ndXJibW91YnRxenNnZmRsZ3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMjYyMTAsImV4cCI6MjEwMjYwMjIxMH0.fcjlhwoln44uisxPfddIlWD1zmLm9nJaoYIfTYTMaV0");
+        request.setRawHeader("apikey", gatewayKey.toUtf8());
+        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(gatewayKey).toUtf8());
+
+        // Pass authenticated user metadata as custom headers for audit/session context
+        if (AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {
+            request.setRawHeader("x-user-jwt", AuthManager::instance()->accessToken().toUtf8());
+            request.setRawHeader("x-user-id", AuthManager::instance()->userId().toUtf8());
+            request.setRawHeader("x-user-email", AuthManager::instance()->userEmail().toUtf8());
+        }
+
+        // Provider-specific API key injection (Velo pattern):
+        if (!m_openRouterKey.isEmpty()) {
+            request.setRawHeader("x-openrouter-key", m_openRouterKey.toUtf8());
+        } else if (!m_apiKey.isEmpty()) {
+            request.setRawHeader("x-openrouter-key", m_apiKey.toUtf8());
+        }
+
+        if (!m_groqKey.isEmpty()) {
+            request.setRawHeader("x-groq-key", m_groqKey.toUtf8());
+        }
+    } else {
+        // Direct non-proxy LLM endpoint (e.g. localhost Ollama or direct OpenAI)
+        QString directKey = !m_apiKey.isEmpty() ? m_apiKey : (!m_openRouterKey.isEmpty() ? m_openRouterKey : m_supabaseAnonKey);
+        if (!directKey.isEmpty()) {
+            request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(directKey).toUtf8());
+        }
     }
 
     QString modelToSend = m_model;
@@ -532,17 +569,6 @@ void AIDispatcher::slotReplyFinished(QNetworkReply *reply, const QString &modelU
         QByteArray respData = reply->readAll();
         reply->deleteLater();
 
-        // If the selected model failed on ai-proxy (e.g. HTTP 401/404/500), automatically fallback to primary working model
-        if (modelUsed != QStringLiteral("groq/openai/gpt-oss-120b") && (statusCode == 401 || statusCode == 404 || statusCode == 400 || statusCode == 500)) {
-            qWarning() << "[AIDispatcher] Model" << modelUsed << "returned HTTP" << statusCode << ". Transparently falling back to verified primary model: groq/openai/gpt-oss-120b";
-            m_model = QStringLiteral("groq/openai/gpt-oss-120b");
-            m_settings.editingModelId = m_model;
-            saveSettings();
-            Q_EMIT agentSettingsChanged(m_settings);
-            sendCurrentMessages();
-            return;
-        }
-
         m_goalActive = false;
         Q_EMIT requestFinished();
 
@@ -554,32 +580,41 @@ void AIDispatcher::slotReplyFinished(QNetworkReply *reply, const QString &modelU
                 QJsonValue errVal = obj[QStringLiteral("error")];
                 if (errVal.isObject()) {
                     errMsg = errVal.toObject()[QStringLiteral("message")].toString();
+                    if (errMsg.isEmpty()) errMsg = errVal.toObject()[QStringLiteral("code")].toString();
                 } else {
                     errMsg = errVal.toString();
                 }
             } else if (obj.contains(QStringLiteral("message"))) {
                 errMsg = obj[QStringLiteral("message")].toString();
+            } else if (obj.contains(QStringLiteral("msg"))) {
+                errMsg = obj[QStringLiteral("msg")].toString();
             }
         }
 
         if (errMsg.isEmpty()) {
-            if (statusCode == 401) {
-                if (!AuthManager::instance()->isLoggedIn()) {
-                    errMsg = QStringLiteral("Please click 'Account' to sign in with your Supabase account.");
-                } else {
-                    errMsg = QStringLiteral("AI Proxy authentication failed (HTTP 401).");
-                }
-            } else if (statusCode == 402 || statusCode == 429) {
-                errMsg = QStringLiteral("AI service quota exceeded or rate limited. Please try again in a moment.");
-            } else if (statusCode == 404) {
-                errMsg = QStringLiteral("Model not found on AI Proxy (HTTP 404).");
-            } else {
-                errMsg = reply->errorString();
-            }
-        } else if (statusCode == 401 && !AuthManager::instance()->isLoggedIn()) {
-            errMsg = QStringLiteral("Please click 'Account' to sign in with your Supabase account.");
+            errMsg = reply->errorString();
         }
 
+        // Diagnostic formatting mirroring Velo's llmErrorMessage (server/plugins/llm-proxy.ts)
+        if (statusCode == 401 || statusCode == 403) {
+            if (modelUsed.startsWith(QStringLiteral("openrouter/")) || !modelUsed.startsWith(QStringLiteral("groq/"))) {
+                if (m_openRouterKey.isEmpty() && m_apiKey.isEmpty()) {
+                    errMsg = QStringLiteral("OpenRouter authentication failed (HTTP %1): %2. Please configure OPENROUTER_API_KEY in .env.local or Settings.").arg(QString::number(statusCode), errMsg);
+                } else {
+                    errMsg = QStringLiteral("Authentication failed (HTTP %1): %2. Please check your API key.").arg(QString::number(statusCode), errMsg);
+                }
+            } else {
+                errMsg = QStringLiteral("Authentication failed (HTTP %1): %2.").arg(QString::number(statusCode), errMsg);
+            }
+        } else if (statusCode == 402 || statusCode == 429) {
+            errMsg = QStringLiteral("AI service quota exceeded or rate limited (HTTP %1): %2. Check balance or try again.").arg(QString::number(statusCode), errMsg);
+        } else if (statusCode == 404) {
+            errMsg = QStringLiteral("Model '%1' or endpoint not found on AI Proxy (HTTP 404).").arg(modelUsed);
+        } else if (statusCode >= 500) {
+            errMsg = QStringLiteral("AI service error (HTTP %1): %2").arg(QString::number(statusCode), errMsg);
+        }
+
+        qWarning() << "[AIDispatcher] Request failed for model" << modelUsed << "with status" << statusCode << ":" << errMsg;
         Q_EMIT errorOccurred(errMsg);
         return;
     }
