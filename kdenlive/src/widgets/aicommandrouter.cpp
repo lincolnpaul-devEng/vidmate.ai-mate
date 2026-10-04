@@ -23,6 +23,9 @@
 #include "bin/projectitemmodel.h"
 #include "bin/projectclip.h"
 #include "bin/clipcreator.hpp"
+#include "undohelper.hpp"
+#include "profiles/profilemodel.hpp"
+#include "profiles/profilerepository.hpp"
 #include "effects/shadervalidationengine.h"
 #include "effects/glslshaderrenderer.h"
 #include "aimemorystore.h"
@@ -162,6 +165,10 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleFindTranscript(params);
     else if (action == QStringLiteral("generate_transcript"))
         handleGenerateTranscript(params);
+    else if (action == QStringLiteral("get_transcript") || action == QStringLiteral("read_transcript") ||
+             action == QStringLiteral("get_captions") || action == QStringLiteral("read_subtitles") ||
+             action == QStringLiteral("analyze_transcript"))
+        handleGetTranscript(params);
     else if (action == QStringLiteral("render_project"))
         handleRenderProject(params);
     else if (action == QStringLiteral("undo_last"))
@@ -184,8 +191,11 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleReadMemory(params);
     else if (action == QStringLiteral("list_memory_keys"))
         handleListMemoryKeys(params);
+    else if (action == QStringLiteral("set_project_profile") || action == QStringLiteral("set_aspect_ratio") ||
+             action == QStringLiteral("set_profile") || action == QStringLiteral("switch_profile"))
+        handleSetProjectProfile(params);
     else
-        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader, write_memory, read_memory, list_memory_keys.", action), false);
+        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader, write_memory, read_memory, list_memory_keys, set_project_profile.", action), false);
 
     if (isMutating && pCore && pCore->undoStack()) {
         pCore->undoStack()->endMacro();
@@ -776,13 +786,147 @@ void AICommandRouter::handleSetZone(const QJsonObject &params)
 
 void AICommandRouter::handleFindTranscript(const QJsonObject &params)
 {
-    QString query = params[QStringLiteral("query")].toString();
-    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    QString query = params[QStringLiteral("query")].toString().trimmed();
+    if (query.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Missing query parameter for find_transcript."), false);
+        return;
+    }
 
-    // Transcript search requires pre-generated speech-to-text data
-    Q_EMIT executionFinished(
-        i18n("Transcript search for '%1' in clip %2 — requires speech-to-text data. "
-             "Use generate_transcript first.", query, clipId), false);
+    auto tm = getTimelineModel();
+    QStringList matches;
+    QJsonArray matchItems;
+
+    // Search SubtitleModel on timeline
+    if (tm) {
+        auto subModel = tm->getSubtitleModel();
+        if (subModel && subModel->count() > 0) {
+            const auto allSubs = subModel->getAllSubtitles();
+            for (const auto &s : allSubs) {
+                QString txt = s.second.text();
+                if (txt.contains(query, Qt::CaseInsensitive)) {
+                    double startSec = s.first.second.seconds();
+                    double endSec = s.second.endTime().seconds();
+                    int startFrame = s.first.second.frames(pCore->getCurrentFps());
+                    int endFrame = s.second.endTime().frames(pCore->getCurrentFps());
+                    matches << QStringLiteral("Frame %1-%2 (%3s-%4s): \"%5\"")
+                        .arg(startFrame).arg(endFrame)
+                        .arg(startSec, 0, 'f', 2).arg(endSec, 0, 'f', 2)
+                        .arg(txt);
+
+                    QJsonObject m;
+                    m[QStringLiteral("start_frame")] = startFrame;
+                    m[QStringLiteral("end_frame")] = endFrame;
+                    m[QStringLiteral("start_sec")] = startSec;
+                    m[QStringLiteral("end_sec")] = endSec;
+                    m[QStringLiteral("text")] = txt;
+                    matchItems.append(m);
+                }
+            }
+        }
+    }
+
+    // Search ProjectClips speech property
+    if (pCore && pCore->projectItemModel()) {
+        const auto clipIds = pCore->projectItemModel()->getAllClipIds();
+        for (const auto &id : clipIds) {
+            auto pClip = pCore->projectItemModel()->getClipByBinID(id);
+            if (pClip) {
+                QString speechHtml = pClip->getProducerProperty(QStringLiteral("kdenlive:speech"));
+                if (!speechHtml.isEmpty()) {
+                    QTextDocument doc;
+                    doc.setHtml(speechHtml);
+                    QString plain = doc.toPlainText();
+                    if (plain.contains(query, Qt::CaseInsensitive)) {
+                        matches << QStringLiteral("In Bin Clip \"%1\" (id=%2): transcript contains \"%3\"").arg(pClip->clipName(), pClip->binId(), query);
+                    }
+                }
+            }
+        }
+    }
+
+    if (matches.isEmpty()) {
+        Q_EMIT executionFinished(i18n("No transcript matches found for \"%1\".", query), true);
+        return;
+    }
+
+    QJsonObject outData;
+    outData[QStringLiteral("query")] = query;
+    outData[QStringLiteral("match_count")] = matchItems.size();
+    outData[QStringLiteral("matches")] = matchItems;
+    Q_EMIT dataOutput(QStringLiteral("find_transcript"), outData);
+    Q_EMIT executionFinished(i18n("Found %1 matches for \"%2\":\n%3", matches.size(), query, matches.join(QStringLiteral("\n"))), true);
+}
+
+void AICommandRouter::handleGetTranscript(const QJsonObject &params)
+{
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    auto tm = getTimelineModel();
+
+    QStringList lines;
+    QJsonArray items;
+
+    // 1. Check SubtitleModel on timeline
+    if (tm) {
+        auto subModel = tm->getSubtitleModel();
+        if (subModel && subModel->count() > 0) {
+            const auto allSubs = subModel->getAllSubtitles();
+            for (const auto &s : allSubs) {
+                double startSec = s.first.second.seconds();
+                double endSec = s.second.endTime().seconds();
+                QString txt = s.second.text().simplified();
+                if (!txt.isEmpty()) {
+                    lines << QStringLiteral("[%1s -> %2s] %3")
+                        .arg(startSec, 0, 'f', 2)
+                        .arg(endSec, 0, 'f', 2)
+                        .arg(txt);
+
+                    QJsonObject obj;
+                    obj[QStringLiteral("start")] = startSec;
+                    obj[QStringLiteral("end")] = endSec;
+                    obj[QStringLiteral("text")] = txt;
+                    items.append(obj);
+                }
+            }
+        }
+    }
+
+    // 2. Check ProjectClips if no timeline subtitles or clip requested
+    if (pCore && pCore->projectItemModel()) {
+        std::vector<QString> clipIds;
+        if (clipId >= 0 && tm && tm->isClip(clipId)) {
+            clipIds.push_back(tm->getClipBinId(clipId));
+        } else {
+            clipIds = pCore->projectItemModel()->getAllClipIds();
+        }
+
+        for (const auto &id : clipIds) {
+            auto pClip = pCore->projectItemModel()->getClipByBinID(id);
+            if (pClip) {
+                QString speechHtml = pClip->getProducerProperty(QStringLiteral("kdenlive:speech"));
+                if (!speechHtml.isEmpty()) {
+                    QTextDocument doc;
+                    doc.setHtml(speechHtml);
+                    QString plain = doc.toPlainText().trimmed();
+                    if (!plain.isEmpty() && lines.isEmpty()) {
+                        lines << QStringLiteral("[Clip \"%1\"]: %2").arg(pClip->clipName(), plain);
+                    }
+                }
+            }
+        }
+    }
+
+    if (lines.isEmpty()) {
+        Q_EMIT executionFinished(i18n("No speech transcript or subtitles found in the project. Transcribe the clip using Speech Editor or generate_transcript first."), false);
+        return;
+    }
+
+    QJsonObject outData;
+    outData[QStringLiteral("count")] = items.size();
+    outData[QStringLiteral("transcript")] = items;
+    outData[QStringLiteral("full_text")] = lines.join(QStringLiteral("\n"));
+
+    Q_EMIT dataOutput(QStringLiteral("get_transcript"), outData);
+    Q_EMIT executionFinished(i18n("Retrieved %1 transcript entries:\n%2", lines.size(), lines.join(QStringLiteral("\n"))), true);
 }
 
 void AICommandRouter::handleGenerateTranscript(const QJsonObject &params)
@@ -1125,14 +1269,133 @@ void AICommandRouter::handleDetectScenes(const QJsonObject &params)
 
 void AICommandRouter::handleGenerateGlslShader(const QJsonObject &params)
 {
-    QString glslCode = params[QStringLiteral("glsl_code")].toString();
-    if (glslCode.trimmed().isEmpty()) {
-        Q_EMIT executionFinished(i18n("No GLSL code provided to compile."), false);
-        return;
+    QString glslCode = params[QStringLiteral("glsl_code")].toString().trimmed();
+    QString preset = params[QStringLiteral("preset")].toString().toLower().trimmed();
+    QString name = params[QStringLiteral("name")].toString().trimmed();
+    QString formatStr = params[QStringLiteral("shader_format")].toString().toLower();
+    int trackId = params[QStringLiteral("track_id")].toInt(-1);
+    int playheadFrame = params[QStringLiteral("playhead_frame")].toInt(-1);
+    int durationFrames = params[QStringLiteral("duration_frames")].toInt(300);
+    Q_UNUSED(durationFrames)
+
+    // If custom GLSL code is not provided, load requested preset; otherwise enforce strict validation without fallbacks
+    if (glslCode.isEmpty()) {
+        if (preset == QStringLiteral("neon_grid") || preset == QStringLiteral("synthwave") || preset.contains(QStringLiteral("grid"))) {
+            if (name.isEmpty()) name = QStringLiteral("Neon_Synthwave_Grid");
+            glslCode = QStringLiteral(
+                "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+                "    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;\n"
+                "    vec3 col = vec3(0.05, 0.0, 0.15);\n"
+                "    float horizon = -0.1;\n"
+                "    if (uv.y < horizon) {\n"
+                "        float depth = -0.25 / (uv.y - horizon);\n"
+                "        float xCoord = uv.x * depth;\n"
+                "        float zCoord = depth + iTime * 3.0;\n"
+                "        float gridX = abs(fract(xCoord * 1.5) - 0.5);\n"
+                "        float gridZ = abs(fract(zCoord * 1.5) - 0.5);\n"
+                "        float lineX = smoothstep(0.06, 0.0, gridX);\n"
+                "        float lineZ = smoothstep(0.06, 0.0, gridZ);\n"
+                "        vec3 gridCol = vec3(1.0, 0.1, 0.8) * (lineX + lineZ) * (1.0 / (depth * 0.3 + 1.0));\n"
+                "        col += gridCol;\n"
+                "    } else {\n"
+                "        vec2 sunUV = uv - vec2(0.0, horizon + 0.25);\n"
+                "        float sunDist = length(sunUV);\n"
+                "        if (sunDist < 0.35) {\n"
+                "            float stripes = sin(sunUV.y * 50.0 - iTime * 2.0);\n"
+                "            if (stripes > -0.2 || sunUV.y > 0.0) {\n"
+                "                vec3 sunCol = mix(vec3(1.0, 0.9, 0.0), vec3(1.0, 0.1, 0.4), sunUV.y * 2.0 + 0.5);\n"
+                "                col = sunCol;\n"
+                "            }\n"
+                "        }\n"
+                "        col += vec3(0.1, 0.0, 0.3) * (uv.y - horizon);\n"
+                "    }\n"
+                "    fragColor = vec4(col, 1.0);\n"
+                "}\n"
+            );
+        } else if (preset == QStringLiteral("plasma_energy") || preset.contains(QStringLiteral("plasma")) || preset.contains(QStringLiteral("nebula"))) {
+            if (name.isEmpty()) name = QStringLiteral("Plasma_Energy_Nebula");
+            glslCode = QStringLiteral(
+                "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+                "    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y * 3.0;\n"
+                "    float t = iTime * 0.8;\n"
+                "    float v1 = sin(uv.x * 2.0 + t);\n"
+                "    float v2 = sin(uv.y * 2.0 + t);\n"
+                "    float v3 = sin(uv.x * 2.0 + uv.y * 2.0 + t);\n"
+                "    float v4 = sin(length(uv) * 3.0 - t * 2.0);\n"
+                "    float v = v1 + v2 + v3 + v4;\n"
+                "    vec3 col = vec3(sin(v * 0.5 + 0.0) * 0.5 + 0.5,\n"
+                "                    sin(v * 0.5 + 2.0) * 0.5 + 0.5,\n"
+                "                    sin(v * 0.5 + 4.0) * 0.5 + 0.5);\n"
+                "    col = mix(col, vec3(0.1, 0.8, 1.0), 0.3);\n"
+                "    fragColor = vec4(col, 1.0);\n"
+                "}\n"
+            );
+        } else if (preset == QStringLiteral("starfield_warp") || preset.contains(QStringLiteral("star")) || preset.contains(QStringLiteral("warp")) || preset.contains(QStringLiteral("space"))) {
+            if (name.isEmpty()) name = QStringLiteral("Starfield_Hyperdrive_Warp");
+            glslCode = QStringLiteral(
+                "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+                "    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;\n"
+                "    vec3 col = vec3(0.0);\n"
+                "    float speed = iTime * 1.5;\n"
+                "    for (float i = 0.0; i < 1.0; i += 0.2) {\n"
+                "        float depth = fract(i + speed * 0.2);\n"
+                "        float scale = mix(20.0, 0.5, depth);\n"
+                "        float fade = depth * smoothstep(1.0, 0.9, depth);\n"
+                "        vec2 p = uv * scale;\n"
+                "        vec2 id = floor(p);\n"
+                "        vec2 gv = fract(p) - 0.5;\n"
+                "        float hash = fract(sin(dot(id + i * 100.0, vec2(12.9898, 78.233))) * 43758.5453);\n"
+                "        if (hash > 0.85) {\n"
+                "            float d = length(gv);\n"
+                "            float star = smoothstep(0.15, 0.0, d) * fade;\n"
+                "            col += vec3(star * (0.8 + 0.2 * hash), star * 0.9, star * 1.2);\n"
+                "        }\n"
+                "    }\n"
+                "    fragColor = vec4(col, 1.0);\n"
+                "}\n"
+            );
+        } else if (preset == QStringLiteral("cyber_matrix") || preset.contains(QStringLiteral("matrix")) || preset.contains(QStringLiteral("code"))) {
+            if (name.isEmpty()) name = QStringLiteral("Cyber_Matrix_Stream");
+            glslCode = QStringLiteral(
+                "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+                "    vec2 uv = fragCoord / iResolution.xy;\n"
+                "    float cols = 40.0;\n"
+                "    float colId = floor(uv.x * cols);\n"
+                "    float speed = 2.0 + fract(sin(colId * 133.3) * 4321.0) * 3.0;\n"
+                "    float y = fract(uv.y + iTime * speed * 0.2 + fract(sin(colId * 77.7) * 9876.0));\n"
+                "    float lead = smoothstep(0.98, 1.0, y);\n"
+                "    float trail = (1.0 - y) * smoothstep(0.0, 0.2, y);\n"
+                "    vec3 col = vec3(lead) * vec3(0.8, 1.0, 0.8) + vec3(trail) * vec3(0.0, 0.9, 0.2);\n"
+                "    fragColor = vec4(col, 1.0);\n"
+                "}\n"
+            );
+        } else if (preset == QStringLiteral("gradient_flow") || preset.contains(QStringLiteral("gradient")) || preset.contains(QStringLiteral("liquid"))) {
+            if (name.isEmpty()) name = QStringLiteral("Liquid_Gradient_Flow");
+            glslCode = QStringLiteral(
+                "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+                "    vec2 uv = fragCoord / iResolution.xy;\n"
+                "    float t = iTime * 0.5;\n"
+                "    vec3 col1 = vec3(0.95, 0.26, 0.45);\n"
+                "    vec3 col2 = vec3(0.24, 0.44, 0.94);\n"
+                "    vec3 col3 = vec3(0.98, 0.75, 0.18);\n"
+                "    vec3 col4 = vec3(0.55, 0.20, 0.85);\n"
+                "    float f1 = sin(uv.x * 3.14 + t) * 0.5 + 0.5;\n"
+                "    float f2 = cos(uv.y * 3.14 - t * 0.7) * 0.5 + 0.5;\n"
+                "    vec3 mixed1 = mix(col1, col2, f1);\n"
+                "    vec3 mixed2 = mix(col3, col4, f2);\n"
+                "    vec3 finalCol = mix(mixed1, mixed2, (uv.x + uv.y) * 0.5);\n"
+                "    fragColor = vec4(finalCol, 1.0);\n"
+                "}\n"
+            );
+        } else {
+            // No custom GLSL code and no matching valid preset
+            Q_EMIT executionFinished(
+                i18n("No GLSL code provided to compile. Please specify valid 'glsl_code' using ShaderToy format: 'void mainImage(out vec4 fragColor, in vec2 fragCoord)' or select a preset ('neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix')."),
+                false);
+            return;
+        }
     }
 
-    QString formatStr = params[QStringLiteral("shader_format")].toString().toLower();
-    QString name = params[QStringLiteral("name")].toString();
     if (name.isEmpty()) {
         name = QStringLiteral("Procedural_Shader_%1").arg(QDateTime::currentMSecsSinceEpoch());
     }
@@ -1157,58 +1420,110 @@ void AICommandRouter::handleGenerateGlslShader(const QJsonObject &params)
 
         Q_EMIT dataOutput(QStringLiteral("generate_glsl_shader"), errData);
         Q_EMIT executionFinished(
-            i18n("GPU GLSL Compilation Error (Line %1):\n%2\n\n[Driver Compiler Feedback]\nPlease fix syntax or uniform declarations.",
+            i18n("GPU GLSL Compilation Error (Line %1):\n%2\n\n[Driver Compiler Feedback]\nPlease use valid ShaderToy syntax: void mainImage(out vec4 fragColor, in vec2 fragCoord) or choose a preset ('neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix').",
                  result.errorLine, result.errorLog),
             false);
         return;
     }
 
-    // Step 2: Render a preview frame using GLSLShaderRenderer
+    // Step 2: Render animated procedural video using GLSLShaderRenderer
     GLSLShaderRenderer renderer;
     QString loadErr;
     if (renderer.loadShader(result.finalGlslCode, &loadErr)) {
+        int width = 1920;
+        int height = 1080;
+        double fps = 30.0;
+        if (pCore) {
+            QSize frameSize = pCore->getCurrentFrameSize();
+            width = frameSize.width();
+            height = frameSize.height();
+            fps = pCore->getCurrentFps();
+            if (width <= 0) width = 1920;
+            if (height <= 0) height = 1080;
+            if (fps <= 0.0) fps = 30.0;
+        }
+
+        int totalFrames = durationFrames > 0 ? durationFrames : int(fps * 5.0);
+        bool audioReactive = params[QStringLiteral("audio_reactive")].toBool(false);
+
+        QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/shaders");
+        QDir().mkpath(cacheDir);
+
+        QString videoPath = QStringLiteral("%1/%2.mp4").arg(cacheDir, name);
+        QString renderErr;
+        bool videoOk = renderer.renderToVideoFile(videoPath, width, height, fps, totalFrames, audioReactive, &renderErr);
+
+        QString previewPath = QStringLiteral("%1/%2_preview.png").arg(cacheDir, name);
         GLSLShaderRenderer::UniformState uState;
         uState.time = 1.0f;
         uState.audioLevels = 0.5f;
-
-        QImage preview = renderer.renderToImage(1280, 720, uState);
+        QImage preview = renderer.renderToImage(width, height, uState);
         if (!preview.isNull()) {
-            QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/shaders");
-            QDir().mkpath(cacheDir);
-
-            QString previewPath = QStringLiteral("%1/%2_preview.png").arg(cacheDir, name);
             preview.save(previewPath, "PNG");
-
-            QString shaderPath = QStringLiteral("%1/%2.frag").arg(cacheDir, name);
-            QFile sFile(shaderPath);
-            if (sFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                sFile.write(result.finalGlslCode.toUtf8());
-                sFile.close();
-            }
-
-            // Auto-import preview into Project Bin if active
-            if (pCore && pCore->bin() && pCore->projectItemModel() && QFile::exists(previewPath)) {
-                ClipCreator::createClipFromFile(previewPath, pCore->bin()->rootFolderId(), pCore->projectItemModel());
-            }
-
-            QJsonObject successData;
-            successData[QStringLiteral("success")] = true;
-            successData[QStringLiteral("shader_path")] = shaderPath;
-            successData[QStringLiteral("preview_path")] = previewPath;
-            successData[QStringLiteral("detected_uniforms")] = QJsonArray::fromStringList(result.detectedUniforms);
-            successData[QStringLiteral("glsl_code")] = result.finalGlslCode;
-
-            Q_EMIT dataOutput(QStringLiteral("generate_glsl_shader"), successData);
-            Q_EMIT executionFinished(
-                i18n("Procedural GLSL Shader '%1' compiled & validated on GPU successfully!\n- Uniforms: %2\n- 60+ FPS Ready (ShaderToy/SDF Pipeline)\n- Preview saved to %3",
-                     name, result.detectedUniforms.join(QStringLiteral(", ")), previewPath),
-                true);
-            return;
         }
+
+        QString shaderPath = QStringLiteral("%1/%2.frag").arg(cacheDir, name);
+        QFile sFile(shaderPath);
+        if (sFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            sFile.write(result.finalGlslCode.toUtf8());
+            sFile.close();
+        }
+
+        // Step 3: Determine target track and playhead frame
+        if (playheadFrame < 0 && pCore) {
+            playheadFrame = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
+        }
+
+        auto *tc = getTimelineController();
+        auto tm = getTimelineModel();
+        if (tc && tm && trackId < 0) {
+            trackId = tc->activeTrack();
+            if (trackId < 0 || tm->isAudioTrack(trackId)) {
+                const auto vTracks = tm->getTracksIds(false);
+                if (!vTracks.isEmpty()) {
+                    trackId = vTracks.last(); // Top video track for b-roll overlay
+                }
+            }
+        }
+
+        // Step 4: Auto-import into Project Bin and insert onto Timeline
+        QString binId;
+        QString mediaToImport = (videoOk && QFile::exists(videoPath)) ? videoPath : previewPath;
+        if (pCore && pCore->bin() && pCore->projectItemModel() && QFile::exists(mediaToImport)) {
+            Fun undo;
+            Fun redo;
+            auto insertCallback = [tc, trackId, playheadFrame](const QString &insertedBinId) {
+                if (tc && trackId >= 0 && !insertedBinId.isEmpty()) {
+                    tc->insertClips(trackId, playheadFrame, {insertedBinId}, true, true);
+                }
+            };
+            binId = ClipCreator::createClipFromFile(mediaToImport, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo, insertCallback);
+            if (binId != QStringLiteral("-1")) {
+                pCore->pushUndo(undo, redo, i18nc("@action", "Add shader b-roll clip"));
+            }
+        }
+
+        QJsonObject successData;
+        successData[QStringLiteral("success")] = true;
+        successData[QStringLiteral("bin_id")] = binId;
+        successData[QStringLiteral("track_id")] = trackId;
+        successData[QStringLiteral("playhead_frame")] = playheadFrame;
+        successData[QStringLiteral("video_path")] = videoPath;
+        successData[QStringLiteral("shader_path")] = shaderPath;
+        successData[QStringLiteral("preview_path")] = previewPath;
+        successData[QStringLiteral("duration_frames")] = totalFrames;
+        successData[QStringLiteral("detected_uniforms")] = QJsonArray::fromStringList(result.detectedUniforms);
+
+        Q_EMIT dataOutput(QStringLiteral("generate_glsl_shader"), successData);
+        Q_EMIT executionFinished(
+            i18n("Procedural animation '%1' (%2 frames @ %3 fps) rendered and inserted as B-roll onto Track %4 at frame %5.\n- Uniforms: %6\n- Video Clip: %7",
+                 name, totalFrames, QString::number(fps, 'f', 1), trackId, playheadFrame, result.detectedUniforms.join(QStringLiteral(", ")), mediaToImport),
+            true);
+        return;
     }
 
     Q_EMIT executionFinished(
-        i18n("Procedural GLSL Shader '%1' validated successfully on GPU (Uniforms: %2).",
+        i18n("Procedural GLSL Shader '%1' validated on GPU (Uniforms: %2).",
              name, result.detectedUniforms.join(QStringLiteral(", "))),
         true);
 }
@@ -1258,5 +1573,123 @@ void AICommandRouter::handleListMemoryKeys(const QJsonObject &/*params*/)
 
     Q_EMIT executionFinished(i18n("Known memory keys: %1", keys.join(QStringLiteral(", "))), true);
 }
+
+void AICommandRouter::handleSetProjectProfile(const QJsonObject &params)
+{
+    QString profileReq = params[QStringLiteral("profile")].toString().toLower().trimmed();
+    double reqFps = params[QStringLiteral("fps")].toDouble(0.0);
+    int reqWidth = params[QStringLiteral("width")].toInt(0);
+    int reqHeight = params[QStringLiteral("height")].toInt(0);
+
+    if (!pCore || !pCore->currentDoc()) {
+        Q_EMIT executionFinished(i18n("No active project document."), false);
+        return;
+    }
+
+    double currentFps = pCore->getCurrentFps();
+    double targetFps = reqFps > 0 ? reqFps : (currentFps > 0 ? currentFps : 30.0);
+
+    QString targetProfilePath;
+
+    // Refresh profile repository
+    ProfileRepository::get()->refresh();
+    const QVector<QPair<QString, QString>> allProfiles = ProfileRepository::get()->getAllProfiles();
+
+    if (profileReq == QStringLiteral("vertical_9:16") || profileReq == QStringLiteral("vertical") ||
+        profileReq == QStringLiteral("9:16") || profileReq == QStringLiteral("shorts") || profileReq == QStringLiteral("tiktok") ||
+        profileReq == QStringLiteral("vertical_1080p_25") || profileReq == QStringLiteral("vertical_1080p_30") ||
+        profileReq == QStringLiteral("vertical_1080p_60")) {
+        // Look for matching vertical profile (1080x1920)
+        // First try to find exact fps match
+        for (const auto &p : allProfiles) {
+            std::unique_ptr<ProfileModel> &model = ProfileRepository::get()->getProfile(p.second);
+            if (model && model->width() == 1080 && model->height() == 1920) {
+                if (qAbs(model->fps() - targetFps) < 0.5) {
+                    targetProfilePath = p.second;
+                    break;
+                }
+            }
+        }
+        // Fallback to any 1080x1920 profile
+        if (targetProfilePath.isEmpty()) {
+            for (const auto &p : allProfiles) {
+                std::unique_ptr<ProfileModel> &model = ProfileRepository::get()->getProfile(p.second);
+                if (model && model->width() == 1080 && model->height() == 1920) {
+                    targetProfilePath = p.second;
+                    break;
+                }
+            }
+        }
+        if (targetProfilePath.isEmpty()) {
+            targetProfilePath = QStringLiteral("vertical_1080p_25");
+        }
+    } else if (profileReq == QStringLiteral("widescreen_16:9") || profileReq == QStringLiteral("16:9") ||
+               profileReq == QStringLiteral("youtube") || profileReq == QStringLiteral("1080p")) {
+        for (const auto &p : allProfiles) {
+            std::unique_ptr<ProfileModel> &model = ProfileRepository::get()->getProfile(p.second);
+            if (model && model->width() == 1920 && model->height() == 1080) {
+                if (qAbs(model->fps() - targetFps) < 0.5) {
+                    targetProfilePath = p.second;
+                    break;
+                }
+            }
+        }
+    } else if (profileReq == QStringLiteral("square_1:1") || profileReq == QStringLiteral("1:1") ||
+               profileReq == QStringLiteral("square") || profileReq == QStringLiteral("instagram")) {
+        for (const auto &p : allProfiles) {
+            std::unique_ptr<ProfileModel> &model = ProfileRepository::get()->getProfile(p.second);
+            if (model && model->width() == 1080 && model->height() == 1080) {
+                targetProfilePath = p.second;
+                break;
+            }
+        }
+    } else if (profileReq == QStringLiteral("4k_uhd") || profileReq == QStringLiteral("4k") ||
+               profileReq == QStringLiteral("2160p")) {
+        for (const auto &p : allProfiles) {
+            std::unique_ptr<ProfileModel> &model = ProfileRepository::get()->getProfile(p.second);
+            if (model && model->width() == 3840 && model->height() == 2160) {
+                if (qAbs(model->fps() - targetFps) < 0.5) {
+                    targetProfilePath = p.second;
+                    break;
+                }
+            }
+        }
+    } else if (!profileReq.isEmpty()) {
+        // Direct match by path or description
+        for (const auto &p : allProfiles) {
+            if (p.second.toLower() == profileReq || p.first.toLower().contains(profileReq)) {
+                targetProfilePath = p.second;
+                break;
+            }
+        }
+    }
+
+    // If custom width and height provided
+    if (targetProfilePath.isEmpty() && reqWidth > 0 && reqHeight > 0) {
+        int fpsNum = int(targetFps * 1000);
+        int fpsDen = 1000;
+        ProfileParam customParam(reqWidth, reqHeight, fpsNum, fpsDen, reqWidth, reqHeight, 1, 1, 709, false);
+        targetProfilePath = ProfileRepository::get()->findMatchingProfile(&customParam);
+        if (targetProfilePath.isEmpty()) {
+            targetProfilePath = ProfileRepository::get()->saveProfile(&customParam);
+        }
+    }
+
+    if (targetProfilePath.isEmpty() || !ProfileRepository::get()->profileExists(targetProfilePath)) {
+        Q_EMIT executionFinished(i18n("Could not find a valid matching profile for '%1'.", profileReq), false);
+        return;
+    }
+
+    pCore->currentDoc()->slotSwitchProfile(targetProfilePath, true);
+
+    std::unique_ptr<ProfileModel> &activeProfile = ProfileRepository::get()->getProfile(targetProfilePath);
+    QString desc = activeProfile ? activeProfile->description() : targetProfilePath;
+    int w = activeProfile ? activeProfile->width() : 0;
+    int h = activeProfile ? activeProfile->height() : 0;
+    double fps = activeProfile ? activeProfile->fps() : 0.0;
+
+    Q_EMIT executionFinished(i18n("Project profile changed to '%1' (%2x%3 @ %4 fps).", desc, QString::number(w), QString::number(h), QString::number(fps, 'f', 2)), true);
+}
+
 
 

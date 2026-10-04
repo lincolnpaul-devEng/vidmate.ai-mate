@@ -401,10 +401,10 @@ public Q_SLOTS:
      * The autosave files are in ~/.kde/data/stalefiles/kdenlive/ */
     void slotAutoSave(const QString &scene);
     void switchProfile(ProfileParam* pf, const QString &clipName);
+    void slotSwitchProfile(const QString &profile_path, bool reloadThumbs = true);
 
 private Q_SLOTS:
     void slotModified();
-    void slotSwitchProfile(const QString &profile_path, bool reloadThumbs);
     /** @brief Check if we did a new action invalidating more recent undo items. */
     void checkPreviewStack(int ix);
     /** @brief Display error message on failed move. */

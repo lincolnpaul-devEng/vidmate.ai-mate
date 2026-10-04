@@ -8,6 +8,9 @@
 #include <QDebug>
 #include <QVector2D>
 #include <QVector3D>
+#include <QProcess>
+#include <QFile>
+#include <cmath>
 
 struct VertexData {
     QVector2D position;
@@ -25,6 +28,9 @@ GLSLShaderRenderer::~GLSLShaderRenderer()
     bool madeCurrent = ShaderValidationEngine::instance()->makeCurrent();
     m_program.reset();
     m_fbo.reset();
+    if (m_vao.isCreated()) {
+        m_vao.destroy();
+    }
     if (m_vbo.isCreated()) {
         m_vbo.destroy();
     }
@@ -35,11 +41,16 @@ GLSLShaderRenderer::~GLSLShaderRenderer()
 
 void GLSLShaderRenderer::initQuadGeometry()
 {
-    if (m_vbo.isCreated()) {
+    if (m_glInitialized) {
         return;
     }
 
     initializeOpenGLFunctions();
+
+    if (!m_vao.isCreated()) {
+        m_vao.create();
+    }
+    m_vao.bind();
 
     // Standard fullscreen quad (2 triangles / 4 vertices strip)
     static const VertexData quadVertices[] = {
@@ -49,9 +60,13 @@ void GLSLShaderRenderer::initQuadGeometry()
         {QVector2D( 1.0f,  1.0f), QVector2D(1.0f, 1.0f)}
     };
 
-    m_vbo.create();
+    if (!m_vbo.isCreated()) {
+        m_vbo.create();
+    }
     m_vbo.bind();
     m_vbo.allocate(quadVertices, sizeof(quadVertices));
+
+    m_vao.release();
     m_vbo.release();
     m_glInitialized = true;
 }
@@ -152,6 +167,9 @@ GLuint GLSLShaderRenderer::renderToTexture(int width, int height, const UniformS
     }
 
     // 5. Draw quad
+    if (m_vao.isCreated()) {
+        m_vao.bind();
+    }
     m_vbo.bind();
     int posLoc = m_program->attributeLocation("in_position");
     int texLoc = m_program->attributeLocation("in_texCoord");
@@ -171,6 +189,9 @@ GLuint GLSLShaderRenderer::renderToTexture(int width, int height, const UniformS
     if (texLoc != -1) m_program->disableAttributeArray(texLoc);
 
     m_vbo.release();
+    if (m_vao.isCreated()) {
+        m_vao.release();
+    }
     m_program->release();
     m_fbo->release();
 
@@ -213,6 +234,7 @@ QImage GLSLShaderRenderer::renderToImage(int width, int height, const UniformSta
     m_program->setUniformValue("iResolution", QVector3D(float(width), float(height), 1.0f));
     m_program->setUniformValue("iTime", uniforms.time);
     m_program->setUniformValue("iTimeDelta", uniforms.timeDelta);
+    m_program->setUniformValue("iFrameRate", uniforms.timeDelta > 0.0001f ? (1.0f / uniforms.timeDelta) : 30.0f);
     m_program->setUniformValue("iFrame", uniforms.frame);
     m_program->setUniformValue("iMouse", uniforms.mouse);
     m_program->setUniformValue("iAudioLevels", uniforms.audioLevels);
@@ -239,6 +261,9 @@ QImage GLSLShaderRenderer::renderToImage(int width, int height, const UniformSta
     }
 
     // 5. Draw quad
+    if (m_vao.isCreated()) {
+        m_vao.bind();
+    }
     m_vbo.bind();
     int posLoc = m_program->attributeLocation("in_position");
     int texLoc = m_program->attributeLocation("in_texCoord");
@@ -258,10 +283,98 @@ QImage GLSLShaderRenderer::renderToImage(int width, int height, const UniformSta
     if (texLoc != -1) m_program->disableAttributeArray(texLoc);
 
     m_vbo.release();
+    if (m_vao.isCreated()) {
+        m_vao.release();
+    }
     m_program->release();
     m_fbo->release();
 
     QImage img = m_fbo->toImage();
     ShaderValidationEngine::instance()->doneCurrent();
     return img;
+}
+
+bool GLSLShaderRenderer::renderToVideoFile(const QString &outputPath, int width, int height, double fps, int totalFrames, bool audioReactive, QString *outError)
+{
+    if (!isValid()) {
+        if (outError) *outError = QStringLiteral("Shader is not compiled or linked.");
+        return false;
+    }
+
+    if (width <= 0) width = 1920;
+    if (height <= 0) height = 1080;
+    if (fps <= 0.0) fps = 30.0;
+    if (totalFrames <= 0) totalFrames = int(fps * 10.0);
+
+    QProcess ffmpeg;
+    QStringList args = {
+        QStringLiteral("-y"),
+        QStringLiteral("-f"), QStringLiteral("rawvideo"),
+        QStringLiteral("-vcodec"), QStringLiteral("rawvideo"),
+        QStringLiteral("-s"), QStringLiteral("%1x%2").arg(width).arg(height),
+        QStringLiteral("-pix_fmt"), QStringLiteral("rgba"),
+        QStringLiteral("-r"), QString::number(fps, 'f', 2),
+        QStringLiteral("-i"), QStringLiteral("-"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-preset"), QStringLiteral("veryfast"),
+        QStringLiteral("-crf"), QStringLiteral("18"),
+        outputPath
+    };
+
+    ffmpeg.start(QStringLiteral("ffmpeg"), args);
+    if (!ffmpeg.waitForStarted(5000)) {
+        if (outError) *outError = QStringLiteral("Failed to launch ffmpeg for procedural shader video rendering.");
+        return false;
+    }
+
+    UniformState uState;
+    uState.timeDelta = float(1.0 / fps);
+
+    for (int f = 0; f < totalFrames; ++f) {
+        float t = float(f) / float(fps);
+        uState.time = t;
+        uState.frame = f;
+        if (audioReactive) {
+            uState.audioLevels = 0.45f + 0.35f * std::sin(t * 8.0f) + 0.20f * std::sin(t * 19.5f);
+        } else {
+            uState.audioLevels = 0.5f;
+        }
+
+        QImage img = renderToImage(width, height, uState);
+        if (img.isNull()) {
+            if (outError) *outError = QStringLiteral("Failed to render procedural shader frame %1.").arg(f);
+            ffmpeg.kill();
+            return false;
+        }
+
+        if (img.format() != QImage::Format_RGBA8888) {
+            img = img.convertToFormat(QImage::Format_RGBA8888);
+        }
+
+        qint64 bytesWritten = ffmpeg.write(reinterpret_cast<const char*>(img.constBits()), img.sizeInBytes());
+        if (bytesWritten < 0) {
+            if (outError) *outError = QStringLiteral("Error piping raw frames to ffmpeg: %1").arg(ffmpeg.errorString());
+            ffmpeg.kill();
+            return false;
+        }
+
+        if (f % 30 == 0) {
+            ffmpeg.waitForBytesWritten(200);
+        }
+    }
+
+    ffmpeg.closeWriteChannel();
+    if (!ffmpeg.waitForFinished(45000)) {
+        ffmpeg.kill();
+        if (outError) *outError = QStringLiteral("ffmpeg encoding timed out.");
+        return false;
+    }
+
+    if (ffmpeg.exitStatus() != QProcess::NormalExit || ffmpeg.exitCode() != 0) {
+        if (outError) *outError = QString::fromUtf8(ffmpeg.readAllStandardError());
+        return false;
+    }
+
+    return QFile::exists(outputPath);
 }

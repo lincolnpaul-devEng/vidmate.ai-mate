@@ -68,6 +68,7 @@ private:
     void handleSetZone(const QJsonObject &params);
     void handleFindTranscript(const QJsonObject &params);
     void handleGenerateTranscript(const QJsonObject &params);
+    void handleGetTranscript(const QJsonObject &params);
     void handleRenderProject(const QJsonObject &params);
     void handleUndoLast(const QJsonObject &params);
     void handleSearchStockMedia(const QJsonObject &params);
@@ -78,6 +79,7 @@ private:
     void handleWriteMemory(const QJsonObject &params);
     void handleReadMemory(const QJsonObject &params);
     void handleListMemoryKeys(const QJsonObject &params);
+    void handleSetProjectProfile(const QJsonObject &params);
 
     // Natron VFX handler
     void executeNatronVfxJob(const QJsonObject &params);

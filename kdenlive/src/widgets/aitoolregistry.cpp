@@ -470,6 +470,16 @@ void AIToolRegistry::registerAllTools()
                 makeParams(props, {}));
     }
 
+    // 24b. get_transcript — retrieve and analyze speech transcript & subtitles
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral(
+            "Clip ID to read transcript from. -1 = read active timeline subtitles and all transcripts."));
+        addTool(QStringLiteral("get_transcript"),
+                QStringLiteral("Retrieve full timestamped speech transcript, dialogue sentences, and subtitles from the project for content understanding, topic analysis, hook detection, and word-level editing."),
+                makeParams(props, {}));
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // EXPORT & RENDER
     // ════════════════════════════════════════════════════════════════════════
@@ -575,8 +585,12 @@ void AIToolRegistry::registerAllTools()
     // 31. generate_glsl_shader — GPU-accelerated ShaderToy / SDF procedural generator
     {
         QJsonObject props;
+        props[QStringLiteral("preset")] = enumParam(
+            QStringLiteral("Pre-validated visual animation style preset (e.g. 'neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix', 'custom')."),
+            {QStringLiteral("neon_grid"), QStringLiteral("plasma_energy"), QStringLiteral("gradient_flow"),
+             QStringLiteral("starfield_warp"), QStringLiteral("cyber_matrix"), QStringLiteral("custom")});
         props[QStringLiteral("glsl_code")] = stringParam(QStringLiteral(
-            "GLSL shader code or math logic function (ShaderToy mainImage or Raymarch map(vec3 p) & computeMaterial)."));
+            "Custom GLSL fragment shader code adhering to ShaderToy standard: void mainImage(out vec4 fragColor, in vec2 fragCoord). Built-in uniforms provided automatically: iResolution (vec3), iTime (float), iTimeDelta (float), iFrame (int), iAudioLevels (float). Do NOT redeclare uniforms or void main()."));
         props[QStringLiteral("shader_format")] = enumParam(
             QStringLiteral("Shader template format."),
             {QStringLiteral("shadertoy"), QStringLiteral("raymarch_sdf"), QStringLiteral("raw_fragment")});
@@ -585,14 +599,14 @@ void AIToolRegistry::registerAllTools()
         props[QStringLiteral("duration_frames")] = intParam(QStringLiteral(
             "Duration in timeline frames (default: 300 = 10s at 30fps)."));
         props[QStringLiteral("track_id")] = intParam(QStringLiteral(
-            "Timeline track ID to insert onto (-1 = active track)."));
+            "Timeline track ID to insert onto (-1 = top video track)."));
         props[QStringLiteral("playhead_frame")] = intParam(QStringLiteral(
             "Timeline frame position to insert at (-1 = current playhead)."));
         props[QStringLiteral("audio_reactive")] = boolParam(QStringLiteral(
             "If true, binds the shader's iAudioLevels uniform to the timeline audio master track FFT spectrum."));
         addTool(QStringLiteral("generate_glsl_shader"),
-                QStringLiteral("Compile, validate on GPU offscreen, and render high-performance procedural GLSL/ShaderToy animations at 60+ FPS with automatic driver error self-healing."),
-                makeParams(props, {QStringLiteral("glsl_code")}));
+                QStringLiteral("Compile, validate on GPU offscreen, render, and automatically insert high-performance procedural GLSL/ShaderToy animations (neon grid, plasma, gradient flow, starfield warp, cyber matrix) as b-roll / video clips on the timeline."),
+                makeParams(props, {}));
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -626,6 +640,26 @@ void AIToolRegistry::registerAllTools()
         addTool(QStringLiteral("list_memory_keys"),
                 QStringLiteral("List all known keys stored in long-term persistent agent memory."),
                 makeParams(props, {}));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PROJECT PROFILE & ASPECT RATIO
+    // ════════════════════════════════════════════════════════════════════════
+
+    // 34. set_project_profile — change project profile/aspect ratio (e.g. 9:16 vertical, 16:9 widescreen, 1:1 square, 4K)
+    {
+        QJsonObject props;
+        props[QStringLiteral("profile")] = enumParam(
+            QStringLiteral("Project resolution / aspect ratio preset: 'vertical_9:16' (1080x1920 for Shorts/Reels/TikTok), 'widescreen_16:9' (1920x1080), 'square_1:1' (1080x1080), '4k_uhd' (3840x2160), or specific profile name."),
+            {QStringLiteral("vertical_9:16"), QStringLiteral("widescreen_16:9"), QStringLiteral("square_1:1"),
+             QStringLiteral("4k_uhd"), QStringLiteral("vertical_1080p_25"), QStringLiteral("vertical_1080p_30"),
+             QStringLiteral("vertical_1080p_60"), QStringLiteral("custom")});
+        props[QStringLiteral("fps")] = numberParam(QStringLiteral("Target frame rate (e.g. 24, 25, 30, 60). Default: keep current."));
+        props[QStringLiteral("width")] = intParam(QStringLiteral("Custom width in pixels when profile is 'custom' (e.g. 1080)."));
+        props[QStringLiteral("height")] = intParam(QStringLiteral("Custom height in pixels when profile is 'custom' (e.g. 1920)."));
+        addTool(QStringLiteral("set_project_profile"),
+                QStringLiteral("Change the project/sequence profile, resolution, or aspect ratio (e.g. switch to 9:16 Vertical HD 1080x1920 for Shorts/Reels/TikTok, 16:9 Widescreen, 1:1 Square)."),
+                makeParams(props, {QStringLiteral("profile")}));
     }
 }
 

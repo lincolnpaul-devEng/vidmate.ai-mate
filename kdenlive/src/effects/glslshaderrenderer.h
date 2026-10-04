@@ -60,6 +60,19 @@ public:
      */
     QImage renderToImage(int width, int height, const UniformState &uniforms);
 
+    /**
+     * @brief Renders the procedural animated shader across timeline frames to an MP4 video file.
+     * @param outputPath Output .mp4 video file path.
+     * @param width Video width in pixels.
+     * @param height Video height in pixels.
+     * @param fps Frame rate (e.g. 30.0 or 60.0).
+     * @param totalFrames Number of frames to animate and render.
+     * @param audioReactive If true, modulates audioLevels uniform with rhythmic energy curves.
+     * @param outError Optional error string output.
+     * @return True if video rendered and encoded successfully.
+     */
+    bool renderToVideoFile(const QString &outputPath, int width, int height, double fps, int totalFrames, bool audioReactive = false, QString *outError = nullptr);
+
     bool isValid() const { return m_program && m_program->isLinked(); }
 
 private:
@@ -67,6 +80,7 @@ private:
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;
     std::unique_ptr<QOpenGLFramebufferObject> m_fbo;
+    QOpenGLVertexArrayObject m_vao;
     QOpenGLBuffer m_vbo;
     bool m_glInitialized{false};
 };

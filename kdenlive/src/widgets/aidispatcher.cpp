@@ -14,12 +14,16 @@
 #include "aitoolregistry.h"
 #include "aimemorystore.h"
 #include "authmanager.h"
+#include "bin/model/subtitlemodel.hpp"
+#include "bin/projectclip.h"
+#include "bin/projectitemmodel.h"
 #include "core.h"
 #include "mainwindow.h"
 #include "timeline2/view/timelinewidget.h"
 #include "timeline2/view/timelinecontroller.h"
 #include "timeline2/model/timelinemodel.hpp"
 #include "timeline2/model/timelineitemmodel.hpp"
+#include <QTextDocument>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -315,6 +319,58 @@ QString AIDispatcher::buildEditorStateSnapshot()
                     .arg(tm->getTrackFullName(tid))
                     .arg(tm->isAudioTrack(tid) ? QStringLiteral("yes") : QStringLiteral("no"));
             }
+
+            // Timeline Subtitles / Captions (Full Text & Timestamps for NLP analysis)
+            auto subModel = tm->getSubtitleModel();
+            if (subModel && subModel->count() > 0) {
+                const auto allSubs = subModel->getAllSubtitles();
+                state += QStringLiteral("<timeline_subtitles count=%1>\n").arg(allSubs.size());
+                int count = 0;
+                for (const auto &s : allSubs) {
+                    double startSec = s.first.second.seconds();
+                    double endSec = s.second.endTime().seconds();
+                    QString txt = s.second.text().simplified();
+                    if (!txt.isEmpty()) {
+                        state += QStringLiteral("  [%1s - %2s] %3\n")
+                            .arg(startSec, 0, 'f', 2)
+                            .arg(endSec, 0, 'f', 2)
+                            .arg(txt);
+                        count++;
+                        if (count >= 50) {
+                            state += QStringLiteral("  ... (%1 more subtitles)\n").arg(allSubs.size() - count);
+                            break;
+                        }
+                    }
+                }
+                state += QStringLiteral("</timeline_subtitles>\n");
+            }
+
+            // Project Bin / Transcribed Clips (kdenlive:speech)
+            if (pCore->projectItemModel()) {
+                QStringList transcriptSummaries;
+                const auto clipIds = pCore->projectItemModel()->getAllClipIds();
+                for (const auto &id : clipIds) {
+                    auto pClip = pCore->projectItemModel()->getClipByBinID(id);
+                    if (pClip) {
+                        QString speechHtml = pClip->getProducerProperty(QStringLiteral("kdenlive:speech"));
+                        if (!speechHtml.isEmpty()) {
+                            QTextDocument doc;
+                            doc.setHtml(speechHtml);
+                            QString plain = doc.toPlainText().simplified();
+                            if (!plain.isEmpty()) {
+                                if (plain.length() > 300) {
+                                    plain = plain.left(300) + QStringLiteral("...");
+                                }
+                                transcriptSummaries << QStringLiteral("  clip \"%1\" (id=%2): \"%3\"")
+                                    .arg(pClip->clipName(), pClip->binId(), plain);
+                            }
+                        }
+                    }
+                }
+                if (!transcriptSummaries.isEmpty()) {
+                    state += QStringLiteral("<transcribed_clips>\n") + transcriptSummaries.join(QStringLiteral("\n")) + QStringLiteral("\n</transcribed_clips>\n");
+                }
+            }
         }
     }
     state += QStringLiteral("</editor_state>\n");
@@ -379,8 +435,8 @@ QString AIDispatcher::buildSystemPrompt()
         "- You can execute one tool at a time (or array of sequential tools) to accomplish the goal.\n"
         "- When you have completed the user's overall goal, do NOT return any more tool calls; simply summarize the edits performed.\n"
         "- After any destructive edit, use `get_timeline_state` to verify.\n"
-        "- Group multi-step edits logically (e.g., cut + delete + move = 3 sequential actions).\n"
-        "- Use `write_memory` / `read_memory` to persist and recall user preferences and styles.\n\n"
+        "- Use `write_memory` / `read_memory` to persist and recall user preferences and styles.\n"
+        "- For `generate_glsl_shader`: Always supply valid GLSL fragment code using ShaderToy signature `void mainImage(out vec4 fragColor, in vec2 fragCoord)` with uniforms `iResolution` (vec3) and `iTime` (float), or choose a preset ('neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix'). Ensure proper GLSL type safety (e.g. float constants like 0.0 vs int 0, matching function signatures) and specify `track_id` and `playhead_frame` for B-roll placement.\n\n"
 
         "# Output Format\n"
         "Answer concisely with your creative reasoning, then return a JSON action block:\n"
