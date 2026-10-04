@@ -134,6 +134,10 @@ AIChatWidget::AIChatWidget(QWidget *parent)
     connect(m_dispatcher, &AIDispatcher::requestStarted, this, &AIChatWidget::slotRequestStarted);
     connect(m_dispatcher, &AIDispatcher::requestFinished, this, &AIChatWidget::slotRequestFinished);
     connect(m_dispatcher, &AIDispatcher::modelsLoaded, this, &AIChatWidget::slotModelsLoaded);
+    connect(m_dispatcher, &AIDispatcher::goalStarted, this, &AIChatWidget::slotGoalStarted);
+    connect(m_dispatcher, &AIDispatcher::goalStepStarted, this, &AIChatWidget::slotGoalStepStarted);
+    connect(m_dispatcher, &AIDispatcher::goalStepFinished, this, &AIChatWidget::slotGoalStepFinished);
+    connect(m_dispatcher, &AIDispatcher::goalFinished, this, &AIChatWidget::slotGoalFinished);
 
     connect(m_router, &AICommandRouter::executionFinished, this, &AIChatWidget::slotExecutionFinished);
     connect(m_router, &AICommandRouter::dataOutput, this, &AIChatWidget::slotToolDataOutput);
@@ -154,11 +158,14 @@ void AIChatWidget::setupUi()
 
     m_stackedWidget = new QStackedWidget(this);
 
+    setMinimumWidth(200);
     m_workspacePage = new QWidget(this);
+    m_workspacePage->setMinimumWidth(200);
     setupWorkspacePage(m_workspacePage);
     m_stackedWidget->addWidget(m_workspacePage);
 
     m_settingsPage = new QWidget(this);
+    m_settingsPage->setMinimumWidth(200);
     setupSettingsPage(m_settingsPage);
     m_stackedWidget->addWidget(m_settingsPage);
 
@@ -184,8 +191,8 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
         "QWidget { background-color: #1e1e1e; border-bottom: 1px solid #2d2d2d; }"
     ));
     auto *headerLayout = new QHBoxLayout(headerWidget);
-    headerLayout->setContentsMargins(10, 6, 10, 6);
-    headerLayout->setSpacing(6);
+    headerLayout->setContentsMargins(6, 4, 6, 4);
+    headerLayout->setSpacing(4);
 
     auto *brandLabel = new QLabel(QStringLiteral("<b>VidMate Agent</b>"), headerWidget);
     brandLabel->setStyleSheet(QStringLiteral("font-size: 12px; font-weight: 700; color: #e1e4e8; border: none;"));
@@ -197,6 +204,8 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     ));
 
     m_engineTargetSelector = new QComboBox(headerWidget);
+    m_engineTargetSelector->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_engineTargetSelector->setMinimumContentsLength(6);
     m_engineTargetSelector->addItem(i18n("Auto (Kdenlive & Natron)"), QStringLiteral("auto"));
     m_engineTargetSelector->addItem(i18n("Kdenlive (NLE / Cuts)"), QStringLiteral("kdenlive"));
     m_engineTargetSelector->addItem(i18n("Natron (VFX / Compositing)"), QStringLiteral("natron"));
@@ -512,15 +521,23 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     // 1. Execution Mode
     auto *modeGroup = new QGroupBox(i18n("Execution Mode"), formContainer);
     auto *modeLayout = new QVBoxLayout(modeGroup);
+    AIAgentSettings s = m_dispatcher->agentSettings();
+
     m_modeGroup = new QButtonGroup(this);
     m_modeAskRadio = new QRadioButton(i18n("Ask Mode (Review Proposals before Applying)"), modeGroup);
     m_modeYoloRadio = new QRadioButton(i18n("YOLO Mode (Execute Timeline Edits Immediately)"), modeGroup);
-    m_modeYoloRadio->setChecked(true);
+    if (s.mode == QStringLiteral("ask")) {
+        m_modeAskRadio->setChecked(true);
+    } else {
+        m_modeYoloRadio->setChecked(true);
+    }
     m_modeGroup->addButton(m_modeAskRadio);
     m_modeGroup->addButton(m_modeYoloRadio);
     modeLayout->addWidget(m_modeAskRadio);
     modeLayout->addWidget(m_modeYoloRadio);
     formLayout->addWidget(modeGroup);
+    connect(m_modeAskRadio, &QRadioButton::toggled, this, &AIChatWidget::slotSaveSettings);
+    connect(m_modeYoloRadio, &QRadioButton::toggled, this, &AIChatWidget::slotSaveSettings);
 
     // 2. Video Editing Model (Live dynamic models)
     auto *modelGroup = new QGroupBox(i18n("Specialized Video Editing Model"), formContainer);
@@ -536,6 +553,8 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     m_providerFilter->addItem(i18n("All Providers"), QStringLiteral("all"));
     m_providerFilter->addItem(QStringLiteral("OpenRouter"), QStringLiteral("openrouter"));
     m_providerFilter->addItem(QStringLiteral("Groq"), QStringLiteral("groq"));
+    int provIdx = m_providerFilter->findData(s.provider);
+    if (provIdx >= 0) m_providerFilter->setCurrentIndex(provIdx);
     connect(m_providerFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotFilterModels);
 
     m_refreshModelsBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Refresh"), modelGroup);
@@ -557,7 +576,7 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
             QString modelId = m_editingModelSelector->itemData(idx).toString();
             if (!modelId.isEmpty()) {
                 m_dispatcher->setModel(modelId);
-                updateMetricsDisplay(0, 0, modelId);
+                updateMetricsDisplay(0, 0, m_dispatcher->currentModel());
             }
         }
     });
@@ -576,22 +595,27 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     m_imageModelSelector = new QComboBox(creativeGroup);
     m_imageModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Image Model:"), m_imageModelSelector);
+    connect(m_imageModelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotSaveSettings);
 
     m_videoModelSelector = new QComboBox(creativeGroup);
     m_videoModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Video Model:"), m_videoModelSelector);
+    connect(m_videoModelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotSaveSettings);
 
     m_musicModelSelector = new QComboBox(creativeGroup);
     m_musicModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Music Model:"), m_musicModelSelector);
+    connect(m_musicModelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotSaveSettings);
 
     m_voiceModelSelector = new QComboBox(creativeGroup);
     m_voiceModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("Voiceover Model:"), m_voiceModelSelector);
+    connect(m_voiceModelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotSaveSettings);
 
     m_soundModelSelector = new QComboBox(creativeGroup);
     m_soundModelSelector->addItem(QStringLiteral("Auto (Freesound + ElevenLabs SFX)"), QStringLiteral("auto"));
     creativeLayout->addRow(i18n("SFX Model:"), m_soundModelSelector);
+    connect(m_soundModelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AIChatWidget::slotSaveSettings);
     formLayout->addWidget(creativeGroup);
 
     // 4. Motion Graphics Tier
@@ -601,7 +625,9 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     m_mgSpeedRadio = new QRadioButton(i18n("Fast (Speed)"), tierGroup);
     m_mgBalanceRadio = new QRadioButton(i18n("Balanced"), tierGroup);
     m_mgQualityRadio = new QRadioButton(i18n("Polish (Quality)"), tierGroup);
-    m_mgBalanceRadio->setChecked(true);
+    if (s.mgTier == QStringLiteral("speed")) m_mgSpeedRadio->setChecked(true);
+    else if (s.mgTier == QStringLiteral("quality")) m_mgQualityRadio->setChecked(true);
+    else m_mgBalanceRadio->setChecked(true);
     m_mgTierGroup->addButton(m_mgSpeedRadio);
     m_mgTierGroup->addButton(m_mgBalanceRadio);
     m_mgTierGroup->addButton(m_mgQualityRadio);
@@ -609,6 +635,9 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     tierLayout->addWidget(m_mgBalanceRadio);
     tierLayout->addWidget(m_mgQualityRadio);
     formLayout->addWidget(tierGroup);
+    connect(m_mgSpeedRadio, &QRadioButton::toggled, this, &AIChatWidget::slotSaveSettings);
+    connect(m_mgBalanceRadio, &QRadioButton::toggled, this, &AIChatWidget::slotSaveSettings);
+    connect(m_mgQualityRadio, &QRadioButton::toggled, this, &AIChatWidget::slotSaveSettings);
 
     // 5. Cache Duration
     auto *cacheGroup = new QGroupBox(i18n("Prompt Cache Duration"), formContainer);
@@ -616,22 +645,28 @@ void AIChatWidget::setupSettingsPage(QWidget *page)
     m_cacheGroup = new QButtonGroup(this);
     m_cacheShortRadio = new QRadioButton(i18n("Short Chat (Standard)"), cacheGroup);
     m_cacheLongRadio = new QRadioButton(i18n("Long Chat (1-Hour Cache)"), cacheGroup);
-    m_cacheShortRadio->setChecked(true);
+    if (s.cacheMode == QStringLiteral("long")) m_cacheLongRadio->setChecked(true);
+    else m_cacheShortRadio->setChecked(true);
     m_cacheGroup->addButton(m_cacheShortRadio);
     m_cacheGroup->addButton(m_cacheLongRadio);
     cacheLayout->addWidget(m_cacheShortRadio);
     cacheLayout->addWidget(m_cacheLongRadio);
     formLayout->addWidget(cacheGroup);
+    connect(m_cacheShortRadio, &QRadioButton::toggled, this, &AIChatWidget::slotSaveSettings);
+    connect(m_cacheLongRadio, &QRadioButton::toggled, this, &AIChatWidget::slotSaveSettings);
 
     // 6. Autonomous Features
     auto *autoGroup = new QGroupBox(i18n("Autonomous Features"), formContainer);
     auto *autoLayout = new QVBoxLayout(autoGroup);
     m_cloudAssetsCheck = new QCheckBox(i18n("Autonomous Cloud Media Assets Retrieval (Pexels, Pixabay, Freesound)"), autoGroup);
-    m_cloudAssetsCheck->setChecked(true);
+    m_cloudAssetsCheck->setChecked(s.cloudAssetsAccess);
     m_planModeCheck = new QCheckBox(i18n("Plan Mode (Generate numbered plan before mutating timeline)"), autoGroup);
+    m_planModeCheck->setChecked(s.planMode);
     autoLayout->addWidget(m_cloudAssetsCheck);
     autoLayout->addWidget(m_planModeCheck);
     formLayout->addWidget(autoGroup);
+    connect(m_cloudAssetsCheck, &QCheckBox::toggled, this, &AIChatWidget::slotSaveSettings);
+    connect(m_planModeCheck, &QCheckBox::toggled, this, &AIChatWidget::slotSaveSettings);
 
     formLayout->addStretch(1);
     scrollArea->setWidget(formContainer);
@@ -1480,6 +1515,13 @@ void AIChatWidget::slotModelsLoaded(const QJsonArray &models)
         }
     }
 
+    QSignalBlocker bImg(m_imageModelSelector);
+    QSignalBlocker bVid(m_videoModelSelector);
+    QSignalBlocker bMus(m_musicModelSelector);
+    QSignalBlocker bVoi(m_voiceModelSelector);
+
+    AIAgentSettings s = m_dispatcher->agentSettings();
+
     m_imageModelSelector->clear();
     m_imageModelSelector->addItem(QStringLiteral("Auto (AI Proxy Default)"), QStringLiteral("auto"));
     m_videoModelSelector->clear();
@@ -1496,16 +1538,36 @@ void AIChatWidget::slotModelsLoaded(const QJsonArray &models)
         m_musicModelSelector->addItem(display, m.id);
         m_voiceModelSelector->addItem(display, m.id);
     }
+
+    int idxImg = m_imageModelSelector->findData(s.imageModel);
+    if (idxImg >= 0) m_imageModelSelector->setCurrentIndex(idxImg);
+
+    int idxVid = m_videoModelSelector->findData(s.videoModel);
+    if (idxVid >= 0) m_videoModelSelector->setCurrentIndex(idxVid);
+
+    int idxMus = m_musicModelSelector->findData(s.musicModel);
+    if (idxMus >= 0) m_musicModelSelector->setCurrentIndex(idxMus);
+
+    int idxVoi = m_voiceModelSelector->findData(s.voiceModel);
+    if (idxVoi >= 0) m_voiceModelSelector->setCurrentIndex(idxVoi);
 }
 
 void AIChatWidget::slotFilterModels()
 {
-    QString query = m_modelSearchInput ? m_modelSearchInput->text().trimmed().toLower() : QString();
-    QString provider = m_providerFilter ? m_providerFilter->currentData().toString() : QStringLiteral("all");
+    QString targetModelId = m_dispatcher->agentSettings().editingModelId;
+    if (m_editingModelSelector->count() > 0 && m_editingModelSelector->currentIndex() >= 0) {
+        QString currentData = m_editingModelSelector->currentData().toString();
+        if (!currentData.isEmpty() && currentData != QStringLiteral("auto")) {
+            targetModelId = currentData;
+        }
+    }
 
-    QString currentSelectedId = m_editingModelSelector->currentData().toString();
+    QSignalBlocker blocker(m_editingModelSelector);
     m_editingModelSelector->clear();
     m_editingModelSelector->addItem(QStringLiteral("Auto (Default AI Proxy Resolution)"), QStringLiteral("auto"));
+
+    QString query = m_modelSearchInput ? m_modelSearchInput->text().trimmed().toLower() : QString();
+    QString provider = m_providerFilter ? m_providerFilter->currentData().toString() : QStringLiteral("all");
 
     for (const auto &m : m_dynamicModels) {
         if (provider != QStringLiteral("all") && m.provider != provider) continue;
@@ -1516,8 +1578,12 @@ void AIChatWidget::slotFilterModels()
         m_editingModelSelector->addItem(display, m.id);
     }
 
-    int idx = m_editingModelSelector->findData(currentSelectedId);
-    if (idx >= 0) m_editingModelSelector->setCurrentIndex(idx);
+    int idx = m_editingModelSelector->findData(targetModelId);
+    if (idx >= 0) {
+        m_editingModelSelector->setCurrentIndex(idx);
+    } else {
+        m_editingModelSelector->setCurrentIndex(0);
+    }
 }
 
 void AIChatWidget::slotSaveSettings()
@@ -1543,7 +1609,7 @@ void AIChatWidget::slotSaveSettings()
 
     m_dispatcher->setAgentSettings(s);
     updateModeBadge();
-    updateMetricsDisplay(0, 0, s.editingModelId);
+    updateMetricsDisplay(0, 0, m_dispatcher->currentModel());
 }
 
 void AIChatWidget::slotSendMessage()
@@ -1584,16 +1650,17 @@ void AIChatWidget::slotResponseReceived(const QString &summaryText, const QJsonO
 
     if (actionPayload.isEmpty()) return;
 
+    QString actionName = actionPayload[QStringLiteral("action")].toString();
+    m_lastExecutedActionName = actionName;
+
     AIAgentSettings currentSettings = m_dispatcher->agentSettings();
 
     if (currentSettings.mode == QStringLiteral("ask")) {
         m_pendingProposalAction = actionPayload;
-        QString actionName = actionPayload[QStringLiteral("action")].toString();
         m_proposalTitle->setText(i18n("Proposed Action: %1", actionName));
         m_proposalSummary->setText(i18n("The Agent proposes executing '%1' on your project timeline.", actionName));
         m_proposalCard->setVisible(true);
     } else {
-        QString actionName = actionPayload[QStringLiteral("action")].toString();
         appendToolExecution(actionName, QStringLiteral("Executing..."), true);
         m_router->executeAction(actionPayload);
     }
@@ -1603,23 +1670,59 @@ void AIChatWidget::slotApplyProposal()
 {
     if (!m_pendingProposalAction.isEmpty()) {
         QString actionName = m_pendingProposalAction[QStringLiteral("action")].toString();
+        m_lastExecutedActionName = actionName;
         appendToolExecution(actionName, QStringLiteral("Applied by user"), true);
-        m_router->executeAction(m_pendingProposalAction);
+        QJsonObject actionToRun = m_pendingProposalAction;
         m_pendingProposalAction = QJsonObject();
+        m_proposalCard->setVisible(false);
+        m_router->executeAction(actionToRun);
+        return;
     }
     m_proposalCard->setVisible(false);
 }
 
 void AIChatWidget::slotRejectProposal()
 {
-    appendSystemMessage(i18n("Proposal rejected by user."));
+    QString rejectedAction = m_pendingProposalAction[QStringLiteral("action")].toString();
+    appendSystemMessage(i18n("Proposal '%1' rejected by user.", rejectedAction));
     m_pendingProposalAction = QJsonObject();
     m_proposalCard->setVisible(false);
+
+    if (m_dispatcher->isGoalActive()) {
+        m_dispatcher->feedObservationAndContinue(rejectedAction, QStringLiteral("User rejected proposal. Propose an alternative or conclude."), false);
+    }
 }
 
 void AIChatWidget::slotExecutionFinished(const QString &resultMessage, bool success)
 {
     appendToolExecution(i18n("Execution Result"), resultMessage, success);
+
+    // If autonomous multi-step goal is active, feed the observation back to the agent loop!
+    if (m_dispatcher->isGoalActive()) {
+        QString action = m_lastExecutedActionName.isEmpty() ? QStringLiteral("edit_timeline") : m_lastExecutedActionName;
+        m_dispatcher->feedObservationAndContinue(action, resultMessage, success);
+    }
+}
+
+void AIChatWidget::slotGoalStarted(const QString &goal)
+{
+    appendSystemMessage(i18n("Autonomous Goal Started: \"%1\"", goal));
+}
+
+void AIChatWidget::slotGoalStepStarted(int step, int maxSteps, const QString &actionName)
+{
+    appendSystemMessage(i18n("[Step %1/%2] Executing action '%3'...", step, maxSteps, actionName));
+}
+
+void AIChatWidget::slotGoalStepFinished(int step, int maxSteps, const QString &actionName, bool success)
+{
+    qDebug() << "[AIChatWidget] Goal step" << step << "/" << maxSteps << actionName << "finished:" << success;
+}
+
+void AIChatWidget::slotGoalFinished(const QString &finalSummary)
+{
+    appendSystemMessage(i18n("Goal Completed: %1", finalSummary));
+    slotRequestFinished();
 }
 
 void AIChatWidget::slotToolDataOutput(const QString &toolName, const QJsonObject &data)

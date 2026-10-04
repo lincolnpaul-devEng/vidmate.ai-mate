@@ -372,23 +372,21 @@ void MainWindow::init()
     connect(onlineResources, &ResourceWidget::addClip, this, &MainWindow::slotAddProjectClip);
     connect(onlineResources, &ResourceWidget::addLicenseInfo, this, &MainWindow::slotAddTextNote);
 
-    // AI Assistant Chat Widget
+    // AI Assistant Chat Widget (tabbed with Project Monitor)
     m_aiChatWidget = new AIChatWidget(this);
-    m_aiChatDock = addDock(i18n("AI Assistant"), QStringLiteral("ai_assistant"), m_aiChatWidget, KDDockWidgets::Location_OnRight, m_projectMonitorDock);
-    m_aiChatDock->addDockWidgetAsTab(m_projectMonitorDock);
+    m_aiChatDock = addDock(i18n("AI Assistant"), QStringLiteral("ai_assistant"), m_aiChatWidget, KDDockWidgets::Location_None, m_projectMonitorDock);
     m_projectMonitorDock->setAsCurrentTab();
     connect(m_aiChatWidget, &AIChatWidget::openAssetStudioRequested, this, &MainWindow::slotOpenAssetStudio);
 
-    // Natron Node Graph & Compositor Workspace (Node Graph, Curve Editor, Dope Sheet & Scrubber)
+    // Natron Node Graph & Compositor Workspace (tabbed with Timeline)
     m_natronWorkspaceWidget = new NatronWorkspaceWidget(this);
-    m_natronWorkspaceDock = addDock(i18n("Natron Node Graph & VFX"), QStringLiteral("natron_workspace"), m_natronWorkspaceWidget, KDDockWidgets::Location_OnBottom, nullptr);
-    m_timelineDock->addDockWidgetAsTab(m_natronWorkspaceDock);
+    m_natronWorkspaceDock = addDock(i18n("Natron Node Graph & VFX"), QStringLiteral("natron_workspace"), m_natronWorkspaceWidget, KDDockWidgets::Location_None, m_timelineDock);
     m_timelineDock->setAsCurrentTab();
 
-    // Velo Stock Media & AI Voiceover Studio Widget
+    // Velo Stock Media & AI Voiceover Studio Widget (tabbed with Project Bin)
     m_veloAssetWidget = new VeloAssetWidget(this);
-    m_veloAssetDock = addDock(i18n("Velo Stock & AI Assets"), QStringLiteral("velo_asset_studio"), m_veloAssetWidget, KDDockWidgets::Location_OnLeft, m_projectBinDock);
-    m_projectBinDock->addDockWidgetAsTab(m_veloAssetDock);
+    m_veloAssetDock = addDock(i18n("Velo Stock & AI Assets"), QStringLiteral("velo_asset_studio"), m_veloAssetWidget, KDDockWidgets::Location_None, m_projectBinDock);
+    m_projectBinDock->setAsCurrentTab();
 
     const QSize stackSize(firstWindowSize.width() * 0.3, 0);
     m_effectStackDock =

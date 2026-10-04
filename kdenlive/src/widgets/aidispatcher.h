@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QString>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QElapsedTimer>
@@ -44,7 +45,16 @@ public:
     explicit AIDispatcher(QObject *parent = nullptr);
     ~AIDispatcher() override = default;
 
-    void sendPrompt(const QString &prompt, const QString &targetEngine);
+    void sendPrompt(const QString &prompt, const QString &targetEngine = QStringLiteral("auto"));
+    void feedObservationAndContinue(const QString &actionName, const QString &observationResult, bool success);
+    void cancelCurrentGoal();
+    void clearConversation();
+
+    bool isGoalActive() const { return m_goalActive; }
+    int currentStep() const { return m_currentStep; }
+    int maxSteps() const { return m_maxSteps; }
+    QString currentGoal() const { return m_currentGoal; }
+
     void setApiEndpoint(const QString &url);
     void setApiKey(const QString &key);
     void setModel(const QString &model);
@@ -55,6 +65,8 @@ public:
 
     AIAgentSettings agentSettings() const { return m_settings; }
     void setAgentSettings(const AIAgentSettings &settings);
+    void loadSettings();
+    void saveSettings();
 
     /** @brief Returns the tool registry for external access */
     AIToolRegistry *toolRegistry() const { return m_toolRegistry; }
@@ -70,11 +82,16 @@ Q_SIGNALS:
     void requestFinished();
     void agentSettingsChanged(const AIAgentSettings &settings);
     void modelsLoaded(const QJsonArray &models);
+    void goalStarted(const QString &goal);
+    void goalStepStarted(int step, int maxSteps, const QString &actionName);
+    void goalStepFinished(int step, int maxSteps, const QString &actionName, bool success);
+    void goalFinished(const QString &finalSummary);
 
 private Q_SLOTS:
-    void slotReplyFinished(QNetworkReply *reply);
+    void slotReplyFinished(QNetworkReply *reply, const QString &modelUsed = QString());
 
 private:
+    void sendCurrentMessages();
     void processAiResponse(const QByteArray &data);
     QString buildEditorStateSnapshot();
     QString buildSystemPrompt();
@@ -84,11 +101,16 @@ private:
     QElapsedTimer m_requestTimer;
     QString m_apiUrl{QStringLiteral("http://localhost:8080/v1/chat/completions")};
     QString m_apiKey;
-    QString m_model{QStringLiteral("gpt-4o")};
+    QString m_model{QStringLiteral("groq/openai/gpt-oss-120b")};
     QString m_supabaseUrl;
     QString m_supabaseAnonKey;
     QString m_supabaseServiceKey;
     QString m_lastEngine;
     QString m_lastPrompt;
+    QString m_currentGoal;
+    QJsonArray m_conversationMessages;
+    bool m_goalActive{false};
+    int m_currentStep{0};
+    int m_maxSteps{10};
     AIAgentSettings m_settings;
 };

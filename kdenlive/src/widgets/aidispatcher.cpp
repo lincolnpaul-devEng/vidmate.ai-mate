@@ -12,6 +12,7 @@
 
 #include "aidispatcher.h"
 #include "aitoolregistry.h"
+#include "aimemorystore.h"
 #include "authmanager.h"
 #include "core.h"
 #include "mainwindow.h"
@@ -32,6 +33,8 @@
 #include <QCoreApplication>
 #include <QProcessEnvironment>
 #include <QDebug>
+#include <KSharedConfig>
+#include <KConfigGroup>
 
 AIDispatcher::AIDispatcher(QObject *parent)
     : QObject(parent)
@@ -39,6 +42,53 @@ AIDispatcher::AIDispatcher(QObject *parent)
     , m_toolRegistry(new AIToolRegistry())
 {
     loadEnvConfig();
+    loadSettings();
+}
+
+void AIDispatcher::loadSettings()
+{
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup grp(config, "AIAgentSettings");
+    if (grp.exists()) {
+        m_settings.mode = grp.readEntry("mode", QStringLiteral("yolo"));
+        m_settings.editingModelId = grp.readEntry("editingModelId", QStringLiteral("auto"));
+        m_settings.provider = grp.readEntry("provider", QStringLiteral("all"));
+        m_settings.imageModel = grp.readEntry("imageModel", QStringLiteral("auto"));
+        m_settings.videoModel = grp.readEntry("videoModel", QStringLiteral("auto"));
+        m_settings.musicModel = grp.readEntry("musicModel", QStringLiteral("auto"));
+        m_settings.voiceModel = grp.readEntry("voiceModel", QStringLiteral("auto"));
+        m_settings.soundModel = grp.readEntry("soundModel", QStringLiteral("auto"));
+        m_settings.mgTier = grp.readEntry("mgTier", QStringLiteral("balance"));
+        m_settings.cacheMode = grp.readEntry("cacheMode", QStringLiteral("short"));
+        m_settings.cloudAssetsAccess = grp.readEntry("cloudAssetsAccess", true);
+        m_settings.planMode = grp.readEntry("planMode", false);
+    }
+    if (m_settings.editingModelId != QStringLiteral("auto") && !m_settings.editingModelId.isEmpty()) {
+        m_model = m_settings.editingModelId;
+    } else {
+        m_model = QStringLiteral("groq/openai/gpt-oss-120b");
+    }
+    qDebug() << "[AIDispatcher] Loaded persisted agent settings. Active model:" << m_model;
+}
+
+void AIDispatcher::saveSettings()
+{
+    KSharedConfigPtr config = KSharedConfig::openConfig();
+    KConfigGroup grp(config, "AIAgentSettings");
+    grp.writeEntry("mode", m_settings.mode);
+    grp.writeEntry("editingModelId", m_settings.editingModelId);
+    grp.writeEntry("provider", m_settings.provider);
+    grp.writeEntry("imageModel", m_settings.imageModel);
+    grp.writeEntry("videoModel", m_settings.videoModel);
+    grp.writeEntry("musicModel", m_settings.musicModel);
+    grp.writeEntry("voiceModel", m_settings.voiceModel);
+    grp.writeEntry("soundModel", m_settings.soundModel);
+    grp.writeEntry("mgTier", m_settings.mgTier);
+    grp.writeEntry("cacheMode", m_settings.cacheMode);
+    grp.writeEntry("cloudAssetsAccess", m_settings.cloudAssetsAccess);
+    grp.writeEntry("planMode", m_settings.planMode);
+    grp.sync();
+    qDebug() << "[AIDispatcher] Saved agent settings to KConfig. Active model:" << m_model;
 }
 
 void AIDispatcher::loadEnvConfig(const QString &customPath)
@@ -85,7 +135,7 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
                     if (m_apiKey.isEmpty()) m_apiKey = val;
                 } else if (key == QStringLiteral("LLM_ANTHROPIC_API_KEY") || key == QStringLiteral("ANTHROPIC_API_KEY")) {
                     if (m_apiKey.isEmpty()) m_apiKey = val;
-                } else if (key == QStringLiteral("LLM_MODEL") || key == QStringLiteral("LLM_ANTHROPIC_MODEL") || key == QStringLiteral("LLM_OPENAI_MODEL")) {
+                } else if (key == QStringLiteral("LLM_MODEL")) {
                     if (!val.isEmpty()) m_model = val;
                 }
             }
@@ -102,14 +152,30 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
 
 void AIDispatcher::setApiEndpoint(const QString &url) { m_apiUrl = url; }
 void AIDispatcher::setApiKey(const QString &key) { m_apiKey = key; }
-void AIDispatcher::setModel(const QString &model) { m_model = model; }
+
+void AIDispatcher::setModel(const QString &model)
+{
+    QString trimmed = model.trimmed();
+    if (trimmed.isEmpty() || trimmed == QStringLiteral("auto")) {
+        m_settings.editingModelId = QStringLiteral("auto");
+        m_model = QStringLiteral("groq/openai/gpt-oss-120b");
+    } else {
+        m_settings.editingModelId = trimmed;
+        m_model = trimmed;
+    }
+    saveSettings();
+    Q_EMIT agentSettingsChanged(m_settings);
+}
 
 void AIDispatcher::setAgentSettings(const AIAgentSettings &settings)
 {
     m_settings = settings;
     if (settings.editingModelId != QStringLiteral("auto") && !settings.editingModelId.isEmpty()) {
         m_model = settings.editingModelId;
+    } else {
+        m_model = QStringLiteral("groq/openai/gpt-oss-120b");
     }
+    saveSettings();
     Q_EMIT agentSettingsChanged(m_settings);
 }
 
@@ -242,6 +308,7 @@ QString AIDispatcher::buildSystemPrompt()
 {
     QString toolDescriptions = m_toolRegistry->toolDescriptionsForPrompt();
     QString editorState = buildEditorStateSnapshot();
+    QString memories = AIMemoryStore::instance()->formattedForPrompt();
 
     QString settingsDirective;
     if (m_settings.planMode) {
@@ -250,7 +317,7 @@ QString AIDispatcher::buildSystemPrompt()
     if (m_settings.mode == QStringLiteral("ask")) {
         settingsDirective += QStringLiteral("- Ask Mode is ACTIVE: Present proposed timeline changes for review.\n");
     } else {
-        settingsDirective += QStringLiteral("- YOLO Mode is ACTIVE: Autonomous direct tool execution on the timeline.\n");
+        settingsDirective += QStringLiteral("- YOLO Mode is ACTIVE: Autonomous direct multi-step tool execution on the timeline.\n");
     }
     if (m_settings.cloudAssetsAccess) {
         settingsDirective += QStringLiteral("- Autonomous Cloud Assets: You may search & insert Pexels/Pixabay and Freesound assets.\n");
@@ -261,38 +328,40 @@ QString AIDispatcher::buildSystemPrompt()
     }
 
     return QStringLiteral(
-        "You are Velo AI: an autonomous master writer-director and video-editing AI running natively "
+        "You are Velo AI: an autonomous master writer-director and video-editing AI agent running natively "
         "inside Kdenlive (non-linear editor) with Natron VFX compositor as a sub-processor.\n"
-        "Users can direct edits using plain English or any other language. You handle the technical "
-        "complexity; the user just describes what they want.\n\n"
+        "You operate in an autonomous iterative multi-step goal loop. When directed by the user, execute "
+        "tools sequentially. After each action, you receive the tool execution observation and updated timeline state. "
+        "Continue executing actions until the objective is completely achieved, then provide a concluding summary without further tool calls.\n\n"
 
         "# Professional Video Editing Framework (9-Phase Lifecycle)\n"
         "1. **Intake & Analysis**: Understand source footage structure, audio tracks, pacing.\n"
         "2. **Story Structure**: Hook the viewer in first 3-5 seconds. Establish clear narrative arc.\n"
         "3. **Pacing & Cuts**: Trim dead-air pauses (>150ms). Match cut rhythm to content energy.\n"
         "4. **B-Roll & Coverage**: Insert supplementary footage for visual variety.\n"
-        "5. **Graphics & VFX**: Kdenlive for overlays/filters; Natron for node-based compositing "
-        "(rotoscoping, chroma-key, planar tracking, particles, light wraps).\n"
+        "5. **Graphics & VFX**: Kdenlive for overlays/filters; Natron for node-based compositing; Procedural GLSL for shaders.\n"
         "6. **Typography & Titles**: Clean lower-thirds, intro titles, end cards with consistent style.\n"
         "7. **Sound Design**: SFX on transitions, J/L-cuts for smooth dialogue, background music "
         "auto-ducked to -24dB during speech, voice isolation.\n"
         "8. **Subtitles & Captions**: Accurate subtitle timing synced to speech transcript.\n"
         "9. **Render QA**: Visual verification (frame snapshots), audio level check, quality probe.\n\n"
 
-        "# Active Agent Configuration\n"
+        "# Persistent Agent Memory & User Rules\n"
         "%1\n\n"
 
-        "# Available Tools\n"
+        "# Active Agent Configuration\n"
         "%2\n\n"
 
-        "# Rules\n"
-        "- Always explain the creative reason FIRST, then return the tool call.\n"
+        "# Available Tools\n"
+        "%3\n\n"
+
+        "# Autonomous Agent Rules\n"
+        "- Explain your immediate creative intent concisely, then return the JSON tool action block.\n"
+        "- You can execute one tool at a time (or array of sequential tools) to accomplish the goal.\n"
+        "- When you have completed the user's overall goal, do NOT return any more tool calls; simply summarize the edits performed.\n"
         "- After any destructive edit, use `get_timeline_state` to verify.\n"
-        "- After visual changes, use `view_timeline_frames` to visually confirm.\n"
-        "- For complex VFX (roto, tracking, chroma key, particles), delegate to `natron_vfx`.\n"
-        "- For simple filters/effects (blur, glow, color), use `add_effect` (Kdenlive frei0r/MLT).\n"
         "- Group multi-step edits logically (e.g., cut + delete + move = 3 sequential actions).\n"
-        "- Use `undo_last` if you detect a mistake.\n\n"
+        "- Use `write_memory` / `read_memory` to persist and recall user preferences and styles.\n\n"
 
         "# Output Format\n"
         "Answer concisely with your creative reasoning, then return a JSON action block:\n"
@@ -305,29 +374,108 @@ QString AIDispatcher::buildSystemPrompt()
         "```\n\n"
 
         "# Current Editor State\n"
-        "%3"
-    ).arg(settingsDirective, toolDescriptions, editorState);
+        "%4"
+    ).arg(memories, settingsDirective, toolDescriptions, editorState);
 }
 
-// ── Send Prompt ─────────────────────────────────────────────────────────────
+// ── Multi-Step Goal Control ──────────────────────────────────────────────────
+
+void AIDispatcher::clearConversation()
+{
+    m_conversationMessages = QJsonArray();
+    m_currentStep = 0;
+    m_goalActive = false;
+    m_currentGoal.clear();
+}
+
+void AIDispatcher::cancelCurrentGoal()
+{
+    if (m_goalActive) {
+        m_goalActive = false;
+        Q_EMIT requestFinished();
+        Q_EMIT goalFinished(QStringLiteral("Goal cancelled by user."));
+    }
+}
 
 void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine)
 {
     m_lastEngine = targetEngine;
     m_lastPrompt = prompt;
+    m_currentGoal = prompt;
+    m_currentStep = 1;
+    m_goalActive = true;
 
+    m_conversationMessages = QJsonArray();
+
+    QJsonObject systemMsg;
+    systemMsg[QStringLiteral("role")] = QStringLiteral("system");
+    systemMsg[QStringLiteral("content")] = buildSystemPrompt();
+    m_conversationMessages.append(systemMsg);
+
+    QJsonObject userMsg;
+    userMsg[QStringLiteral("role")] = QStringLiteral("user");
+    userMsg[QStringLiteral("content")] = QStringLiteral("[Mode: %1] %2").arg(targetEngine, prompt);
+    m_conversationMessages.append(userMsg);
+
+    Q_EMIT goalStarted(prompt);
+    sendCurrentMessages();
+}
+
+void AIDispatcher::feedObservationAndContinue(const QString &actionName, const QString &observationResult, bool success)
+{
+    if (!m_goalActive) {
+        return;
+    }
+
+    Q_EMIT goalStepFinished(m_currentStep, m_maxSteps, actionName, success);
+
+    if (m_currentStep >= m_maxSteps) {
+        m_goalActive = false;
+        Q_EMIT goalFinished(QStringLiteral("Goal step budget completed (%1 steps executed).").arg(m_maxSteps));
+        return;
+    }
+
+    m_currentStep++;
+
+    // Prune oldest messages if conversation exceeds 20 items to prevent context window overflow
+    if (m_conversationMessages.size() > 20) {
+        QJsonArray pruned;
+        pruned.append(m_conversationMessages.at(0)); // keep system prompt
+        for (int i = m_conversationMessages.size() - 10; i < m_conversationMessages.size(); ++i) {
+            pruned.append(m_conversationMessages.at(i));
+        }
+        m_conversationMessages = pruned;
+    }
+
+    // Append observation message with live timeline snapshot
+    QJsonObject obsMsg;
+    obsMsg[QStringLiteral("role")] = QStringLiteral("user");
+    obsMsg[QStringLiteral("content")] = QStringLiteral(
+        "[Tool Observation: '%1'] Status: %2\nResult: %3\n\nUpdated Timeline State:\n%4\n\n"
+        "Continue towards achieving user goal: \"%5\". Take the next step or conclude if complete."
+    ).arg(actionName, success ? QStringLiteral("Success") : QStringLiteral("Failed"), observationResult, buildEditorStateSnapshot(), m_currentGoal);
+    m_conversationMessages.append(obsMsg);
+
+    sendCurrentMessages();
+}
+
+void AIDispatcher::sendCurrentMessages()
+{
     m_requestTimer.start();
     Q_EMIT requestStarted();
 
-    // Check authentication: prefer logged-in user token from AuthManager
+    // Check authentication
     QString authToken;
-    if (AuthManager::instance()->isLoggedIn()) {
+    if (AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {
         authToken = AuthManager::instance()->accessToken();
+    } else if (!m_supabaseAnonKey.isEmpty()) {
+        authToken = m_supabaseAnonKey;
     } else if (!m_apiKey.isEmpty()) {
         authToken = m_apiKey;
     }
 
     if (authToken.isEmpty()) {
+        m_goalActive = false;
         Q_EMIT requestFinished();
         Q_EMIT errorOccurred(QStringLiteral("Authentication required. Please click 'Account' to sign in to your Velo/VidMate account."));
         return;
@@ -342,22 +490,16 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
         request.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
     }
 
-    QJsonObject systemMsg;
-    systemMsg[QStringLiteral("role")] = QStringLiteral("system");
-    systemMsg[QStringLiteral("content")] = buildSystemPrompt();
-
-    QJsonObject userMsg;
-    userMsg[QStringLiteral("role")] = QStringLiteral("user");
-    userMsg[QStringLiteral("content")] = QStringLiteral("[Mode: %1] %2").arg(targetEngine, prompt);
-
-    QJsonArray messages;
-    messages.append(systemMsg);
-    messages.append(userMsg);
+    QString modelToSend = m_model;
+    if (modelToSend.isEmpty() || modelToSend == QStringLiteral("auto")) {
+        modelToSend = QStringLiteral("groq/openai/gpt-oss-120b");
+    }
+    qDebug() << "[AIDispatcher] Iteration step" << m_currentStep << "using model:" << modelToSend;
 
     QJsonObject rootObj;
     rootObj[QStringLiteral("action")] = QStringLiteral("chat");
-    rootObj[QStringLiteral("model")] = m_model;
-    rootObj[QStringLiteral("messages")] = messages;
+    rootObj[QStringLiteral("model")] = modelToSend;
+    rootObj[QStringLiteral("messages")] = m_conversationMessages;
     rootObj[QStringLiteral("temperature")] = 0.2;
 
     // Add function-calling tools if supported
@@ -369,26 +511,42 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
 
     QJsonDocument doc(rootObj);
     QNetworkReply *reply = m_nam->post(request, doc.toJson());
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        slotReplyFinished(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, modelToSend]() {
+        slotReplyFinished(reply, modelToSend);
     });
 }
 
 // ── Response Processing ─────────────────────────────────────────────────────
 
-void AIDispatcher::slotReplyFinished(QNetworkReply *reply)
+void AIDispatcher::slotReplyFinished(QNetworkReply *reply, const QString &modelUsed)
 {
-    Q_EMIT requestFinished();
-
     if (!reply) {
+        m_goalActive = false;
+        Q_EMIT requestFinished();
         Q_EMIT errorOccurred(QStringLiteral("Network error: No reply received from server."));
         return;
     }
 
     if (reply->error() != QNetworkReply::NoError) {
+        int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         QByteArray respData = reply->readAll();
-        QString errMsg;
+        reply->deleteLater();
 
+        // If the selected model failed on ai-proxy (e.g. HTTP 401/404/500), automatically fallback to primary working model
+        if (modelUsed != QStringLiteral("groq/openai/gpt-oss-120b") && (statusCode == 401 || statusCode == 404 || statusCode == 400 || statusCode == 500)) {
+            qWarning() << "[AIDispatcher] Model" << modelUsed << "returned HTTP" << statusCode << ". Transparently falling back to verified primary model: groq/openai/gpt-oss-120b";
+            m_model = QStringLiteral("groq/openai/gpt-oss-120b");
+            m_settings.editingModelId = m_model;
+            saveSettings();
+            Q_EMIT agentSettingsChanged(m_settings);
+            sendCurrentMessages();
+            return;
+        }
+
+        m_goalActive = false;
+        Q_EMIT requestFinished();
+
+        QString errMsg;
         QJsonDocument doc = QJsonDocument::fromJson(respData);
         if (doc.isObject()) {
             QJsonObject obj = doc.object();
@@ -405,20 +563,28 @@ void AIDispatcher::slotReplyFinished(QNetworkReply *reply)
         }
 
         if (errMsg.isEmpty()) {
-            errMsg = reply->errorString();
+            if (statusCode == 401) {
+                if (!AuthManager::instance()->isLoggedIn()) {
+                    errMsg = QStringLiteral("Please click 'Account' to sign in with your Supabase account.");
+                } else {
+                    errMsg = QStringLiteral("AI Proxy authentication failed (HTTP 401).");
+                }
+            } else if (statusCode == 402 || statusCode == 429) {
+                errMsg = QStringLiteral("AI service quota exceeded or rate limited. Please try again in a moment.");
+            } else if (statusCode == 404) {
+                errMsg = QStringLiteral("Model not found on AI Proxy (HTTP 404).");
+            } else {
+                errMsg = reply->errorString();
+            }
+        } else if (statusCode == 401 && !AuthManager::instance()->isLoggedIn()) {
+            errMsg = QStringLiteral("Please click 'Account' to sign in with your Supabase account.");
         }
 
-        int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (statusCode == 401) {
-            errMsg = QStringLiteral("Authentication expired or invalid (401). Please click 'Account' to sign in again.");
-            AuthManager::instance()->refreshSession();
-        }
-
-        reply->deleteLater();
         Q_EMIT errorOccurred(errMsg);
         return;
     }
 
+    Q_EMIT requestFinished();
     QByteArray data = reply->readAll();
     reply->deleteLater();
     processAiResponse(data);
@@ -430,6 +596,7 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
 
     QJsonDocument doc = QJsonDocument::fromJson(data);
     if (!doc.isObject()) {
+        m_goalActive = false;
         Q_EMIT errorOccurred(QStringLiteral("Invalid JSON response received from AI model."));
         return;
     }
@@ -474,6 +641,13 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
                         totalTokens = qMax(1, (m_lastPrompt.length() + fnName.length() + fnArgs.length()) / 4);
                     }
                     Q_EMIT metricsUpdated(totalTokens, latencyMs, modelUsed);
+
+                    QJsonObject assistantMsg;
+                    assistantMsg[QStringLiteral("role")] = QStringLiteral("assistant");
+                    assistantMsg[QStringLiteral("content")] = aiText.isEmpty() ? fnName : aiText;
+                    m_conversationMessages.append(assistantMsg);
+
+                    Q_EMIT goalStepStarted(m_currentStep, m_maxSteps, fnName);
                     Q_EMIT responseReceived(aiText.isEmpty() ? fnName : aiText, actionObj);
                     return;
                 }
@@ -486,6 +660,7 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
     }
 
     if (aiText.isEmpty()) {
+        m_goalActive = false;
         if (root.contains(QStringLiteral("error"))) {
             QJsonValue errVal = root[QStringLiteral("error")];
             QString msg = errVal.isObject() ? errVal.toObject()[QStringLiteral("message")].toString() : errVal.toString();
@@ -518,5 +693,19 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
         }
     }
 
-    Q_EMIT responseReceived(aiText, actionObj);
+    QJsonObject assistantMsg;
+    assistantMsg[QStringLiteral("role")] = QStringLiteral("assistant");
+    assistantMsg[QStringLiteral("content")] = aiText;
+    m_conversationMessages.append(assistantMsg);
+
+    if (!actionObj.isEmpty()) {
+        QString actionName = actionObj[QStringLiteral("action")].toString();
+        Q_EMIT goalStepStarted(m_currentStep, m_maxSteps, actionName);
+        Q_EMIT responseReceived(aiText, actionObj);
+    } else {
+        // Goal achieved or direct textual response
+        m_goalActive = false;
+        Q_EMIT responseReceived(aiText, actionObj);
+        Q_EMIT goalFinished(aiText);
+    }
 }

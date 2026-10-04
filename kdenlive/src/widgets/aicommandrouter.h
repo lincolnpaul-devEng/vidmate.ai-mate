@@ -75,6 +75,9 @@ private:
     void handleInsertMediaUrl(const QJsonObject &params);
     void handleDetectScenes(const QJsonObject &params);
     void handleGenerateGlslShader(const QJsonObject &params);
+    void handleWriteMemory(const QJsonObject &params);
+    void handleReadMemory(const QJsonObject &params);
+    void handleListMemoryKeys(const QJsonObject &params);
 
     // Natron VFX handler
     void executeNatronVfxJob(const QJsonObject &params);

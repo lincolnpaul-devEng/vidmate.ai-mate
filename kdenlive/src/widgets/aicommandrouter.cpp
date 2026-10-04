@@ -25,6 +25,7 @@
 #include "bin/clipcreator.hpp"
 #include "effects/shadervalidationengine.h"
 #include "effects/glslshaderrenderer.h"
+#include "aimemorystore.h"
 #include <QFile>
 #include <QDir>
 #include <QCoreApplication>
@@ -97,6 +98,9 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
                        action != QStringLiteral("get_timeline_state") &&
                        action != QStringLiteral("probe_quality") &&
                        action != QStringLiteral("seek_to") &&
+                       action != QStringLiteral("write_memory") &&
+                       action != QStringLiteral("read_memory") &&
+                       action != QStringLiteral("list_memory_keys") &&
                        action != QStringLiteral("undo_last"));
 
     if (isMutating && pCore && pCore->undoStack()) {
@@ -174,8 +178,14 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
     else if (action == QStringLiteral("generate_glsl_shader") || action == QStringLiteral("compile_glsl_shader") ||
              action == QStringLiteral("create_shader") || action == QStringLiteral("render_shader"))
         handleGenerateGlslShader(params);
+    else if (action == QStringLiteral("write_memory"))
+        handleWriteMemory(params);
+    else if (action == QStringLiteral("read_memory"))
+        handleReadMemory(params);
+    else if (action == QStringLiteral("list_memory_keys"))
+        handleListMemoryKeys(params);
     else
-        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader.", action), false);
+        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader, write_memory, read_memory, list_memory_keys.", action), false);
 
     if (isMutating && pCore && pCore->undoStack()) {
         pCore->undoStack()->endMacro();
@@ -1202,4 +1212,51 @@ void AICommandRouter::handleGenerateGlslShader(const QJsonObject &params)
              name, result.detectedUniforms.join(QStringLiteral(", "))),
         true);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// PERSISTENT MEMORY HANDLERS (inspired by agent.cpp)
+// ════════════════════════════════════════════════════════════════════════════
+
+void AICommandRouter::handleWriteMemory(const QJsonObject &params)
+{
+    QString key = params[QStringLiteral("key")].toString().trimmed();
+    QString value = params[QStringLiteral("value")].toString().trimmed();
+
+    if (key.isEmpty() || value.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Missing key or value for write_memory."), false);
+        return;
+    }
+
+    AIMemoryStore::instance()->write(key, value);
+    Q_EMIT executionFinished(i18n("Successfully persisted memory '%1': \"%2\"", key, value), true);
+}
+
+void AICommandRouter::handleReadMemory(const QJsonObject &params)
+{
+    QString key = params[QStringLiteral("key")].toString().trimmed();
+    if (key.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Missing key for read_memory."), false);
+        return;
+    }
+
+    if (!AIMemoryStore::instance()->hasKey(key)) {
+        Q_EMIT executionFinished(i18n("Memory key '%1' not found in store.", key), false);
+        return;
+    }
+
+    QString val = AIMemoryStore::instance()->read(key);
+    Q_EMIT executionFinished(i18n("Memory '%1': \"%2\"", key, val), true);
+}
+
+void AICommandRouter::handleListMemoryKeys(const QJsonObject &/*params*/)
+{
+    QStringList keys = AIMemoryStore::instance()->listKeys();
+    if (keys.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Memory store is currently empty."), true);
+        return;
+    }
+
+    Q_EMIT executionFinished(i18n("Known memory keys: %1", keys.join(QStringLiteral(", "))), true);
+}
+
 

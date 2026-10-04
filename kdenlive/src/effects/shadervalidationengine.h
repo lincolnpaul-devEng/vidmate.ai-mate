@@ -70,6 +70,16 @@ public:
      */
     static QString standardShaderToyTemplate();
 
+    /**
+     * @brief Makes the offscreen OpenGL context current for shader operations.
+     */
+    bool makeCurrent();
+
+    /**
+     * @brief Releases the offscreen OpenGL context.
+     */
+    void doneCurrent();
+
 private:
     bool ensureContext();
 

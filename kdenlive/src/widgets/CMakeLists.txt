@@ -28,6 +28,7 @@ set(kdenlive_SRCS
   widgets/natronworkspacewidget.cpp
   widgets/veloassetwidget.cpp
   widgets/authmanager.cpp
+  widgets/aimemorystore.cpp
   PARENT_SCOPE
 )
 

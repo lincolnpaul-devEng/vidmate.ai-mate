@@ -40,12 +40,7 @@ bool ShaderValidationEngine::ensureContext()
         return true;
     }
 
-    // Try sharing with existing Qt GUI OpenGL context
-    QOpenGLContext *current = QOpenGLContext::currentContext();
-    if (current && current->isValid()) {
-        m_context = current;
-        m_ownsContext = false;
-    } else {
+    if (!m_context) {
         m_context = new QOpenGLContext(this);
         QSurfaceFormat format;
         format.setRenderableType(QSurfaceFormat::OpenGL);
@@ -65,7 +60,22 @@ bool ShaderValidationEngine::ensureContext()
         m_surface->create();
     }
 
-    return m_surface->isValid() && m_context->isValid();
+    return m_surface && m_surface->isValid() && m_context && m_context->isValid();
+}
+
+bool ShaderValidationEngine::makeCurrent()
+{
+    if (!ensureContext()) {
+        return false;
+    }
+    return m_context->makeCurrent(m_surface);
+}
+
+void ShaderValidationEngine::doneCurrent()
+{
+    if (m_context) {
+        m_context->doneCurrent();
+    }
 }
 
 QString ShaderValidationEngine::standardVertexShader()

@@ -46,6 +46,8 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <kddockwidgets/core/Draggable_p.h>
 
 #include <QCoreApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QDesktopServices>
 #include <QDir>
 #include <QImageReader>
@@ -565,16 +567,30 @@ void Core::startFromGuessedProfile(QString descriptiveString, QString fps, bool 
 
 void Core::restoreLayout()
 {
-    if (m_mainWindow == nullptr) {
-        return;
-    }
-    if (KdenliveSettings::kdockLayout().isEmpty() || !KdenliveSettings::kdockLayout().contains(QStringLiteral("KdenliveKDDock"))) {
-        // No existing layout, probably first run
+    QScreen *screen = m_mainWindow->screen() ? m_mainWindow->screen() : QGuiApplication::primaryScreen();
+    QRect avail = screen ? screen->availableGeometry() : QRect(0, 0, 1280, 720);
+
+    QString savedLayout = KdenliveSettings::kdockLayout();
+    if (savedLayout.isEmpty() || !savedLayout.contains(QStringLiteral("KdenliveKDDock")) ||
+        savedLayout.contains(QStringLiteral("\"width\": 1651")) || savedLayout.contains(QStringLiteral("\"width\": 1649"))) {
+        // Reset to clean default editing layout if saved layout is oversized or absent
         Q_EMIT loadLayoutById(QStringLiteral("editing"), true);
     } else {
-        Q_EMIT loadLayoutFromData(KdenliveSettings::kdockLayout().toUtf8(), true);
+        Q_EMIT loadLayoutFromData(savedLayout.toUtf8(), true);
     }
     m_mainWindow->show();
+
+    // Ensure the main window stays strictly within available screen geometry
+    if (screen) {
+        QRect winGeo = m_mainWindow->geometry();
+        int clampedW = qMin(winGeo.width(), avail.width());
+        int clampedH = qMin(winGeo.height(), avail.height());
+        int clampedX = qBound(avail.left(), winGeo.left(), qMax(avail.left(), avail.right() - clampedW));
+        int clampedY = qBound(avail.top(), winGeo.top(), qMax(avail.top(), avail.bottom() - clampedH));
+        m_mainWindow->setGeometry(clampedX, clampedY, clampedW, clampedH);
+        m_mainWindow->showMaximized();
+    }
+
     if (!KdenliveSettings::showtitlebars()) {
         Q_EMIT pCore->hideBars(true);
     }

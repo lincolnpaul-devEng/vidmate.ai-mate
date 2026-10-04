@@ -124,6 +124,10 @@ private Q_SLOTS:
     void slotShowInspector();
     void slotShowAuthDialog();
     void slotAuthStateChanged(bool isLoggedIn, const QString &email);
+    void slotGoalStarted(const QString &goal);
+    void slotGoalStepStarted(int step, int maxSteps, const QString &actionName);
+    void slotGoalStepFinished(int step, int maxSteps, const QString &actionName, bool success);
+    void slotGoalFinished(const QString &finalSummary);
 
 private:
     void setupUi();
@@ -230,6 +234,7 @@ private:
     QList<DynamicModelInfo> m_dynamicModels;
     QPushButton *m_refreshModelsBtn{nullptr};
     QLabel *m_modelsStatusLabel{nullptr};
+    QString m_lastExecutedActionName;
 
     // Backend Engines
     AIDispatcher *m_dispatcher{nullptr};

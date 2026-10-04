@@ -594,6 +594,39 @@ void AIToolRegistry::registerAllTools()
                 QStringLiteral("Compile, validate on GPU offscreen, and render high-performance procedural GLSL/ShaderToy animations at 60+ FPS with automatic driver error self-healing."),
                 makeParams(props, {QStringLiteral("glsl_code")}));
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PERSISTENT MEMORY & CONTEXT TOOLS (inspired by agent.cpp)
+    // ════════════════════════════════════════════════════════════════════════
+
+    // 31. write_memory — save user style, editing rules, project constraints across sessions
+    {
+        QJsonObject props;
+        props[QStringLiteral("key")] = stringParam(QStringLiteral(
+            "Unique identifier for the memory (e.g., 'user_preferred_font', 'ducking_db', 'character_name')."));
+        props[QStringLiteral("value")] = stringParam(QStringLiteral(
+            "Information or rule to remember across conversations and sessions."));
+        addTool(QStringLiteral("write_memory"),
+                QStringLiteral("Persist a user editing preference, style rule, project guideline, or fact to long-term memory."),
+                makeParams(props, {QStringLiteral("key"), QStringLiteral("value")}));
+    }
+
+    // 32. read_memory — retrieve saved memory
+    {
+        QJsonObject props;
+        props[QStringLiteral("key")] = stringParam(QStringLiteral("The memory key to retrieve."));
+        addTool(QStringLiteral("read_memory"),
+                QStringLiteral("Retrieve previously saved memory by its key."),
+                makeParams(props, {QStringLiteral("key")}));
+    }
+
+    // 33. list_memory_keys — list all known memory keys
+    {
+        QJsonObject props;
+        addTool(QStringLiteral("list_memory_keys"),
+                QStringLiteral("List all known keys stored in long-term persistent agent memory."),
+                makeParams(props, {}));
+    }
 }
 
 // ── API ─────────────────────────────────────────────────────────────────────
