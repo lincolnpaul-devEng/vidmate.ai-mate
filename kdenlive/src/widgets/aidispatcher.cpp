@@ -96,7 +96,6 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
     // Configure default endpoint using Supabase ai-proxy if configured
     if (!m_supabaseUrl.isEmpty() && !m_supabaseAnonKey.isEmpty()) {
         m_apiUrl = QStringLiteral("%1/functions/v1/ai-proxy").arg(m_supabaseUrl);
-        m_apiKey = m_supabaseAnonKey;
         qDebug() << "[AIDispatcher] Configured Supabase AI proxy endpoint:" << m_apiUrl;
     }
 }
@@ -320,10 +319,12 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
     m_requestTimer.start();
     Q_EMIT requestStarted();
 
-    // Check authentication
-    QString authToken = m_apiKey;
-    if (authToken.isEmpty() && AuthManager::instance()->isLoggedIn()) {
+    // Check authentication: prefer logged-in user token from AuthManager
+    QString authToken;
+    if (AuthManager::instance()->isLoggedIn()) {
         authToken = AuthManager::instance()->accessToken();
+    } else if (!m_apiKey.isEmpty()) {
+        authToken = m_apiKey;
     }
 
     if (authToken.isEmpty()) {

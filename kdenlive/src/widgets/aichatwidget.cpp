@@ -852,14 +852,18 @@ void AIChatWidget::appendUserMessage(const QString &text)
     QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm"));
 
     QString html = QStringLiteral(
-        "<div style='margin: 10px 0; text-align: right;'>"
-        "  <div style='display: inline-block; max-width: 85%%; background: #252526; "
-        "    color: #d4d4d4; border-radius: 4px; padding: 8px 12px; text-align: left; "
-        "    word-break: break-word; font-size: 12.5px; line-height: 1.5;'>"
-        "    %1"
-        "  </div>"
-        "  <div style='font-size: 9.5px; color: #555555; margin-top: 2px;'>%2</div>"
-        "</div>"
+        "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 8px 0;\">"
+        "  <tr>"
+        "    <td align=\"right\">"
+        "      <table border=\"0\" cellpadding=\"7\" cellspacing=\"0\" style=\"background-color: #2b2b30; border: 1px solid #3c3c44; border-radius: 6px;\">"
+        "        <tr>"
+        "          <td style=\"color: #f4f4f6; font-size: 13px; font-weight: 500;\">%1</td>"
+        "        </tr>"
+        "      </table>"
+        "      <div style=\"font-size: 9.5px; color: #6a6a74; margin-top: 3px; text-align: right; padding-right: 2px;\">%2</div>"
+        "    </td>"
+        "  </tr>"
+        "</table>"
     ).arg(text.toHtmlEscaped().replace(QLatin1Char('\n'), QLatin1String("<br/>")), timestamp);
 
     m_messageStream->append(html);
@@ -907,15 +911,16 @@ void AIChatWidget::appendAssistantResponse(const QString &text)
     // Render thinking block (collapsible-style, dimmed, monospace)
     if (!thinkingText.isEmpty()) {
         html += QStringLiteral(
-            "<div style='margin: 8px 0 4px; padding: 6px 10px; background: #181818; "
-            "  border: 1px solid #2d2d2d; border-radius: 3px;'>"
-            "  <div style='font-size: 10.5px; color: #858585; margin-bottom: 4px; font-weight: 600;'>"
-            "    Thinking Process</div>"
-            "  <div style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; font-size: 11px; "
-            "    color: #858585; font-style: italic; line-height: 1.45; max-height: 180px; overflow-y: auto;'>"
-            "    %1"
-            "  </div>"
-            "</div>"
+            "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 6px 0;\">"
+            "  <tr>"
+            "    <td align=\"left\">"
+            "      <table width=\"100%\" border=\"0\" cellpadding=\"6\" cellspacing=\"0\" style=\"background-color: #18181a; border: 1px solid #2a2a2e; border-radius: 4px;\">"
+            "        <tr><td style=\"font-size: 10px; color: #787884; font-weight: 600;\">Thinking Process</td></tr>"
+            "        <tr><td style=\"font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px; color: #888894; font-style: italic;\">%1</td></tr>"
+            "      </table>"
+            "    </td>"
+            "  </tr>"
+            "</table>"
         ).arg(thinkingText.toHtmlEscaped().replace(QLatin1Char('\n'), QLatin1String("<br/>")));
     }
 
@@ -923,9 +928,13 @@ void AIChatWidget::appendAssistantResponse(const QString &text)
     if (!visibleText.isEmpty()) {
         QString htmlText = formatMarkdownHtml(visibleText);
         html += QStringLiteral(
-            "<div style='margin: 8px 0; color: #d4d4d4; font-size: 13px; line-height: 1.55; word-break: break-word;'>"
-            "  %1"
-            "</div>"
+            "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 4px 0;\">"
+            "  <tr>"
+            "    <td align=\"left\" style=\"color: #d4d4d8; font-size: 13px; line-height: 1.55;\">"
+            "      %1"
+            "    </td>"
+            "  </tr>"
+            "</table>"
         ).arg(htmlText);
     }
 
@@ -994,15 +1003,19 @@ void AIChatWidget::appendToolExecution(const QString &toolName, const QString &p
     }
 
     QString html = QStringLiteral(
-        "<div style='margin: 3px 0; display: flex; align-items: flex-start; font-size: 12px; color: #858585; line-height: 1.45;'>"
-        "  <span style='color: %1; font-size: 10px; margin-right: 8px; margin-top: 2px;'>&#9679;</span>"
-        "  <span style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; color: #9cdcfe; font-size: 11.5px;'>%2</span>"
-        "  %3"
-        "  %4"
-        "</div>"
+        "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 3px 0;\">"
+        "  <tr>"
+        "    <td align=\"left\" style=\"font-size: 12px; color: #858585; line-height: 1.45;\">"
+        "      <span style='color: %1; font-size: 10px; margin-right: 6px;'>&#9679;</span>"
+        "      <span style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; color: #9cdcfe; font-size: 11.5px;'>%2</span>"
+        "      %3"
+        "      %4"
+        "    </td>"
+        "  </tr>"
+        "</table>"
     ).arg(dotColor, toolName.toHtmlEscaped(),
-          summary.isEmpty() ? QString() : QStringLiteral("<span style='color: #555555; margin-left: 6px;'> &middot; %1</span>").arg(summary.toHtmlEscaped()),
-          errorMsg.isEmpty() ? QString() : QStringLiteral("<div style='color: #f14c4c; font-size: 11px; margin-left: 20px;'>%1</div>").arg(errorMsg.toHtmlEscaped()));
+          summary.isEmpty() ? QString() : QStringLiteral("<span style='color: #6a6a74; margin-left: 6px;'> &middot; %1</span>").arg(summary.toHtmlEscaped()),
+          errorMsg.isEmpty() ? QString() : QStringLiteral("<div style='color: #f14c4c; font-size: 11px; margin-left: 16px;'>%1</div>").arg(errorMsg.toHtmlEscaped()));
 
     m_messageStream->append(html);
     scrollToBottomIfFollowing();
@@ -1017,9 +1030,11 @@ void AIChatWidget::appendSystemMessage(const QString &text)
     m_messages.append(entry);
 
     QString html = QStringLiteral(
-        "<div style='margin: 6px 0; text-align: center; color: #555555; font-size: 10.5px; font-style: italic;'>"
-        "  %1"
-        "</div>"
+        "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 6px 0;\">"
+        "  <tr>"
+        "    <td align=\"center\" style=\"color: #6a6a74; font-size: 10.5px; font-style: italic;\">%1</td>"
+        "  </tr>"
+        "</table>"
     ).arg(text.toHtmlEscaped());
 
     m_messageStream->append(html);
@@ -1038,9 +1053,11 @@ void AIChatWidget::rebuildMessageView()
 
     if (startIdx > 0) {
         m_messageStream->append(QStringLiteral(
-            "<div style='text-align: center; color: #555555; font-size: 10.5px; padding: 6px; cursor: pointer;'>"
-            "  %1 earlier messages"
-            "</div>"
+            "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 6px 0;\">"
+            "  <tr>"
+            "    <td align=\"center\" style=\"color: #555555; font-size: 10.5px; padding: 6px;\">%1 earlier messages</td>"
+            "  </tr>"
+            "</table>"
         ).arg(startIdx));
     }
 
@@ -1073,11 +1090,15 @@ void AIChatWidget::rebuildMessageView()
                     : QStringLiteral("%1 calls").arg(runLength);
 
                 QString groupHtml = QStringLiteral(
-                    "<div style='margin: 4px 0; font-size: 12px; color: #858585; line-height: 1.45;'>"
-                    "  <span style='color: %1; font-size: 10px; margin-right: 8px;'>&#9679;</span>"
-                    "  <span style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; color: #9cdcfe; font-size: 11.5px;'>%2</span>"
-                    "  <span style='color: #555555; margin-left: 6px;'> &middot; %3</span>"
-                    "</div>"
+                    "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 4px 0;\">"
+                    "  <tr>"
+                    "    <td align=\"left\" style=\"font-size: 12px; color: #858585; line-height: 1.45;\">"
+                    "      <span style='color: %1; font-size: 10px; margin-right: 6px;'>&#9679;</span>"
+                    "      <span style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; color: #9cdcfe; font-size: 11.5px;'>%2</span>"
+                    "      <span style='color: #6a6a74; margin-left: 6px;'> &middot; %3</span>"
+                    "    </td>"
+                    "  </tr>"
+                    "</table>"
                 ).arg(dotColor, msg.toolName.toHtmlEscaped(), countLabel);
 
                 // Render individual items underneath with indent
@@ -1112,14 +1133,18 @@ void AIChatWidget::rebuildMessageView()
         case ChatMessageEntry::User: {
             QString timestamp = QDateTime::fromMSecsSinceEpoch(msg.timestamp).toString(QStringLiteral("hh:mm"));
             m_messageStream->append(QStringLiteral(
-                "<div style='margin: 10px 0; text-align: right;'>"
-                "  <div style='display: inline-block; max-width: 85%%; background: #252526; "
-                "    color: #d4d4d4; border-radius: 4px; padding: 8px 12px; text-align: left; "
-                "    word-break: break-word; font-size: 12.5px; line-height: 1.5;'>"
-                "    %1"
-                "  </div>"
-                "  <div style='font-size: 9.5px; color: #555555; margin-top: 2px;'>%2</div>"
-                "</div>"
+                "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 8px 0;\">"
+                "  <tr>"
+                "    <td align=\"right\">"
+                "      <table border=\"0\" cellpadding=\"7\" cellspacing=\"0\" style=\"background-color: #2b2b30; border: 1px solid #3c3c44; border-radius: 6px;\">"
+                "        <tr>"
+                "          <td style=\"color: #f4f4f6; font-size: 13px; font-weight: 500;\">%1</td>"
+                "        </tr>"
+                "      </table>"
+                "      <div style=\"font-size: 9.5px; color: #6a6a74; margin-top: 3px; text-align: right; padding-right: 2px;\">%2</div>"
+                "    </td>"
+                "  </tr>"
+                "</table>"
             ).arg(msg.text.toHtmlEscaped().replace(QLatin1Char('\n'), QLatin1String("<br/>")), timestamp));
             break;
         }
@@ -1127,22 +1152,27 @@ void AIChatWidget::rebuildMessageView()
             QString html;
             if (!msg.thinkingText.isEmpty()) {
                 html += QStringLiteral(
-                    "<div style='margin: 8px 0 4px; padding: 6px 10px; background: #181818; "
-                    "  border: 1px solid #2d2d2d; border-radius: 3px;'>"
-                    "  <div style='font-size: 10.5px; color: #858585; margin-bottom: 4px; font-weight: 600;'>"
-                    "    Thinking Process</div>"
-                    "  <div style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; font-size: 11px; "
-                    "    color: #858585; font-style: italic; line-height: 1.45; max-height: 180px; overflow-y: auto;'>"
-                    "    %1"
-                    "  </div>"
-                    "</div>"
+                    "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 6px 0;\">"
+                    "  <tr>"
+                    "    <td align=\"left\">"
+                    "      <table width=\"100%\" border=\"0\" cellpadding=\"6\" cellspacing=\"0\" style=\"background-color: #18181a; border: 1px solid #2a2a2e; border-radius: 4px;\">"
+                    "        <tr><td style=\"font-size: 10px; color: #787884; font-weight: 600;\">Thinking Process</td></tr>"
+                    "        <tr><td style=\"font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px; color: #888894; font-style: italic;\">%1</td></tr>"
+                    "      </table>"
+                    "    </td>"
+                    "  </tr>"
+                    "</table>"
                 ).arg(msg.thinkingText.toHtmlEscaped().replace(QLatin1Char('\n'), QLatin1String("<br/>")));
             }
             if (!msg.text.isEmpty()) {
                 html += QStringLiteral(
-                    "<div style='margin: 8px 0; color: #d4d4d4; font-size: 13px; line-height: 1.55; word-break: break-word;'>"
-                    "  %1"
-                    "</div>"
+                    "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 4px 0;\">"
+                    "  <tr>"
+                    "    <td align=\"left\" style=\"color: #d4d4d8; font-size: 13px; line-height: 1.55;\">"
+                    "      %1"
+                    "    </td>"
+                    "  </tr>"
+                    "</table>"
                 ).arg(formatMarkdownHtml(msg.text));
             }
             m_messageStream->append(html);
@@ -1155,19 +1185,27 @@ void AIChatWidget::rebuildMessageView()
                 summary = extractToolArgSummary(summary);
             }
             m_messageStream->append(QStringLiteral(
-                "<div style='margin: 3px 0; font-size: 12px; color: #858585; line-height: 1.45;'>"
-                "  <span style='color: %1; font-size: 10px; margin-right: 8px;'>&#9679;</span>"
-                "  <span style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; color: #9cdcfe; font-size: 11.5px;'>%2</span>"
-                "  %3%4"
-                "</div>"
+                "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 3px 0;\">"
+                "  <tr>"
+                "    <td align=\"left\" style=\"font-size: 12px; color: #858585; line-height: 1.45;\">"
+                "      <span style='color: %1; font-size: 10px; margin-right: 6px;'>&#9679;</span>"
+                "      <span style='font-family: \"JetBrains Mono\", \"Fira Code\", monospace; color: #9cdcfe; font-size: 11.5px;'>%2</span>"
+                "      %3%4"
+                "    </td>"
+                "  </tr>"
+                "</table>"
             ).arg(dotColor, msg.toolName.toHtmlEscaped(),
-                  summary.isEmpty() ? QString() : QStringLiteral(" <span style='color: #555555;'>&middot; %1</span>").arg(summary.toHtmlEscaped()),
-                  msg.toolError.isEmpty() ? QString() : QStringLiteral("<div style='color: #f14c4c; font-size: 11px; margin-left: 20px;'>%1</div>").arg(msg.toolError.toHtmlEscaped())));
+                  summary.isEmpty() ? QString() : QStringLiteral(" <span style='color: #6a6a74;'>&middot; %1</span>").arg(summary.toHtmlEscaped()),
+                  msg.toolError.isEmpty() ? QString() : QStringLiteral("<div style='color: #f14c4c; font-size: 11px; margin-left: 16px;'>%1</div>").arg(msg.toolError.toHtmlEscaped())));
             break;
         }
         case ChatMessageEntry::System:
             m_messageStream->append(QStringLiteral(
-                "<div style='margin: 6px 0; text-align: center; color: #555555; font-size: 10.5px; font-style: italic;'>%1</div>"
+                "<table width=\"100%\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin: 6px 0;\">"
+                "  <tr>"
+                "    <td align=\"center\" style=\"color: #6a6a74; font-size: 10.5px; font-style: italic;\">%1</td>"
+                "  </tr>"
+                "</table>"
             ).arg(msg.text.toHtmlEscaped()));
             break;
         }
