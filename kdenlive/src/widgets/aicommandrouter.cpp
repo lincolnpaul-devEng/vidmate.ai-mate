@@ -136,6 +136,12 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleRemoveSilence(params);
     else if (action == QStringLiteral("add_subtitle"))
         handleAddSubtitle(params);
+    else if (action == QStringLiteral("style_subtitles") || action == QStringLiteral("format_captions") ||
+             action == QStringLiteral("set_subtitle_style") || action == QStringLiteral("animate_captions"))
+        handleStyleSubtitles(params);
+    else if (action == QStringLiteral("edit_subtitle") || action == QStringLiteral("modify_caption") ||
+             action == QStringLiteral("update_subtitle"))
+        handleEditSubtitle(params);
     else if (action == QStringLiteral("insert_title"))
         handleInsertTitle(params);
     else if (action == QStringLiteral("view_timeline_frames"))
@@ -497,6 +503,140 @@ void AICommandRouter::handleAddSubtitle(const QJsonObject &params)
 
     subtitleModel->addSubtitle(startFrame, 0, text);
     Q_EMIT executionFinished(i18n("Added subtitle '%1' at frame %2.", text, startFrame), true);
+}
+
+void AICommandRouter::handleStyleSubtitles(const QJsonObject &params)
+{
+    auto tm = getTimelineModel();
+    if (!tm) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
+
+    auto subtitleModel = tm->getSubtitleModel();
+    if (!subtitleModel) {
+        Q_EMIT executionFinished(i18n("Subtitle track not found or initialized."), false);
+        return;
+    }
+
+    QString preset = params[QStringLiteral("preset")].toString().toLower();
+    QString customStyle = params[QStringLiteral("custom_style")].toString();
+    QString styleStr;
+
+    if (!customStyle.isEmpty()) {
+        styleStr = customStyle;
+    } else if (preset == QStringLiteral("tiktok_viral")) {
+        styleStr = QStringLiteral("Fontname=Impact,Fontsize=30,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,Outline=3.2,Shadow=2.0,Bold=1,Alignment=2,MarginV=45");
+    } else if (preset == QStringLiteral("mrbeast_pop")) {
+        styleStr = QStringLiteral("Fontname=Montserrat Black,Fontsize=28,PrimaryColour=&H0000FFFF,SecondaryColour=&H000000FF,OutlineColour=&H00000000,Outline=3.5,Shadow=2.5,Bold=1,Alignment=2,MarginV=40");
+    } else if (preset == QStringLiteral("clean_cinema")) {
+        styleStr = QStringLiteral("Fontname=Helvetica Neue,Fontsize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=1.8,Shadow=1.0,Bold=1,Alignment=2,MarginV=30");
+    } else if (preset == QStringLiteral("netflix_boxed")) {
+        styleStr = QStringLiteral("Fontname=Proxima Nova,Fontsize=24,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=0,Shadow=0,Bold=0,Alignment=2,MarginV=25");
+    } else if (preset == QStringLiteral("neon_cyber")) {
+        styleStr = QStringLiteral("Fontname=Arial,Fontsize=28,PrimaryColour=&H00FFFF00,OutlineColour=&H00FF00FF,Outline=3.0,Shadow=2.0,Bold=1,Alignment=2,MarginV=35");
+    } else {
+        // Build dynamic style from custom parameters
+        QString fontName = params[QStringLiteral("font_family")].toString(QStringLiteral("Impact"));
+        double fontSize = params[QStringLiteral("font_size")].toDouble(28.0);
+        bool bold = params[QStringLiteral("bold")].toBool(true);
+        double outline = params[QStringLiteral("outline_width")].toDouble(3.0);
+        double shadow = params[QStringLiteral("shadow_width")].toDouble(2.0);
+        int marginV = params[QStringLiteral("margin_v")].toInt(35);
+
+        QString alignStr = params[QStringLiteral("alignment")].toString().toLower();
+        int alignVal = 2; // Bottom Center
+        if (alignStr == QStringLiteral("center")) alignVal = 5;
+        else if (alignStr == QStringLiteral("top")) alignVal = 8;
+
+        QColor primColor(params[QStringLiteral("primary_color")].toString(QStringLiteral("#FFFF00")));
+        if (!primColor.isValid()) primColor = QColor(Qt::yellow);
+
+        QColor outColor(params[QStringLiteral("outline_color")].toString(QStringLiteral("#000000")));
+        if (!outColor.isValid()) outColor = QColor(Qt::black);
+
+        auto assColor = [](const QColor &c) {
+            int a = 255 - c.alpha();
+            return QStringLiteral("&H%1%2%3%4")
+                .arg(a, 2, 16, QLatin1Char('0'))
+                .arg(c.blue(), 2, 16, QLatin1Char('0'))
+                .arg(c.green(), 2, 16, QLatin1Char('0'))
+                .arg(c.red(), 2, 16, QLatin1Char('0')).toUpper();
+        };
+
+        styleStr = QStringLiteral("Fontname=%1,Fontsize=%2,PrimaryColour=%3,OutlineColour=%4,Outline=%5,Shadow=%6,Bold=%7,Alignment=%8,MarginV=%9")
+                       .arg(fontName)
+                       .arg(fontSize)
+                       .arg(assColor(primColor))
+                       .arg(assColor(outColor))
+                       .arg(outline)
+                       .arg(shadow)
+                       .arg(bold ? 1 : 0)
+                       .arg(alignVal)
+                       .arg(marginV);
+    }
+
+    subtitleModel->setForceStyle(styleStr);
+
+    QJsonObject data;
+    data[QStringLiteral("applied_style")] = styleStr;
+    data[QStringLiteral("preset")] = preset;
+    Q_EMIT dataOutput(QStringLiteral("style_subtitles"), data);
+
+    Q_EMIT executionFinished(
+        i18n("Applied subtitle style '%1' across timeline.\nStyle definition: %2\nProject monitor live overlay updated.",
+             preset.isEmpty() ? QStringLiteral("custom") : preset, styleStr),
+        true);
+}
+
+void AICommandRouter::handleEditSubtitle(const QJsonObject &params)
+{
+    auto tm = getTimelineModel();
+    if (!tm) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
+
+    auto subtitleModel = tm->getSubtitleModel();
+    if (!subtitleModel) {
+        Q_EMIT executionFinished(i18n("Subtitle track not initialized."), false);
+        return;
+    }
+
+    int subId = params[QStringLiteral("subtitle_id")].toInt(-1);
+    QString searchText = params[QStringLiteral("search_text")].toString();
+    QString newText = params[QStringLiteral("new_text")].toString();
+    int startFrame = params[QStringLiteral("start_frame")].toInt(-1);
+    int endFrame = params[QStringLiteral("end_frame")].toInt(-1);
+
+    if (subId < 0 && !searchText.isEmpty()) {
+        const auto allSubs = subtitleModel->getAllSubtitles();
+        for (const auto &sub : allSubs) {
+            if (sub.second.text().contains(searchText, Qt::CaseInsensitive)) {
+                subId = subtitleModel->getIdForStartPos(sub.first.first, sub.first.second);
+                break;
+            }
+        }
+    }
+
+    if (subId < 0) {
+        Q_EMIT executionFinished(
+            i18n("Could not find matching subtitle for search text '%1'.", searchText), false);
+        return;
+    }
+
+    bool success = true;
+    if (!newText.isEmpty()) {
+        success = subtitleModel->editSubtitle(subId, newText);
+    }
+
+    if (startFrame >= 0 || endFrame >= 0) {
+        int curStart = subtitleModel->getSubtitlePosition(subId).frames(pCore->getCurrentFps());
+        int curEnd = subtitleModel->getSubtitleEnd(subId);
+        int finalStart = (startFrame >= 0) ? startFrame : curStart;
+        int finalEnd = (endFrame >= 0) ? endFrame : curEnd;
+        if (finalEnd > finalStart) {
+            subtitleModel->resizeSubtitle(0, finalStart, finalEnd, curEnd, true);
+        }
+    }
+
+    Q_EMIT executionFinished(
+        i18n("Updated subtitle %1: '%2' (Timing: %3 frames).",
+             subId, newText, subtitleModel->getSubtitlePlaytime(subId)), success);
 }
 
 void AICommandRouter::handleInsertTitle(const QJsonObject &params)

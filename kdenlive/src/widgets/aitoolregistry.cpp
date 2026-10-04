@@ -294,6 +294,43 @@ void AIToolRegistry::registerAllTools()
                 makeParams(props, {QStringLiteral("text"), QStringLiteral("start_frame"), QStringLiteral("end_frame")}));
     }
 
+    // 15b. style_subtitles — customize and animate subtitle styling across the timeline
+    {
+        QJsonObject props;
+        props[QStringLiteral("preset")] = enumParam(
+            QStringLiteral("Visual preset style for video captions."),
+            {QStringLiteral("tiktok_viral"), QStringLiteral("mrbeast_pop"), QStringLiteral("clean_cinema"),
+             QStringLiteral("netflix_boxed"), QStringLiteral("neon_cyber"), QStringLiteral("custom")});
+        props[QStringLiteral("font_family")] = stringParam(QStringLiteral("Font family name (e.g. Impact, Montserrat, Arial, Inter)."));
+        props[QStringLiteral("font_size")] = numberParam(QStringLiteral("Font point size (default: 28)."));
+        props[QStringLiteral("primary_color")] = stringParam(QStringLiteral("Text fill color in hex (e.g. #FFFF00 for yellow, #FFFFFF for white)."));
+        props[QStringLiteral("outline_color")] = stringParam(QStringLiteral("Text outline/stroke color in hex (e.g. #000000)."));
+        props[QStringLiteral("outline_width")] = numberParam(QStringLiteral("Outline stroke thickness in pixels (e.g. 3.0)."));
+        props[QStringLiteral("shadow_width")] = numberParam(QStringLiteral("Drop shadow distance in pixels (e.g. 2.0)."));
+        props[QStringLiteral("bold")] = boolParam(QStringLiteral("Whether text should be extra bold."));
+        props[QStringLiteral("alignment")] = enumParam(
+            QStringLiteral("Screen alignment."),
+            {QStringLiteral("bottom"), QStringLiteral("center"), QStringLiteral("top")});
+        props[QStringLiteral("margin_v")] = intParam(QStringLiteral("Vertical margin from edge in pixels (default: 35)."));
+        props[QStringLiteral("custom_style")] = stringParam(QStringLiteral("Raw ASS force_style string override."));
+        addTool(QStringLiteral("style_subtitles"),
+                QStringLiteral("Change the global visual style and animation appearance of all timeline captions (TikTok bold yellow, MrBeast pop, Netflix boxed, Neon, etc.)."),
+                makeParams(props, {}));
+    }
+
+    // 15c. edit_subtitle — modify text or timing of a specific caption
+    {
+        QJsonObject props;
+        props[QStringLiteral("subtitle_id")] = intParam(QStringLiteral("ID of the subtitle to edit (-1 to match by search_text or playhead)."));
+        props[QStringLiteral("search_text")] = stringParam(QStringLiteral("Text substring to find and replace/modify in the subtitle track."));
+        props[QStringLiteral("new_text")] = stringParam(QStringLiteral("New replacement caption text."));
+        props[QStringLiteral("start_frame")] = intParam(QStringLiteral("New start frame timing (-1 to keep current)."));
+        props[QStringLiteral("end_frame")] = intParam(QStringLiteral("New end frame timing (-1 to keep current)."));
+        addTool(QStringLiteral("edit_subtitle"),
+                QStringLiteral("Modify text content, wording, or timing of subtitles on the timeline."),
+                makeParams(props, {QStringLiteral("new_text")}));
+    }
+
     // 16. insert_title — add styled title card
     {
         QJsonObject props;

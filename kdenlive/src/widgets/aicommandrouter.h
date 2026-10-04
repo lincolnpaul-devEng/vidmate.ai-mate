@@ -58,6 +58,8 @@ private:
     void handleAudioDucking(const QJsonObject &params);
     void handleRemoveSilence(const QJsonObject &params);
     void handleAddSubtitle(const QJsonObject &params);
+    void handleStyleSubtitles(const QJsonObject &params);
+    void handleEditSubtitle(const QJsonObject &params);
     void handleInsertTitle(const QJsonObject &params);
     void handleViewTimelineFrames(const QJsonObject &params);
     void handleGetTimelineState(const QJsonObject &params);
