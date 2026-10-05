@@ -1,0 +1,16 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Check if agent-cpp was built with bundled llama.cpp
+set(AGENT_CPP_BUNDLED_LLAMA @AGENT_CPP_BUNDLED_LLAMA@)
+
+if(NOT AGENT_CPP_BUNDLED_LLAMA)
+    # agent-cpp was built against system llama.cpp, so consumers need it too
+    find_dependency(llama REQUIRED)
+endif()
+
+# Include the exported targets
+include("${CMAKE_CURRENT_LIST_DIR}/agent-cpp-targets.cmake")
+
+check_required_components(agent-cpp)
