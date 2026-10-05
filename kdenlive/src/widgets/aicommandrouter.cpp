@@ -18,6 +18,7 @@
 #include "doc/docundostack.hpp"
 #include "monitor/monitor.h"
 #include "mainwindow.h"
+#include "natronworkspacewidget.h"
 #include "natronscriptgenerator.h"
 #include "bin/bin.h"
 #include "bin/projectitemmodel.h"
@@ -90,9 +91,15 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
     QString target = actionPayload[QStringLiteral("target")].toString();
     QJsonObject params = actionPayload[QStringLiteral("params")].toObject();
 
-    // Route to Natron if explicitly targeted
+    // Route to Natron if explicitly targeted or Natron VFX/tracking tool
     if (target == QStringLiteral("natron") || action == QStringLiteral("natron_vfx")) {
         executeNatronVfxJob(params);
+        return;
+    }
+    if (action == QStringLiteral("track_object") || action == QStringLiteral("track_and_blur") ||
+        action == QStringLiteral("apply_tracker") || action == QStringLiteral("rotoscope_object") ||
+        action == QStringLiteral("motion_track")) {
+        handleTrackObject(params);
         return;
     }
 
@@ -996,6 +1003,14 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
     int startFrame = params[QStringLiteral("start_frame")].toInt(-1);
     int endFrame = params[QStringLiteral("end_frame")].toInt(-1);
 
+    // Synchronize Natron VFX Workspace in Kdenlive UI (Node Graph, Curve Editor, Dope Sheet)
+    if (pCore && pCore->window()) {
+        pCore->window()->showNatronWorkspace();
+        if (auto *natronWs = pCore->window()->natronWorkspaceWidget()) {
+            natronWs->loadPipeline(pipeline, params);
+        }
+    }
+
     // Auto-detect input clip from active selection if none was provided
     if (inputClip.isEmpty()) {
         auto tm = getTimelineModel();
@@ -1074,8 +1089,21 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
 
     m_natronProcess->start(natronBin, args);
     Q_EMIT executionFinished(
-        i18n("Started Natron VFX background rendering for '%1' pipeline.\nSource: %2\nOutput: %3",
+        i18n("Configured Natron VFX pipeline '%1' with active Node Graph, Curve Editor & Dope Sheet.\nSource: %2\nOutput: %3",
              pipeline, inputClip, outputPath), true);
+}
+
+void AICommandRouter::handleTrackObject(const QJsonObject &params)
+{
+    QString actionType = params[QStringLiteral("action_type")].toString(QStringLiteral("match_move_overlay"));
+    QString pipeline = (actionType == QStringLiteral("blur_privacy")) ? QStringLiteral("track_blur") : QStringLiteral("tracker");
+
+    QJsonObject vfxParams = params;
+    if (!vfxParams.contains(QStringLiteral("pipeline"))) {
+        vfxParams[QStringLiteral("pipeline")] = pipeline;
+    }
+
+    executeNatronVfxJob(vfxParams);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

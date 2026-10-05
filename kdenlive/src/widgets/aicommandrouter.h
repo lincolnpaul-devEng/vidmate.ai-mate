@@ -83,6 +83,7 @@ private:
 
     // Natron VFX handler
     void executeNatronVfxJob(const QJsonObject &params);
+    void handleTrackObject(const QJsonObject &params);
 
     QProcess *m_natronProcess{nullptr};
     QString m_lastVfxOutputPath;

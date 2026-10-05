@@ -13,6 +13,9 @@
 #include <QNetworkReply>
 #include <QElapsedTimer>
 
+#include "context_compaction.h"
+#include "run_ledger.h"
+
 class AIToolRegistry;
 
 struct AIAgentSettings {
@@ -33,9 +36,7 @@ struct AIAgentSettings {
 /**
  * @class AIDispatcher
  * @brief Handles network communications with AI endpoints and dispatches JSON commands.
- *
- * Supports both standard chat-completions API (with JSON extraction from markdown)
- * and OpenAI function-calling API using the AIToolRegistry schemas.
+ * Directly integrates agent_cpp context compaction, turn bounding, and persistent run ledger.
  */
 class AIDispatcher : public QObject
 {
@@ -78,6 +79,10 @@ public:
     QString groqKey() const { return m_groqKey; }
     void setGroqKey(const QString &key) { m_groqKey = key; }
 
+    /** @brief Direct access to agent_cpp execution ledger */
+    const agent_cpp::RunLedger &agentRunLedger() const { return m_agentRunLedger; }
+    agent_cpp::RunLedger &agentRunLedger() { return m_agentRunLedger; }
+
 Q_SIGNALS:
     void responseReceived(const QString &summaryText, const QJsonObject &actionPayload);
     void metricsUpdated(int totalTokens, qint64 latencyMs, const QString &modelId);
@@ -99,6 +104,7 @@ private:
     void processAiResponse(const QByteArray &data);
     QString buildEditorStateSnapshot();
     QString buildSystemPrompt();
+    void maybeCompactConversation();
 
     QNetworkAccessManager *m_nam{nullptr};
     AIToolRegistry *m_toolRegistry{nullptr};
@@ -115,8 +121,10 @@ private:
     QString m_lastPrompt;
     QString m_currentGoal;
     QJsonArray m_conversationMessages;
+    agent_cpp::RunLedger m_agentRunLedger;
+    agent_cpp::ContextBudget m_contextBudget;
     bool m_goalActive{false};
     int m_currentStep{0};
-    int m_maxSteps{10};
+    int m_maxSteps{30}; // 30-turn autonomous execution budget (agent.cpp / Velo standard)
     AIAgentSettings m_settings;
 };

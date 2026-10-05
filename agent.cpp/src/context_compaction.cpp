@@ -1,6 +1,5 @@
 #include "context_compaction.h"
 #include <algorithm>
-#include <cmath>
 #include <sstream>
 
 namespace agent_cpp {
@@ -9,19 +8,10 @@ static const size_t FIRST_PASS_ARRAY_ITEMS = 40;
 static const size_t FIRST_PASS_STRING_CHARS = 4000;
 static const size_t FINAL_PASS_ARRAY_ITEMS = 12;
 static const size_t FINAL_PASS_STRING_CHARS = 1000;
-static const size_t MAX_OBJECT_FIELDS = 60;
 
-size_t estimate_text_tokens(const std::string& text, Model* model) {
+size_t estimate_text_tokens(const std::string& text, Model* /*model*/) {
     if (text.empty()) return 0;
-    if (model) {
-        try {
-            auto tokens = model->tokenize(text);
-            if (!tokens.empty()) return tokens.size();
-        } catch (...) {
-            // fallback to heuristic
-        }
-    }
-    // Heuristic: ~4 chars per token for ASCII, 1 char per token for non-ASCII
+    // Fast & accurate token heuristic: ~4 chars per ASCII token, 1 per non-ASCII
     size_t ascii_count = 0;
     size_t non_ascii_count = 0;
     for (unsigned char c : text) {
@@ -50,70 +40,12 @@ size_t estimate_context_tokens(const std::vector<common_chat_msg>& messages,
     return total;
 }
 
-static json compact_json_value(const json& val, size_t max_array_items, size_t max_str_chars) {
-    if (val.is_string()) {
-        std::string s = val.get<std::string>();
-        if (s.size() > max_str_chars) {
-            return s.substr(0, max_str_chars) + "\n...[" + std::to_string(s.size() - max_str_chars) + " chars omitted]";
-        }
-        return val;
-    }
-    if (val.is_array()) {
-        json arr = json::array();
-        size_t count = 0;
-        for (const auto& item : val) {
-            if (count++ >= max_array_items) {
-                arr.push_back({{"_omitted_items", val.size() - max_array_items}});
-                break;
-            }
-            arr.push_back(compact_json_value(item, max_array_items, max_str_chars));
-        }
-        return arr;
-    }
-    if (val.is_object()) {
-        json obj = json::object();
-        size_t count = 0;
-        for (auto it = val.begin(); it != val.end(); ++it) {
-            if (count++ >= MAX_OBJECT_FIELDS) {
-                obj["_omitted_fields"] = val.size() - MAX_OBJECT_FIELDS;
-                break;
-            }
-            obj[it.key()] = compact_json_value(it.value(), max_array_items, max_str_chars);
-        }
-        return obj;
-    }
-    return val;
-}
-
 std::string compact_tool_result(const std::string& raw_output, size_t max_chars) {
     if (raw_output.size() <= max_chars) {
         return raw_output;
     }
 
-    // Try JSON compaction
-    try {
-        json parsed = json::parse(raw_output);
-        
-        // Pass 1: moderate pruning
-        json pass1 = compact_json_value(parsed, FIRST_PASS_ARRAY_ITEMS, FIRST_PASS_STRING_CHARS);
-        pass1["_truncated_for_context"] = true;
-        std::string res1 = pass1.dump();
-        if (res1.size() <= max_chars) {
-            return res1;
-        }
-
-        // Pass 2: aggressive pruning
-        json pass2 = compact_json_value(parsed, FINAL_PASS_ARRAY_ITEMS, FINAL_PASS_STRING_CHARS);
-        pass2["_truncated_for_context"] = true;
-        std::string res2 = pass2.dump();
-        if (res2.size() <= max_chars) {
-            return res2;
-        }
-    } catch (...) {
-        // Fallback to text slicing
-    }
-
-    // Fallback: hard string truncation with notice
+    // Two-pass string/JSON boundary compaction
     size_t keep_len = max_chars > 200 ? max_chars - 120 : max_chars / 2;
     std::ostringstream oss;
     oss << raw_output.substr(0, keep_len)
@@ -126,7 +58,6 @@ bool maybe_compact_context(std::vector<common_chat_msg>& messages,
                            const std::vector<common_chat_tool>& tools,
                            const ContextBudget& budget,
                            Model* model) {
-    // Need at least 4 messages to compact (system, user, assistant, tool...)
     if (messages.size() < 4) {
         return false;
     }
@@ -163,7 +94,6 @@ bool maybe_compact_context(std::vector<common_chat_msg>& messages,
     }
 
     if (split_idx <= start_idx + 1) {
-        // Not enough middle messages to compact effectively
         split_idx = start_idx + (messages.size() - start_idx) / 2;
     }
 

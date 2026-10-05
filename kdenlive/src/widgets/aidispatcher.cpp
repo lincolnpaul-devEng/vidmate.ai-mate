@@ -436,6 +436,7 @@ QString AIDispatcher::buildSystemPrompt()
         "- When you have completed the user's overall goal, do NOT return any more tool calls; simply summarize the edits performed.\n"
         "- After any destructive edit, use `get_timeline_state` to verify.\n"
         "- Use `write_memory` / `read_memory` to persist and recall user preferences and styles.\n"
+        "- For `track_object` / `natron_vfx`: When asked to track an object, blur an element/face/plate, rotoscope a subject, or perform advanced VFX compositing, use `track_object` or `natron_vfx` targeting `natron`. This automatically updates and synchronizes Natron's Node Graph, Curve Editor, and Dope Sheet directly in Kdenlive's workspace and renders the result.\n"
         "- For `generate_glsl_shader`: Always supply valid GLSL fragment code using ShaderToy signature `void mainImage(out vec4 fragColor, in vec2 fragCoord)` with uniforms `iResolution` (vec3) and `iTime` (float), or choose a preset ('neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix'). Ensure proper GLSL type safety (e.g. float constants like 0.0 vs int 0, matching function signatures) and specify `track_id` and `playhead_frame` for B-roll placement.\n\n"
 
         "# Output Format\n"
@@ -480,17 +481,30 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
     m_currentStep = 1;
     m_goalActive = true;
 
-    m_conversationMessages = QJsonArray();
+    QString runId = QStringLiteral("run_%1").arg(QDateTime::currentMSecsSinceEpoch());
+    m_agentRunLedger = agent_cpp::RunLedger(runId.toStdString(), prompt.toStdString());
 
-    QJsonObject systemMsg;
-    systemMsg[QStringLiteral("role")] = QStringLiteral("system");
-    systemMsg[QStringLiteral("content")] = buildSystemPrompt();
-    m_conversationMessages.append(systemMsg);
+    // Maintain persistent multi-turn conversation history across prompt submissions
+    if (m_conversationMessages.isEmpty()) {
+        QJsonObject systemMsg;
+        systemMsg[QStringLiteral("role")] = QStringLiteral("system");
+        systemMsg[QStringLiteral("content")] = buildSystemPrompt();
+        m_conversationMessages.append(systemMsg);
+    } else {
+        // Refresh the system prompt (index 0) with latest editor state & memories
+        QJsonObject systemMsg;
+        systemMsg[QStringLiteral("role")] = QStringLiteral("system");
+        systemMsg[QStringLiteral("content")] = buildSystemPrompt();
+        m_conversationMessages[0] = systemMsg;
+    }
 
     QJsonObject userMsg;
     userMsg[QStringLiteral("role")] = QStringLiteral("user");
     userMsg[QStringLiteral("content")] = QStringLiteral("[Mode: %1] %2").arg(targetEngine, prompt);
     m_conversationMessages.append(userMsg);
+
+    // Item B: Dynamic context compaction when approaching threshold
+    maybeCompactConversation();
 
     Q_EMIT goalStarted(prompt);
     sendCurrentMessages();
@@ -502,6 +516,26 @@ void AIDispatcher::feedObservationAndContinue(const QString &actionName, const Q
         return;
     }
 
+    // Item C: Two-pass tool result compaction directly from agent_cpp
+    std::string rawOutputStd = observationResult.toStdString();
+    std::string compactedStd = agent_cpp::compact_tool_result(rawOutputStd, m_contextBudget.max_tool_result_chars);
+    QString compactedObservation = QString::fromStdString(compactedStd);
+
+    // Item D: Record action into agent_cpp persistent Run Ledger
+    m_agentRunLedger.record_tool_action(
+        QStringLiteral("call_%1").arg(m_currentStep).toStdString(),
+        actionName.toStdString(),
+        std::string(),
+        compactedStd,
+        success ? "success" : "error",
+        m_currentStep
+    );
+
+    QString ledgerDir = QDir::homePath() + QStringLiteral("/.cache/kdenlive/agent_ledgers");
+    QDir().mkpath(ledgerDir);
+    QString ledgerPath = ledgerDir + QStringLiteral("/%1.json").arg(QString::fromStdString(m_agentRunLedger.get_run_id()));
+    m_agentRunLedger.save_to_file(ledgerPath.toStdString());
+
     Q_EMIT goalStepFinished(m_currentStep, m_maxSteps, actionName, success);
 
     if (m_currentStep >= m_maxSteps) {
@@ -512,15 +546,8 @@ void AIDispatcher::feedObservationAndContinue(const QString &actionName, const Q
 
     m_currentStep++;
 
-    // Prune oldest messages if conversation exceeds 20 items to prevent context window overflow
-    if (m_conversationMessages.size() > 20) {
-        QJsonArray pruned;
-        pruned.append(m_conversationMessages.at(0)); // keep system prompt
-        for (int i = m_conversationMessages.size() - 10; i < m_conversationMessages.size(); ++i) {
-            pruned.append(m_conversationMessages.at(i));
-        }
-        m_conversationMessages = pruned;
-    }
+    // Item B: Dynamic context compaction check before inserting observation
+    maybeCompactConversation();
 
     // Append observation message with live timeline snapshot
     QJsonObject obsMsg;
@@ -528,7 +555,7 @@ void AIDispatcher::feedObservationAndContinue(const QString &actionName, const Q
     obsMsg[QStringLiteral("content")] = QStringLiteral(
         "[Tool Observation: '%1'] Status: %2\nResult: %3\n\nUpdated Timeline State:\n%4\n\n"
         "Continue towards achieving user goal: \"%5\". Take the next step or conclude if complete."
-    ).arg(actionName, success ? QStringLiteral("Success") : QStringLiteral("Failed"), observationResult, buildEditorStateSnapshot(), m_currentGoal);
+    ).arg(actionName, success ? QStringLiteral("Success") : QStringLiteral("Failed"), compactedObservation, buildEditorStateSnapshot(), m_currentGoal);
     m_conversationMessages.append(obsMsg);
 
     sendCurrentMessages();
@@ -714,6 +741,20 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
             QJsonObject message = choice0[QStringLiteral("message")].toObject();
             aiText = message[QStringLiteral("content")].toString();
 
+            // Extract from content, reasoning_content, reasoning, or text
+            if (aiText.isEmpty() && message.contains(QStringLiteral("reasoning"))) {
+                aiText = message[QStringLiteral("reasoning")].toString();
+            }
+            if (aiText.isEmpty() && message.contains(QStringLiteral("reasoning_content"))) {
+                aiText = message[QStringLiteral("reasoning_content")].toString();
+            }
+            if (aiText.isEmpty() && message.contains(QStringLiteral("text"))) {
+                aiText = message[QStringLiteral("text")].toString();
+            }
+            if (aiText.isEmpty() && choice0.contains(QStringLiteral("text"))) {
+                aiText = choice0[QStringLiteral("text")].toString();
+            }
+
             // Check for function-calling tool_calls
             if (message.contains(QStringLiteral("tool_calls"))) {
                 QJsonArray toolCalls = message[QStringLiteral("tool_calls")].toArray();
@@ -767,8 +808,8 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
     }
     Q_EMIT metricsUpdated(totalTokens, latencyMs, modelUsed);
 
-    // Extract JSON block from markdown code fence if present
-    static const QRegularExpression jsonRegex(QStringLiteral("```json\\s*([\\s\\S]*?)\\s*```"));
+    // 1. Extract JSON block from standard markdown code fence ```json ... ```
+    static const QRegularExpression jsonRegex(QStringLiteral("```(?:json)?\\s*([\\s\\S]*?)\\s*```"));
     auto match = jsonRegex.match(aiText);
     if (match.hasMatch()) {
         QString jsonStr = match.captured(1).trimmed();
@@ -784,6 +825,19 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
         }
     }
 
+    // 2. If no complete code fence matched, check for unclosed ```json or raw embedded JSON object
+    if (actionObj.isEmpty()) {
+        int firstBrace = aiText.indexOf(QLatin1Char('{'));
+        int lastBrace = aiText.lastIndexOf(QLatin1Char('}'));
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            QString rawJson = aiText.mid(firstBrace, lastBrace - firstBrace + 1).trimmed();
+            QJsonDocument actionDoc = QJsonDocument::fromJson(rawJson.toUtf8());
+            if (actionDoc.isObject() && actionDoc.object().contains(QStringLiteral("action"))) {
+                actionObj = actionDoc.object();
+            }
+        }
+    }
+
     QJsonObject assistantMsg;
     assistantMsg[QStringLiteral("role")] = QStringLiteral("assistant");
     assistantMsg[QStringLiteral("content")] = aiText;
@@ -794,9 +848,75 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
         Q_EMIT goalStepStarted(m_currentStep, m_maxSteps, actionName);
         Q_EMIT responseReceived(aiText, actionObj);
     } else {
+        // If the model spoke about generating/editing or gave a plan ("I will", "Generating", "Implementing", "Creating")
+        // on early steps without outputting the JSON action block, do NOT quit! Auto-reprompt to force tool output.
+        bool seemsLikePlanWithoutAction = aiText.contains(QStringLiteral("I will"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Generating"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Implementing"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Creating"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Shader"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Animation"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Track"), Qt::CaseInsensitive);
+
+        if (m_goalActive && m_currentStep <= 2 && seemsLikePlanWithoutAction) {
+            qDebug() << "[AIDispatcher] Model provided intent/reasoning without JSON action block. Auto-prompting for immediate tool execution...";
+            QJsonObject reminderMsg;
+            reminderMsg[QStringLiteral("role")] = QStringLiteral("user");
+            reminderMsg[QStringLiteral("content")] = QStringLiteral(
+                "You explained your creative plan, but you did NOT output the JSON tool action block. "
+                "You MUST output the complete executable JSON action block now in the exact format:\n"
+                "```json\n"
+                "{\"action\": \"generate_glsl_shader\", \"target\": \"kdenlive\", \"params\": {\"name\": \"...\", \"track_id\": 3, \"playhead_frame\": 0, \"duration_frames\": 180, \"glsl_code\": \"...\"}}\n"
+                "```\n"
+                "Output the executable JSON block immediately."
+            );
+            m_conversationMessages.append(reminderMsg);
+            m_currentStep++;
+            sendCurrentMessages();
+            return;
+        }
+
         // Goal achieved or direct textual response
         m_goalActive = false;
         Q_EMIT responseReceived(aiText, actionObj);
         Q_EMIT goalFinished(aiText);
+    }
+}
+
+void AIDispatcher::maybeCompactConversation()
+{
+    if (m_conversationMessages.size() < 6) return;
+
+    // Convert Qt conversation messages to agent_cpp common_chat_msg structures
+    std::vector<agent_cpp::common_chat_msg> cppMessages;
+    for (const QJsonValue &val : m_conversationMessages) {
+        QJsonObject obj = val.toObject();
+        agent_cpp::common_chat_msg msg;
+        msg.role = obj[QStringLiteral("role")].toString().toStdString();
+        msg.content = obj[QStringLiteral("content")].toString().toStdString();
+        cppMessages.push_back(msg);
+    }
+
+    size_t currentTokens = agent_cpp::estimate_context_tokens(cppMessages);
+    size_t triggerTokens = static_cast<size_t>(m_contextBudget.context_window_tokens * m_contextBudget.trigger_fraction);
+
+    // If context is above 70% trigger (or above 20 conversation rounds)
+    if (currentTokens <= triggerTokens && m_conversationMessages.size() <= 20) {
+        return;
+    }
+
+    qDebug() << "[AIDispatcher/agent_cpp] Dynamic context compaction triggered (" << currentTokens << "estimated tokens /" << m_conversationMessages.size() << "msgs)";
+
+    bool compacted = agent_cpp::maybe_compact_context(cppMessages, {}, m_contextBudget, nullptr);
+    if (compacted) {
+        QJsonArray newConversation;
+        for (const auto &m : cppMessages) {
+            QJsonObject obj;
+            obj[QStringLiteral("role")] = QString::fromStdString(m.role);
+            obj[QStringLiteral("content")] = QString::fromStdString(m.content);
+            newConversation.append(obj);
+        }
+        m_conversationMessages = newConversation;
+        qDebug() << "[AIDispatcher/agent_cpp] Context compacted down to" << m_conversationMessages.size() << "messages with active [CONTEXT CHECKPOINT].";
     }
 }

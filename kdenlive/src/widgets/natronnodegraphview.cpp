@@ -515,7 +515,61 @@ void NatronNodeGraphView::loadGraphFromPipeline(const QString &pipeline, const Q
 {
     clearGraph();
 
-    if (pipeline == QStringLiteral("chroma_key")) {
+    if (pipeline == QStringLiteral("tracker") || pipeline == QStringLiteral("planar_track") || pipeline == QStringLiteral("track_object")) {
+        // Professional Natron Object Tracking & Match-Move Pipeline:
+        // Read_Plate -> Tracker1 -> Transform1 -> Merge1 (Over) -> Write1
+        // Read_Overlay (Graphics/Text/Blur) -> Transform1 (CornerPin/Stabilize) -> Merge1 (A)
+        addNode(QStringLiteral("Backdrop_Track"), QStringLiteral("AI Object Tracker & Match-Move"), NatronNodeItem::NodeBackdrop, QPointF(-40, -10));
+        if (auto *bd = m_nodes.value(QStringLiteral("Backdrop_Track"))) {
+            bd->setBackdropSize(440, 360);
+        }
+
+        addNode(QStringLiteral("Read_Plate"), QStringLiteral("Read_Plate (Video)"), NatronNodeItem::NodeReader, QPointF(0, 30));
+        addNode(QStringLiteral("Read_Overlay"), QStringLiteral("Read_Overlay (Target)"), NatronNodeItem::NodeReader, QPointF(240, 30));
+
+        QJsonObject trackParams = params;
+        if (trackParams.isEmpty()) {
+            trackParams[QStringLiteral("mode")] = QStringLiteral("planar");
+            trackParams[QStringLiteral("points")] = 4;
+            trackParams[QStringLiteral("motion")] = QStringLiteral("Affine + Perspective");
+        }
+        addNode(QStringLiteral("Tracker1"), QStringLiteral("Tracker (OpenFX)"), NatronNodeItem::NodeTracker, QPointF(0, 130), trackParams);
+        addNode(QStringLiteral("Transform1"), QStringLiteral("Transform (Match-Move)"), NatronNodeItem::NodeTransform, QPointF(240, 130));
+        addNode(QStringLiteral("Merge1"), QStringLiteral("Merge (Over)"), NatronNodeItem::NodeMerge, QPointF(120, 240));
+        addNode(QStringLiteral("Write1"), QStringLiteral("Write (VFX Output)"), NatronNodeItem::NodeWriter, QPointF(120, 330));
+
+        // Connect graph
+        connectNodes(QStringLiteral("Read_Plate"), QStringLiteral("Tracker1"), 0);
+        connectNodes(QStringLiteral("Read_Plate"), QStringLiteral("Merge1"), 0); // B input (Background video)
+        connectNodes(QStringLiteral("Read_Overlay"), QStringLiteral("Transform1"), 0);
+        connectNodes(QStringLiteral("Tracker1"), QStringLiteral("Transform1"), 0); // Tracking transformation link
+        connectNodes(QStringLiteral("Transform1"), QStringLiteral("Merge1"), 1); // A input (Tracked overlay)
+        connectNodes(QStringLiteral("Merge1"), QStringLiteral("Write1"), 0);
+
+    } else if (pipeline == QStringLiteral("track_blur")) {
+        // Track & Privacy Blur Pipeline:
+        // Read_Plate -> Tracker1 -> Roto (Mask) -> Blur -> Merge -> Write
+        addNode(QStringLiteral("Backdrop_Blur"), QStringLiteral("Object Track & Privacy Blur"), NatronNodeItem::NodeBackdrop, QPointF(-30, -10));
+        if (auto *bd = m_nodes.value(QStringLiteral("Backdrop_Blur"))) {
+            bd->setBackdropSize(360, 360);
+        }
+
+        addNode(QStringLiteral("Read_Plate"), QStringLiteral("Read_Plate"), NatronNodeItem::NodeReader, QPointF(30, 30));
+        addNode(QStringLiteral("Tracker1"), QStringLiteral("Tracker"), NatronNodeItem::NodeTracker, QPointF(200, 110), params);
+        addNode(QStringLiteral("Roto1"), QStringLiteral("Roto_Mask"), NatronNodeItem::NodeRoto, QPointF(200, 190));
+        addNode(QStringLiteral("Blur1"), QStringLiteral("Blur (Gaussian)"), NatronNodeItem::NodeBlur, QPointF(30, 150));
+        addNode(QStringLiteral("Merge1"), QStringLiteral("Merge (Masked)"), NatronNodeItem::NodeMerge, QPointF(30, 250));
+        addNode(QStringLiteral("Write1"), QStringLiteral("Write_Render"), NatronNodeItem::NodeWriter, QPointF(30, 330));
+
+        connectNodes(QStringLiteral("Read_Plate"), QStringLiteral("Tracker1"), 0);
+        connectNodes(QStringLiteral("Read_Plate"), QStringLiteral("Blur1"), 0);
+        connectNodes(QStringLiteral("Read_Plate"), QStringLiteral("Merge1"), 0);
+        connectNodes(QStringLiteral("Tracker1"), QStringLiteral("Roto1"), 0);
+        connectNodes(QStringLiteral("Blur1"), QStringLiteral("Merge1"), 1);
+        connectNodes(QStringLiteral("Roto1"), QStringLiteral("Merge1"), 2); // Mask input
+        connectNodes(QStringLiteral("Merge1"), QStringLiteral("Write1"), 0);
+
+    } else if (pipeline == QStringLiteral("chroma_key")) {
         // Professional Chroma Keying Node Graph Topology:
         // Read1 (FG Green Screen) -> Keyer1 (ChromaKeyer) -> Merge1 (Over) -> Write1
         // Read2 (BG Plate) -> ColorCorrect1 -> Merge1 (B input)
@@ -558,6 +612,16 @@ void NatronNodeGraphView::loadGraphFromPipeline(const QString &pipeline, const Q
         connectNodes(QStringLiteral("Read1"), QStringLiteral("Roto1"), 0);
         connectNodes(QStringLiteral("Roto1"), QStringLiteral("Transform1"), 0);
         connectNodes(QStringLiteral("Transform1"), QStringLiteral("Write1"), 0);
+
+    } else if (pipeline == QStringLiteral("color_grade")) {
+        addNode(QStringLiteral("Read1"), QStringLiteral("Read_Media"), NatronNodeItem::NodeReader, QPointF(50, 30));
+        addNode(QStringLiteral("ColorCorrect1"), QStringLiteral("ColorCorrect"), NatronNodeItem::NodeGrade, QPointF(50, 120), params);
+        addNode(QStringLiteral("Grade1"), QStringLiteral("Grade (Master)"), NatronNodeItem::NodeGrade, QPointF(50, 200));
+        addNode(QStringLiteral("Write1"), QStringLiteral("Write_Graded"), NatronNodeItem::NodeWriter, QPointF(50, 290));
+
+        connectNodes(QStringLiteral("Read1"), QStringLiteral("ColorCorrect1"), 0);
+        connectNodes(QStringLiteral("ColorCorrect1"), QStringLiteral("Grade1"), 0);
+        connectNodes(QStringLiteral("Grade1"), QStringLiteral("Write1"), 0);
 
     } else {
         // Generic Composite Graph

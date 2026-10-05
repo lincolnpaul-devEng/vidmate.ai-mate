@@ -29,6 +29,8 @@ set(kdenlive_SRCS
   widgets/veloassetwidget.cpp
   widgets/authmanager.cpp
   widgets/aimemorystore.cpp
+  ../../agent.cpp/src/context_compaction.cpp
+  ../../agent.cpp/src/run_ledger.cpp
   PARENT_SCOPE
 )
 

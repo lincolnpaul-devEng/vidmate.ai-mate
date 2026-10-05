@@ -1,15 +1,12 @@
 #pragma once
 
-#include "chat.h"
-#include "model.h"
-#include "tool_result.h"
-#include <nlohmann/json.hpp>
+#include "chat_types.h"
 #include <string>
 #include <vector>
 
 namespace agent_cpp {
 
-using json = nlohmann::json;
+class Model;
 
 /// @brief Configuration and budget parameters for context compaction
 struct ContextBudget {
@@ -29,7 +26,7 @@ size_t estimate_context_tokens(const std::vector<common_chat_msg>& messages,
                                const std::vector<common_chat_tool>& tools = {},
                                Model* model = nullptr);
 
-/// @brief Compact a raw tool result string to prevent blowing the context window
+/// @brief Compact a raw tool result string to prevent blowing the context window (Two-Pass Pruning)
 std::string compact_tool_result(const std::string& raw_output,
                                 size_t max_chars = 16000);
 

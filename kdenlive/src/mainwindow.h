@@ -161,6 +161,11 @@ public:
     /** @brief Raise (show) the audio mixer dock */
     void raiseMixer(bool raise = true);
 
+    /** @brief Returns a pointer to the embedded Natron workspace widget */
+    NatronWorkspaceWidget *natronWorkspaceWidget() const { return m_natronWorkspaceWidget; }
+    /** @brief Raise (show) the Natron compositing workspace dock */
+    void showNatronWorkspace();
+
     /** @brief Raise (show) the project bin
      * @param unconditionally if false, we won't raise the bin if docked with the project monitor */
     void raiseBin(bool unconditionally = true);

@@ -247,6 +247,11 @@ install(TARGETS kdenlive DESTINATION ${KDE_INSTALL_BINDIR})
 target_include_directories(kdenliveLib PRIVATE
     ${CMAKE_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../agent.cpp/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Natron/Engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Natron/Gui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Natron/Global
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Natron/libs
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/external
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
     ${CMAKE_CURRENT_SOURCE_DIR}/monitor
@@ -256,6 +261,8 @@ target_include_directories(kdenliveLib PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/timeline2/view
     ${CMAKE_CURRENT_SOURCE_DIR}/timeline2/view/qml
     )
+
+target_compile_definitions(kdenliveLib PUBLIC ENABLE_NATRON_INTEGRATION=1)
 
 # Adds Qt definitions and include directories, and sets QT_LIBRARIES according
 # to the components requested in find_package().

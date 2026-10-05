@@ -375,6 +375,28 @@ void AIToolRegistry::registerAllTools()
                 QStringLiteral("natron"));
     }
 
+    // 17b. track_object — Natron AI motion tracking & match-move / privacy blur
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID to track. Use -1 for currently selected or active timeline clip."));
+        props[QStringLiteral("target_description")] = stringParam(QStringLiteral("Description of object to track (e.g. 'face', 'license plate', 'car', 'speaker', 'text element')."));
+        props[QStringLiteral("tracking_mode")] = enumParam(
+            QStringLiteral("Tracking algorithm mode."),
+            {QStringLiteral("planar_track"), QStringLiteral("point_track"), QStringLiteral("feature_track"), QStringLiteral("auto_detect")});
+        props[QStringLiteral("action_type")] = enumParam(
+            QStringLiteral("Action to apply with tracking data."),
+            {QStringLiteral("blur_privacy"), QStringLiteral("match_move_overlay"), QStringLiteral("roto_matte"), QStringLiteral("stabilize"), QStringLiteral("corner_pin")});
+        props[QStringLiteral("overlay_clip")] = stringParam(QStringLiteral("Path or Bin ID of graphic/text/video to attach/match-move to the tracked object."));
+        props[QStringLiteral("blur_radius")] = numberParam(QStringLiteral("Blur radius if action_type is blur_privacy (default: 25.0)."));
+        props[QStringLiteral("feather")] = numberParam(QStringLiteral("Edge feathering for mask (default: 5.0)."));
+        props[QStringLiteral("start_frame")] = intParam(QStringLiteral("Start frame for tracking (-1 = clip start)."));
+        props[QStringLiteral("end_frame")] = intParam(QStringLiteral("End frame for tracking (-1 = clip end)."));
+        addTool(QStringLiteral("track_object"),
+                QStringLiteral("Track an object or region in video footage using Natron's Tracker / Match-Move node pipeline. Automatically populates Natron's Node Graph, Curve Editor, and Dope Sheet with keyframes and renders blur privacy, match-move overlay, or rotoscoped matte back to Kdenlive."),
+                makeParams(props, {}),
+                QStringLiteral("natron"));
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // VERIFICATION & INSPECTION (ported from Velo view_timeline_frames / probe_quality)
     // ════════════════════════════════════════════════════════════════════════

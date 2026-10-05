@@ -3131,6 +3131,15 @@ void MainWindow::slotOpenAssetStudio()
     }
 }
 
+void MainWindow::showNatronWorkspace()
+{
+    if (m_natronWorkspaceDock) {
+        m_natronWorkspaceDock->open();
+        m_natronWorkspaceDock->setAsCurrentTab();
+        m_natronWorkspaceDock->raise();
+    }
+}
+
 void MainWindow::slotAddClipMarker()
 {
     std::shared_ptr<ProjectClip> clip(nullptr);
