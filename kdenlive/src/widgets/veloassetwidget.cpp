@@ -33,7 +33,9 @@
 #include <QPixmap>
 #include <QIcon>
 #include <QSplitter>
+#include <QProcessEnvironment>
 #include <KLocalizedString>
+#include "authmanager.h"
 
 VeloAssetWidget::VeloAssetWidget(QWidget *parent)
     : QWidget(parent)
@@ -336,21 +338,51 @@ void VeloAssetWidget::setupUi()
 
 void VeloAssetWidget::loadEnvCredentials()
 {
+    // 1. Check system environment variables first
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    if (env.contains(QStringLiteral("VITE_SUPABASE_URL"))) m_supabaseUrl = env.value(QStringLiteral("VITE_SUPABASE_URL"));
+    else if (env.contains(QStringLiteral("SUPABASE_URL"))) m_supabaseUrl = env.value(QStringLiteral("SUPABASE_URL"));
+
+    if (env.contains(QStringLiteral("VITE_SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("VITE_SUPABASE_ANON_KEY"));
+    else if (env.contains(QStringLiteral("SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("SUPABASE_ANON_KEY"));
+
+    if (env.contains(QStringLiteral("SUPABASE_SERVICE_ROLE_KEY"))) m_supabaseServiceKey = env.value(QStringLiteral("SUPABASE_SERVICE_ROLE_KEY"));
+
+    // 2. Search candidate .env and .env.local files in priority order
     QStringList searchPaths;
-    searchPaths << QDir::current().filePath(QStringLiteral(".env.local"))
-                << QDir::current().filePath(QStringLiteral(".env"))
-                << QDir::current().filePath(QStringLiteral("kdenlive/.env.local"))
-                << QDir::current().filePath(QStringLiteral("kdenlive/.env"))
-                << QCoreApplication::applicationDirPath() + QStringLiteral("/.env.local")
-                << QCoreApplication::applicationDirPath() + QStringLiteral("/.env")
-                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env.local"))
-                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env"))
-                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env.local"))
+
+    // Search current working directory and ancestors up to 6 levels
+    QDir currDir = QDir::current();
+    for (int i = 0; i < 6; ++i) {
+        searchPaths << currDir.filePath(QStringLiteral(".env.local"))
+                    << currDir.filePath(QStringLiteral(".env"))
+                    << currDir.filePath(QStringLiteral("kdenlive/.env.local"))
+                    << currDir.filePath(QStringLiteral("kdenlive/.env"));
+        if (!currDir.cdUp()) break;
+    }
+
+    // Search application binary directory and ancestors up to 6 levels (e.g. build/bin -> build -> kdenlive -> repo root)
+    QDir appDir(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 6; ++i) {
+        searchPaths << appDir.filePath(QStringLiteral(".env.local"))
+                    << appDir.filePath(QStringLiteral(".env"))
+                    << appDir.filePath(QStringLiteral("kdenlive/.env.local"))
+                    << appDir.filePath(QStringLiteral("kdenlive/.env"));
+        if (!appDir.cdUp()) break;
+    }
+
+    // User standard config & data paths
+    searchPaths << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env.local"))
                 << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env"))
                 << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env.local"))
                 << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env"))
                 << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env.local"))
-                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env"));
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env"))
+                << QDir::home().filePath(QStringLiteral(".env.local"))
+                << QDir::home().filePath(QStringLiteral(".env"));
+
+    searchPaths.removeDuplicates();
+    searchPaths.removeAll(QString());
 
     for (const QString &path : searchPaths) {
         QFile file(path);
@@ -368,16 +400,24 @@ void VeloAssetWidget::loadEnvCredentials()
                     val = val.mid(1, val.length() - 2).trimmed();
                 }
 
-                if (key == QStringLiteral("VITE_SUPABASE_URL") || key == QStringLiteral("SUPABASE_URL")) {
+                if ((key == QStringLiteral("VITE_SUPABASE_URL") || key == QStringLiteral("SUPABASE_URL")) && m_supabaseUrl.isEmpty()) {
                     m_supabaseUrl = val;
-                } else if (key == QStringLiteral("VITE_SUPABASE_ANON_KEY") || key == QStringLiteral("SUPABASE_ANON_KEY")) {
+                } else if ((key == QStringLiteral("VITE_SUPABASE_ANON_KEY") || key == QStringLiteral("SUPABASE_ANON_KEY")) && m_supabaseAnonKey.isEmpty()) {
                     m_supabaseAnonKey = val;
-                } else if (key == QStringLiteral("SUPABASE_SERVICE_ROLE_KEY")) {
+                } else if (key == QStringLiteral("SUPABASE_SERVICE_ROLE_KEY") && m_supabaseServiceKey.isEmpty()) {
                     m_supabaseServiceKey = val;
                 }
             }
-            break;
+            if (!m_supabaseUrl.isEmpty() && !m_supabaseAnonKey.isEmpty()) {
+                qDebug() << "[VeloAssetWidget] Loaded environment credentials from:" << path;
+                break;
+            }
         }
+    }
+
+    if (m_supabaseUrl.isEmpty() && AuthManager::instance() && !AuthManager::instance()->supabaseUrl().isEmpty()) {
+        m_supabaseUrl = AuthManager::instance()->supabaseUrl();
+        m_supabaseAnonKey = AuthManager::instance()->supabaseAnonKey();
     }
 }
 
@@ -396,6 +436,9 @@ QNetworkRequest VeloAssetWidget::createSupabaseRequest(const QString &functionPa
 
 void VeloAssetWidget::fetchAvailableVoices()
 {
+    if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
+        loadEnvCredentials();
+    }
     if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) return;
 
     QNetworkRequest req = createSupabaseRequest(QStringLiteral("get-voices"));
@@ -452,6 +495,9 @@ void VeloAssetWidget::slotCategoryChanged(int)
 void VeloAssetWidget::searchStock(const QString &category, const QString &query, int page)
 {
     stopAudioPreview();
+    if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
+        loadEnvCredentials();
+    }
     if (m_supabaseUrl.isEmpty()) {
         m_stockStatusLabel->setText(i18n("Supabase URL not configured in .env.local"));
         return;
@@ -1144,6 +1190,9 @@ void VeloAssetWidget::generateVoiceover(const QString &text, const QString &voic
                                        double speed, double stability,
                                        std::function<void(const QString &localPath, double duration)> onComplete)
 {
+    if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
+        loadEnvCredentials();
+    }
     if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
         if (onComplete) onComplete(QString(), 0.0);
         return;

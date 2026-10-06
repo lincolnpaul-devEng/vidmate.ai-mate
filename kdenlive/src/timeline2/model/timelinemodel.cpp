@@ -5746,13 +5746,19 @@ void TimelineModel::deregisterGroup(int id)
 
 std::shared_ptr<TrackModel> TimelineModel::getTrackById(int trackId)
 {
-    Q_ASSERT(m_iteratorTable.count(trackId) > 0);
+    if (m_iteratorTable.count(trackId) == 0) {
+        qWarning() << "[TimelineModel] getTrackById: Track ID" << trackId << "not found in iterator table.";
+        return nullptr;
+    }
     return *m_iteratorTable[trackId];
 }
 
 const std::shared_ptr<TrackModel> TimelineModel::getTrackById_const(int trackId) const
 {
-    Q_ASSERT(m_iteratorTable.count(trackId) > 0);
+    if (m_iteratorTable.count(trackId) == 0) {
+        qWarning() << "[TimelineModel] getTrackById_const: Track ID" << trackId << "not found in iterator table.";
+        return nullptr;
+    }
     return *m_iteratorTable.at(trackId);
 }
 

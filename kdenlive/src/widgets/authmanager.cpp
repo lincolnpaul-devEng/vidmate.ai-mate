@@ -18,6 +18,7 @@
 #include <QStandardPaths>
 #include <QSettings>
 #include <QCoreApplication>
+#include <QProcessEnvironment>
 #include <QDebug>
 
 AuthManager *AuthManager::s_instance = nullptr;
@@ -40,21 +41,49 @@ AuthManager::AuthManager(QObject *parent)
 
 void AuthManager::loadCredentialsFromEnv()
 {
+    // 1. Check system environment variables first
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    if (env.contains(QStringLiteral("VITE_SUPABASE_URL"))) m_supabaseUrl = env.value(QStringLiteral("VITE_SUPABASE_URL"));
+    else if (env.contains(QStringLiteral("SUPABASE_URL"))) m_supabaseUrl = env.value(QStringLiteral("SUPABASE_URL"));
+
+    if (env.contains(QStringLiteral("VITE_SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("VITE_SUPABASE_ANON_KEY"));
+    else if (env.contains(QStringLiteral("SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("SUPABASE_ANON_KEY"));
+
+    // 2. Search candidate .env and .env.local files in priority order
     QStringList searchPaths;
-    searchPaths << QDir::current().filePath(QStringLiteral(".env.local"))
-                << QDir::current().filePath(QStringLiteral(".env"))
-                << QDir::current().filePath(QStringLiteral("kdenlive/.env.local"))
-                << QDir::current().filePath(QStringLiteral("kdenlive/.env"))
-                << QCoreApplication::applicationDirPath() + QStringLiteral("/.env.local")
-                << QCoreApplication::applicationDirPath() + QStringLiteral("/.env")
-                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env.local"))
-                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env"))
-                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env.local"))
+
+    // Search current working directory and ancestors up to 6 levels
+    QDir currDir = QDir::current();
+    for (int i = 0; i < 6; ++i) {
+        searchPaths << currDir.filePath(QStringLiteral(".env.local"))
+                    << currDir.filePath(QStringLiteral(".env"))
+                    << currDir.filePath(QStringLiteral("kdenlive/.env.local"))
+                    << currDir.filePath(QStringLiteral("kdenlive/.env"));
+        if (!currDir.cdUp()) break;
+    }
+
+    // Search application binary directory and ancestors up to 6 levels (e.g. build/bin -> build -> kdenlive -> repo root)
+    QDir appDir(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 6; ++i) {
+        searchPaths << appDir.filePath(QStringLiteral(".env.local"))
+                    << appDir.filePath(QStringLiteral(".env"))
+                    << appDir.filePath(QStringLiteral("kdenlive/.env.local"))
+                    << appDir.filePath(QStringLiteral("kdenlive/.env"));
+        if (!appDir.cdUp()) break;
+    }
+
+    // User standard config & data paths
+    searchPaths << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env.local"))
                 << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env"))
                 << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env.local"))
                 << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env"))
                 << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env.local"))
-                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env"));
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env"))
+                << QDir::home().filePath(QStringLiteral(".env.local"))
+                << QDir::home().filePath(QStringLiteral(".env"));
+
+    searchPaths.removeDuplicates();
+    searchPaths.removeAll(QString());
 
     for (const QString &path : searchPaths) {
         QFile file(path);
@@ -74,9 +103,9 @@ void AuthManager::loadCredentialsFromEnv()
                     val = val.mid(1, val.length() - 2).trimmed();
                 }
 
-                if (key == QStringLiteral("VITE_SUPABASE_URL") || key == QStringLiteral("SUPABASE_URL")) {
+                if ((key == QStringLiteral("VITE_SUPABASE_URL") || key == QStringLiteral("SUPABASE_URL")) && m_supabaseUrl.isEmpty()) {
                     m_supabaseUrl = val;
-                } else if (key == QStringLiteral("VITE_SUPABASE_ANON_KEY") || key == QStringLiteral("SUPABASE_ANON_KEY")) {
+                } else if ((key == QStringLiteral("VITE_SUPABASE_ANON_KEY") || key == QStringLiteral("SUPABASE_ANON_KEY")) && m_supabaseAnonKey.isEmpty()) {
                     m_supabaseAnonKey = val;
                 }
             }
