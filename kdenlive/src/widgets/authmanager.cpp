@@ -43,12 +43,18 @@ void AuthManager::loadCredentialsFromEnv()
     QStringList searchPaths;
     searchPaths << QDir::current().filePath(QStringLiteral(".env.local"))
                 << QDir::current().filePath(QStringLiteral(".env"))
+                << QDir::current().filePath(QStringLiteral("kdenlive/.env.local"))
+                << QDir::current().filePath(QStringLiteral("kdenlive/.env"))
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env.local")
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env");
+                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env.local"))
+                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env"))
+                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env.local"))
+                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env"))
+                << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env.local"))
+                << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env"))
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env.local"))
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env"));
 
     for (const QString &path : searchPaths) {
         QFile file(path);
@@ -81,11 +87,8 @@ void AuthManager::loadCredentialsFromEnv()
         }
     }
 
-    if (m_supabaseUrl.isEmpty()) {
-        m_supabaseUrl = QStringLiteral("https://mgurbmoubtqzsgfdlgur.supabase.co");
-    }
-    if (m_supabaseAnonKey.isEmpty()) {
-        m_supabaseAnonKey = QStringLiteral("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ndXJibW91YnRxenNnZmRsZ3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMjYyMTAsImV4cCI6MjEwMjYwMjIxMH0.fcjlhwoln44uisxPfddIlWD1zmLm9nJaoYIfTYTMaV0");
+    if (m_supabaseUrl.isEmpty() || m_supabaseAnonKey.isEmpty()) {
+        qDebug() << "[AuthManager] Supabase credentials not found in environment search paths.";
     }
 }
 

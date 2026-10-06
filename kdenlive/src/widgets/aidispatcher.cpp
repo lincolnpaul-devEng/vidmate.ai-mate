@@ -33,6 +33,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QStandardPaths>
 #include <QTextStream>
 #include <QCoreApplication>
 #include <QProcessEnvironment>
@@ -97,21 +98,24 @@ void AIDispatcher::saveSettings()
 
 void AIDispatcher::loadEnvConfig(const QString &customPath)
 {
-    static const QString DEFAULT_SUPABASE_URL = QStringLiteral("https://mgurbmoubtqzsgfdlgur.supabase.co");
-    static const QString DEFAULT_SUPABASE_ANON = QStringLiteral("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ndXJibW91YnRxenNnZmRsZ3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMjYyMTAsImV4cCI6MjEwMjYwMjIxMH0.fcjlhwoln44uisxPfddIlWD1zmLm9nJaoYIfTYTMaV0");
-
     QStringList searchPaths;
     if (!customPath.isEmpty()) searchPaths << customPath;
 
     // Search locations in priority order
     searchPaths << QDir::current().filePath(QStringLiteral(".env.local"))
                 << QDir::current().filePath(QStringLiteral(".env"))
+                << QDir::current().filePath(QStringLiteral("kdenlive/.env.local"))
+                << QDir::current().filePath(QStringLiteral("kdenlive/.env"))
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env.local")
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env");
+                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env.local"))
+                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env"))
+                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env.local"))
+                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env"))
+                << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env.local"))
+                << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env"))
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env.local"))
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env"));
 
     for (const QString &path : searchPaths) {
         QFile file(path);
@@ -154,12 +158,12 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
         }
     }
 
-    if (m_supabaseUrl.isEmpty()) m_supabaseUrl = DEFAULT_SUPABASE_URL;
-    if (m_supabaseAnonKey.isEmpty()) m_supabaseAnonKey = DEFAULT_SUPABASE_ANON;
-
-    // Configure default endpoint using Supabase ai-proxy
-    m_apiUrl = QStringLiteral("%1/functions/v1/ai-proxy").arg(m_supabaseUrl);
-    qDebug() << "[AIDispatcher] Configured Supabase AI proxy endpoint:" << m_apiUrl;
+    if (!m_supabaseUrl.isEmpty()) {
+        m_apiUrl = QStringLiteral("%1/functions/v1/ai-proxy").arg(m_supabaseUrl);
+        qDebug() << "[AIDispatcher] Configured Supabase AI proxy endpoint:" << m_apiUrl;
+    } else {
+        qDebug() << "[AIDispatcher] No Supabase credentials loaded from environment search paths.";
+    }
 }
 
 void AIDispatcher::setApiEndpoint(const QString &url) { m_apiUrl = url; }
@@ -580,11 +584,13 @@ void AIDispatcher::sendCurrentMessages()
                            m_apiUrl.contains(QStringLiteral("supabase.co"));
 
     if (isSupabaseProxy) {
-        // EXACT MIRROR OF VELO (server/plugins/llm-proxy.ts):
-        // Always authenticate the Supabase Kong Gateway using the Supabase Anon Key.
-        QString gatewayKey = !m_supabaseAnonKey.isEmpty() ? m_supabaseAnonKey : QStringLiteral("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ndXJibW91YnRxenNnZmRsZ3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwMjYyMTAsImV4cCI6MjEwMjYwMjIxMH0.fcjlhwoln44uisxPfddIlWD1zmLm9nJaoYIfTYTMaV0");
-        request.setRawHeader("apikey", gatewayKey.toUtf8());
-        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(gatewayKey).toUtf8());
+        if (m_supabaseAnonKey.isEmpty()) {
+            m_goalActive = false;
+            Q_EMIT errorOccurred(QStringLiteral("Supabase Anon Key is not configured. Please define SUPABASE_ANON_KEY and SUPABASE_URL in your .env.local file."));
+            return;
+        }
+        request.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
+        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
 
         // Pass authenticated user metadata as custom headers for audit/session context
         if (AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {

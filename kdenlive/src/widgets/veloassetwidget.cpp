@@ -339,12 +339,18 @@ void VeloAssetWidget::loadEnvCredentials()
     QStringList searchPaths;
     searchPaths << QDir::current().filePath(QStringLiteral(".env.local"))
                 << QDir::current().filePath(QStringLiteral(".env"))
+                << QDir::current().filePath(QStringLiteral("kdenlive/.env.local"))
+                << QDir::current().filePath(QStringLiteral("kdenlive/.env"))
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env.local")
                 << QCoreApplication::applicationDirPath() + QStringLiteral("/.env")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/.env")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env.local")
-                << QStringLiteral("/home/lincoln/vidmate.ai-mate/.env");
+                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env.local"))
+                << QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).filePath(QStringLiteral(".env"))
+                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env.local"))
+                << QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral(".env"))
+                << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env.local"))
+                << QStandardPaths::locate(QStandardPaths::ConfigLocation, QStringLiteral("kdenlive/.env"))
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env.local"))
+                << QDir::home().filePath(QStringLiteral(".config/kdenlive/.env"));
 
     for (const QString &path : searchPaths) {
         QFile file(path);

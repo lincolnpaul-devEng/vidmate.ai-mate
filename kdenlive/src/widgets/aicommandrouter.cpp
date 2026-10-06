@@ -1360,12 +1360,18 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
         return;
     }
 
-    // Search for NatronRenderer inside kdenlive/Natron or relative to application
+    // Search for NatronRenderer inside kdenlive/Natron or relative to application / system PATH
     QStringList candidates = {
-        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/Natron/Renderer/NatronRenderer"),
         QCoreApplication::applicationDirPath() + QStringLiteral("/../Natron/Renderer/NatronRenderer"),
         QCoreApplication::applicationDirPath() + QStringLiteral("/Natron/Renderer/NatronRenderer"),
-        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/Natron/App/Natron"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../Natron/App/Natron"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/Natron/App/Natron"),
+        QDir::current().filePath(QStringLiteral("kdenlive/Natron/Renderer/NatronRenderer")),
+        QDir::current().filePath(QStringLiteral("Natron/Renderer/NatronRenderer")),
+        QStandardPaths::findExecutable(QStringLiteral("NatronRenderer")),
+        QStandardPaths::findExecutable(QStringLiteral("natron-renderer")),
+        QStandardPaths::findExecutable(QStringLiteral("Natron")),
+        QStandardPaths::findExecutable(QStringLiteral("natron")),
         QStringLiteral("NatronRenderer"),
         QStringLiteral("natron-renderer")
     };
@@ -1495,11 +1501,19 @@ void AICommandRouter::handleDetectScenes(const QJsonObject &params)
     // Locate scene_detect.py script
     QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/scenedetect/scene_detect.py"));
     if (scriptPath.isEmpty() || !QFile::exists(scriptPath)) {
-        QString fallback = QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/scenedetect/scene_detect.py");
-        if (QFile::exists(fallback)) {
-            scriptPath = fallback;
-        } else {
-            scriptPath = QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/scenedetect/scene_detect.py");
+        QStringList candidates = {
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/scenedetect/scene_detect.py"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/data/scripts/scenedetect/scene_detect.py"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/scenedetect/scene_detect.py"),
+            QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/scenedetect/scene_detect.py")),
+            QDir::current().filePath(QStringLiteral("data/scripts/scenedetect/scene_detect.py")),
+            QDir::home().filePath(QStringLiteral(".local/share/kdenlive/scripts/scenedetect/scene_detect.py"))
+        };
+        for (const QString &cand : candidates) {
+            if (QFile::exists(cand)) {
+                scriptPath = cand;
+                break;
+            }
         }
     }
 

@@ -24,6 +24,8 @@
 #include <KMessageBox>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QStandardPaths>
+#include <QCoreApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -755,17 +757,58 @@ void MagicMaskWidget::slotRunRvmHumanMatting()
     QDir maskSrcFolder = pCore->currentDoc() ? pCore->currentDoc()->getCacheDir(CacheMaskSource, &ok) : QDir();
     QDir maskOutFolder = pCore->currentDoc() ? pCore->currentDoc()->getCacheDir(CacheMask, &ok) : QDir();
 
-    QString pythonExe = QStringLiteral("/home/lincoln/.local/share/kdenlive/venv-sam/bin/python3");
-    if (!QFile::exists(pythonExe)) {
+    QString pythonExe;
+    QStringList venvCandidates = {
+        QDir::home().filePath(QStringLiteral(".local/share/kdenlive/venv-sam/bin/python3")),
+        QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kdenlive/venv-sam/bin/python3")),
+        QStandardPaths::findExecutable(QStringLiteral("python3")),
+        QStringLiteral("python3")
+    };
+    for (const QString &cand : venvCandidates) {
+        if (!cand.isEmpty() && (QFile::exists(cand) || !cand.contains(QLatin1Char('/')))) {
+            pythonExe = cand;
+            break;
+        }
+    }
+    if (pythonExe.isEmpty()) {
         pythonExe = QStringLiteral("python3");
     }
 
     QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/automask/rvm_human_matting.py"));
     if (scriptPath.isEmpty() || !QFile::exists(scriptPath)) {
-        scriptPath = QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/automask/rvm_human_matting.py");
+        QStringList scriptCandidates = {
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/automask/rvm_human_matting.py"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/data/scripts/automask/rvm_human_matting.py"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/automask/rvm_human_matting.py"),
+            QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/automask/rvm_human_matting.py")),
+            QDir::current().filePath(QStringLiteral("data/scripts/automask/rvm_human_matting.py")),
+            QDir::home().filePath(QStringLiteral(".local/share/kdenlive/scripts/automask/rvm_human_matting.py"))
+        };
+        for (const QString &cand : scriptCandidates) {
+            if (QFile::exists(cand)) {
+                scriptPath = cand;
+                break;
+            }
+        }
     }
 
-    QString modelPath = QStringLiteral("/home/lincoln/vidmate.ai-mate/RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx");
+    QString modelPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("models/rvm_mobilenetv3_fp32.onnx"));
+    if (modelPath.isEmpty() || !QFile::exists(modelPath)) {
+        QStringList modelCandidates = {
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/models/rvm_mobilenetv3_fp32.onnx"),
+            QDir::current().filePath(QStringLiteral("RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx")),
+            QDir::current().filePath(QStringLiteral("../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx")),
+            QDir::home().filePath(QStringLiteral(".local/share/kdenlive/models/rvm_mobilenetv3_fp32.onnx"))
+        };
+        for (const QString &cand : modelCandidates) {
+            if (QFile::exists(cand)) {
+                modelPath = cand;
+                break;
+            }
+        }
+    }
 
     auto *proc = new QProcess(this);
     QStringList args;
