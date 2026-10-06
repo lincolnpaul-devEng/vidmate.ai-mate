@@ -45,6 +45,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 class AIChatWidget;
 class NatronWorkspaceWidget;
 class VeloAssetWidget;
+class MagicMaskWidget;
 class AssetPanel;
 class AudioGraphSpectrum;
 class EffectBasket;
@@ -287,6 +288,8 @@ private:
     KDDockWidgets::QtWidgets::DockWidget *m_natronWorkspaceDock{nullptr};
     VeloAssetWidget *m_veloAssetWidget{nullptr};
     KDDockWidgets::QtWidgets::DockWidget *m_veloAssetDock{nullptr};
+    MagicMaskWidget *m_magicMaskWidget{nullptr};
+    KDDockWidgets::QtWidgets::DockWidget *m_magicMaskDock{nullptr};
 
     KSelectAction *m_timeFormatButton;
     QAction *m_compositeAction;
@@ -452,6 +455,14 @@ public Q_SLOTS:
     void slotExportSubtitle();
     /** @brief Open Velo stock media and AI voiceover studio dock */
     void slotOpenAssetStudio();
+    /** @brief Launch AI Background Removal & Subject Masking */
+    void slotRemoveBackground();
+    /** @brief Open Natron / Fusion Select Tool palette */
+    void slotSelectNatronTool();
+    /** @brief Toggle between Kdenlive Timeline and Natron VFX Workspace */
+    void slotToggleNatronTimeline();
+    /** @brief Toggle status bar visibility */
+    void slotShowStatusBar(bool show);
     /** @brief Display current mouse pos */
     void slotUpdateMousePosition(int pos, int duration = -1);
     /** @brief Focus current timeline clip in bin and display its range */

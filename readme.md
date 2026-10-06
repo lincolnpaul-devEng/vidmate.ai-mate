@@ -80,6 +80,17 @@ flowchart TD
 - Integrated SAM2 neural segmentation for object detection, keyframe tracking, and automated alpha mattes.
 - Automatic fallback discovery for system Python environments.
 
+### 5. 👤 1-Click Human Background Removal & Video Matting (RVM)
+- Deep neural matting powered by **RobustVideoMatting (RVM)** ONNX inference for human subject extraction.
+- **Zero-Prompt 1-Click Matting**: Automatically isolates people and fine hair strands with zero manual bounding boxes or stroke prompts needed.
+- **Dynamic Resolution Optimization**: Automatically balances internal downsample ratios to preserve sub-pixel edge fidelity across low-res images and 4K footage alike.
+- **Direct Mask & Cutout Generation**: Emits both high-precision 8-bit alpha matte sequences (`mask_000000.png`) and transparent RGBA cutouts (`cutout_000000.png`) for instant drag-and-drop timeline layering or Natron node graph compositing.
+
+#### 🌟 Matting Quality Showcase
+| Original Input (`human_input.png`) | Alpha Matte (`mask_000000.png`) | Transparent Cutout (`cutout_000000.png`) |
+| :---: | :---: | :---: |
+| <img src="docs/images/human_input.png" width="180" alt="Original Input"> | <img src="docs/images/mask_000000.png" width="180" alt="Alpha Matte Mask"> | <img src="docs/images/cutout_000000.png" width="180" alt="RGBA Cutout"> |
+
 ---
 
 ## 🚀 Getting Started

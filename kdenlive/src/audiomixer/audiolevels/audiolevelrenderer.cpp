@@ -140,7 +140,9 @@ int AudioLevelRenderer::channelToSecondaryOffset(int channelIndex, int secondary
         // Start at top, do not add offset
         return CHANNEL_BORDER_WIDTH + channelIndex * (secondaryAxisLength + CHANNEL_BORDER_WIDTH);
     } else {
-        return borderOffset + CHANNEL_BORDER_WIDTH + channelIndex * (secondaryAxisLength + CHANNEL_BORDER_WIDTH);
+        // Position meter channels on the left, scale on the right
+        Q_UNUSED(borderOffset)
+        return CHANNEL_BORDER_WIDTH + channelIndex * (secondaryAxisLength + CHANNEL_BORDER_WIDTH);
     }
 }
 
@@ -221,15 +223,14 @@ void AudioLevelRenderer::drawChannelBorders(QPainter &painter, const RenderData 
         qreal totalWidth = data.audioChannels * data.secondaryAxisLength + (data.audioChannels + 1) * CHANNEL_BORDER_WIDTH;
         qreal totalHeight = data.primaryAxisLength + 2 * CHANNEL_BORDER_WIDTH;
         qreal verticalOffset = data.showClippingIndicator ? CLIPPING_INDICATOR_SIZE + CLIPPING_INDICATOR_SPACING : 0;
-        QRectF drawingRect = PainterUtils::adjustedForPen(QRectF(effectiveBorderOffset, verticalOffset, totalWidth, totalHeight), pen.widthF());
+        QRectF drawingRect = PainterUtils::adjustedForPen(QRectF(0, verticalOffset, totalWidth, totalHeight), pen.widthF());
         if (fillBackground && channelBackgroundColor.isValid()) {
             painter.fillRect(drawingRect, channelBackgroundColor);
         }
         painter.drawRect(drawingRect);
         qreal channelWidth = data.secondaryAxisLength;
         for (int i = 1; i < data.audioChannels; ++i) {
-            qreal x = effectiveBorderOffset + i * (channelWidth + CHANNEL_BORDER_WIDTH);
-            qreal verticalOffset = data.showClippingIndicator ? CLIPPING_INDICATOR_SIZE + CLIPPING_INDICATOR_SPACING : 0;
+            qreal x = i * (channelWidth + CHANNEL_BORDER_WIDTH);
             painter.drawLine(
                 PainterUtils::adjustedVerticalLine(x, verticalOffset + CHANNEL_BORDER_WIDTH, verticalOffset + data.primaryAxisLength + 1, pen.widthF()));
         }
@@ -243,10 +244,10 @@ void AudioLevelRenderer::drawDbScale(QPainter &painter, const RenderData &data) 
         return;
     }
 
-    const QVector<int> dbscale = {0, -6, -12, -18, -24, -30, -36, -42, -48, -54};
+    const QVector<int> dbscale = {0, -6, -12, -18, -24, -30, -36, -42, -48, -54, -60};
     int effectiveBorderOffset = data.layoutState.getEffectiveBorderOffset();
 
-    // Fill background with Window color in hovering/hiding mode. We're potentially drawing over previous levels, so we need to fill the background.
+    // Fill background with Window color in hovering/hiding mode.
     if (data.layoutState.isInHoverLabelMode()) {
         QColor bgColor = data.palette.color(QPalette::Window);
         if (data.orientation == Qt::Horizontal) {
@@ -263,14 +264,13 @@ void AudioLevelRenderer::drawDbScale(QPainter &painter, const RenderData &data) 
     QPen pen = textColor;
     pen.setWidthF(TICK_MARK_THICKNESS);
     painter.setPen(pen);
-    painter.setOpacity(0.8); // Using a constant value since we removed kLabelOpacity
+    painter.setOpacity(0.85);
     painter.setFont(data.font);
     int labelMargin = 2;
     if (data.orientation == Qt::Horizontal) {
         int labelHeight = data.fontMetrics.ascent();
         int prevX = -1;
         int x = 0;
-        // y in regular mode bottom of the channels rectangle, in hovering mode we're clipping so have to use the effective offset
         qreal y = qMin(data.audioChannels * data.secondaryAxisLength + (data.audioChannels + 1) * CHANNEL_BORDER_WIDTH,
                        data.layoutState.getWidgetSize().height() - effectiveBorderOffset);
         int spaceForTwoLabels = 2 * data.fontMetrics.boundingRect(QStringLiteral("-45")).width() + labelMargin;
@@ -283,19 +283,15 @@ void AudioLevelRenderer::drawDbScale(QPainter &painter, const RenderData &data) 
             if (drawLabels) {
                 const QString label = QString::asprintf("%d", value);
                 int labelWidth = data.fontMetrics.horizontalAdvance(label);
-                // Center the label relative to the tick mark
                 int labelX = x - qRound(labelWidth / 2.0);
-                // Ensure the label is not drawn off the widget
                 if (labelX + labelWidth > data.layoutState.getWidgetSize().width()) {
                     labelX = data.layoutState.getWidgetSize().width() - labelWidth;
                 } else if (labelX < 0) {
                     labelX = 0;
                 }
-                // Draw the label if it is not overlapping with the previous label
                 if (prevX < 0 || prevX - (labelX + labelWidth) > labelMargin) {
                     painter.drawText(labelX, y + MARGIN_BETWEEN_LABEL_AND_LEVELS + labelHeight, label);
                     prevX = labelX;
-                    // Draw tick mark
                     painter.drawLine(PainterUtils::adjustedVerticalLine(x, y, y + TICK_MARK_LENGTH, pen.widthF()));
                 }
             }
@@ -304,7 +300,8 @@ void AudioLevelRenderer::drawDbScale(QPainter &painter, const RenderData &data) 
         int labelHeight = data.fontMetrics.height();
         int prevY = -1;
         int y = 0;
-        qreal x = effectiveBorderOffset - TICK_MARK_LENGTH;
+        qreal totalMeterWidth = data.audioChannels * data.secondaryAxisLength + (data.audioChannels + 1) * CHANNEL_BORDER_WIDTH;
+        qreal tickStartX = totalMeterWidth;
         int spaceForTwoLabels = 2 * labelHeight;
         bool drawLabels =
             (data.layoutState.shouldDrawLabels() || data.layoutState.isInHoverLabelMode()) && data.layoutState.getWidgetSize().height() >= spaceForTwoLabels;
@@ -314,22 +311,20 @@ void AudioLevelRenderer::drawDbScale(QPainter &painter, const RenderData &data) 
             y = dBToPrimaryOffset(value, data.maxDb, data.primaryAxisLength, data.orientation) + verticalOffset;
 
             if (drawLabels) {
-                // Center the label relative to the tick mark
                 int labelY = y - qRound(labelHeight / 2.0);
-                // Ensure the label is not drawn off the widget
                 if (labelY + labelHeight > data.layoutState.getWidgetSize().height()) {
                     labelY = data.layoutState.getWidgetSize().height() - labelHeight;
                 } else if (labelY < 0) {
                     labelY = 0;
                 }
-                // Draw the label if it is not overlapping with the previous label
                 if (prevY < 0 || labelY - (prevY + labelHeight) > labelMargin) {
                     const QString label = QString::asprintf("%d", value);
-                    painter.drawText(QRectF(0, labelY, effectiveBorderOffset - MARGIN_BETWEEN_LABEL_AND_LEVELS, labelHeight), label,
-                                     QTextOption(Qt::AlignRight));
+                    // Draw small tick mark right against the meter bar
+                    painter.drawLine(PainterUtils::adjustedHorizontalLine(y, tickStartX, tickStartX + TICK_MARK_LENGTH, pen.widthF()));
+                    // Draw label text to the right
+                    painter.drawText(QRectF(tickStartX + TICK_MARK_LENGTH + 2, labelY, data.layoutState.getWidgetSize().width() - tickStartX - 2, labelHeight),
+                                     label, QTextOption(Qt::AlignLeft));
                     prevY = labelY;
-                    // Draw tick mark
-                    painter.drawLine(PainterUtils::adjustedHorizontalLine(y, x, x + TICK_MARK_LENGTH, pen.widthF()));
                 }
             }
         }

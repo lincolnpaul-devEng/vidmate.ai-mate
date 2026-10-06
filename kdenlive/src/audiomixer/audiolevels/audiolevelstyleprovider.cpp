@@ -18,12 +18,12 @@ AudioLevelStyleProvider &AudioLevelStyleProvider::instance()
 AudioLevelStyleProvider::LevelColors AudioLevelStyleProvider::getLevelsFillColors() const
 {
     LevelColors colors;
-    colors.darkGreen = QColor(0, 135, 60);
-    colors.green = QColor(20, 190, 20);
-    colors.yellow = QColor(248, 204, 27);
-    colors.orange = QColor(243, 115, 36);
-    colors.red = QColor(225, 39, 41);
-    colors.darkRed = QColor(200, 39, 41);
+    colors.darkGreen = QColor(14, 180, 40);  // Vibrant emerald green
+    colors.green = QColor(24, 205, 55);     // Bright green
+    colors.yellow = QColor(245, 185, 0);    // Warm gold / amber
+    colors.orange = QColor(225, 140, 0);    // Amber-orange
+    colors.red = QColor(185, 20, 30);       // Deep red
+    colors.darkRed = QColor(140, 10, 20);   // Dark crimson red
 
     return colors;
 }

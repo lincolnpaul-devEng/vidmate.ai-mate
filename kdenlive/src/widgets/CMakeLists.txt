@@ -26,9 +26,11 @@ set(kdenlive_SRCS
   widgets/natroncurveeditorview.cpp
   widgets/natrondopesheetview.cpp
   widgets/natronworkspacewidget.cpp
+  widgets/natronselecttooldialog.cpp
   widgets/veloassetwidget.cpp
   widgets/authmanager.cpp
   widgets/aimemorystore.cpp
+  widgets/magicmaskwidget.cpp
   ../../agent.cpp/src/context_compaction.cpp
   ../../agent.cpp/src/run_ledger.cpp
   PARENT_SCOPE

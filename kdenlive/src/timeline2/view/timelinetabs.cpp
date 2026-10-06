@@ -363,6 +363,8 @@ void TimelineTabs::buildClipMenu()
     KActionCollection *coll = pCore->window()->actionCollection();
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("edit_copy")));
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("duplicate_timeline_clip")));
+    m_timelineClipMenu->addAction(coll->action(QStringLiteral("natron_select_tool")));
+    m_timelineClipMenu->addAction(coll->action(QStringLiteral("ai_remove_background")));
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("paste_effects")));
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("delete_effects")));
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("group_clip")));

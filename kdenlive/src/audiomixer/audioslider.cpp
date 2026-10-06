@@ -20,7 +20,7 @@ constexpr int kTickLabelsGrooveMargin = 2;
 constexpr int kTickWidth = 8;
 constexpr int kTickHeight = 3;
 constexpr int kKnobWidth = 14;
-constexpr int kWideKnobHeight = 31;
+constexpr int kWideKnobHeight = 22;
 constexpr int kDividerLineGap = 2;
 
 AudioSlider::AudioSlider(Qt::Orientation orientation, QWidget *parent, bool narrowKnob, int neutralPosition)
@@ -189,6 +189,22 @@ void AudioSlider::paintEvent(QPaintEvent *event)
     // Calculate knob position based on current value
     qreal knobPos = positionFromValue(value());
     QRectF knob = getKnobRect(knobPos);
+    QRectF groove = getGrooveRect(QRectF(rect()));
+
+    // Draw active filled track (vibrant blue fill from bottom up to knob in vertical mode)
+    if (orientation() == Qt::Vertical && isEnabled()) {
+        qreal trackW = 4.0;
+        qreal trackX = groove.center().x() - trackW / 2.0;
+        qreal trackBottom = groove.bottom();
+        qreal trackTop = qMin(trackBottom, knobPos);
+        if (trackBottom > trackTop) {
+            QRectF activeTrack(trackX, trackTop, trackW, trackBottom - trackTop);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(58, 120, 242)); // Vibrant blue #3a78f2
+            painter.drawRoundedRect(activeTrack, 2.0, 2.0);
+        }
+    }
 
     // Draw the knob
     drawKnob(painter, knob);
@@ -365,101 +381,47 @@ void AudioSlider::drawNarrowKnob(QPainter &painter, const QRectF &knobRect, bool
 
 void AudioSlider::drawWideKnob(QPainter &painter, const QRectF &knobRect, bool highlight)
 {
-    constexpr qreal kTopPartHeight = 4.0;
-    constexpr qreal kUpperPartHeight = 11.0;
-    constexpr qreal kDividerHeight = 1.0;
-    constexpr qreal kLowerPartHeight = 11.0;
-    constexpr qreal kBottomPartHeight = 4.0;
-    bool isDarkTheme = palette().color(QPalette::Window).lightness() < palette().color(QPalette::WindowText).lightness();
-    const QColor topColor = isEnabled() ? QColor(230, 230, 230) : (isDarkTheme ? QColor(140, 140, 140) : QColor(220, 220, 220));
-    const QColor upperColor = isEnabled() ? QColor(200, 200, 200) : (isDarkTheme ? QColor(120, 120, 120) : QColor(200, 200, 200));
-    const QColor dividerColor = isEnabled() ? QColor(90, 90, 90) : QColor(90, 90, 90, 128);
-    const QColor lowerColor = isEnabled() ? QColor(220, 220, 220) : (isDarkTheme ? QColor(130, 130, 130) : QColor(210, 210, 210));
-    const QColor bottomColor = isEnabled() ? QColor(190, 190, 190) : (isDarkTheme ? QColor(110, 110, 110) : QColor(200, 200, 200));
-    const QColor borderColor = isEnabled() ? QColor(120, 120, 120) : (isDarkTheme ? QColor(100, 100, 100) : QColor(180, 180, 180));
-    const QColor highlightColor = palette().highlight().color();
-    const qreal middlePartPos = kTopPartHeight;
-    const qreal dividerPos = middlePartPos + kUpperPartHeight;
-    const qreal lowerPartPos = dividerPos + kDividerHeight;
-    const qreal bottomPartPos = lowerPartPos + kLowerPartHeight;
-    qreal cornerRadius = 2.0;
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.translate(knobRect.topLeft());
-    QPen borderPen(borderColor);
-    if (highlight) {
-        borderPen.setColor(highlightColor);
-        borderPen.setWidthF(1.0);
-    } else {
-        borderPen.setColor(borderColor);
-        borderPen.setWidthF(1.0);
-    }
-    QRectF borderRect(0, 0, kKnobWidth, kWideKnobHeight);
-    // Be sure not to draw outside the border
-    QPainterPath borderPath;
-    borderPath.addRoundedRect(borderRect, cornerRadius, cornerRadius);
-    painter.setClipPath(borderPath);
+
+    // Subtle drop shadow
+    QRectF shadowRect = knobRect.adjusted(0, 1, 0, 1.5);
     painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 95));
+    painter.drawRoundedRect(shadowRect, 4.0, 4.0);
 
-    // Top part (split into two rectangles, one rounded, one not)
-    painter.setBrush(topColor);
-    painter.setPen(borderPen);
-    painter.drawRoundedRect(PainterUtils::adjustedForPen(QRectF(0, 0, kKnobWidth, kTopPartHeight), borderPen.widthF()), cornerRadius, cornerRadius);
-    painter.setPen(Qt::NoPen);
-    painter.drawRect(QRectF(0, kTopPartHeight - cornerRadius, kKnobWidth, cornerRadius));
+    // White Pill / Capsule Fader Knob
+    QColor knobColor = isEnabled() ? QColor(255, 255, 255) : QColor(160, 160, 160);
+    QColor borderColor = highlight ? QColor(58, 120, 242) : (m_knobHovered ? QColor(215, 220, 230) : QColor(55, 60, 70));
 
-    // Upper part
-    painter.setBrush(upperColor);
-    painter.drawRect(QRectF(0, middlePartPos, kKnobWidth, kUpperPartHeight));
+    painter.setPen(QPen(borderColor, 1.0));
+    painter.setBrush(knobColor);
+    painter.drawRoundedRect(knobRect, 4.0, 4.0);
 
-    // Divider
-    if (highlight) {
-        painter.setBrush(highlightColor);
-    } else {
-        painter.setBrush(dividerColor);
-    }
-    painter.drawRect(QRectF(0 + kDividerLineGap, dividerPos, kKnobWidth - 2 * kDividerLineGap, kDividerHeight));
-
-    // Lower Part
-    painter.setBrush(lowerColor);
-    painter.drawRect(QRectF(0, lowerPartPos, kKnobWidth, kLowerPartHeight));
-
-    // Bottom part (split into two rectangles, one rounded, one not)
-    painter.setBrush(bottomColor);
-    painter.setPen(borderPen);
-    painter.drawRoundedRect(PainterUtils::adjustedForPen(QRectF(0, bottomPartPos, kKnobWidth, kBottomPartHeight), borderPen.widthF()), cornerRadius,
-                            cornerRadius);
-    painter.setPen(Qt::NoPen);
-    painter.drawRect(QRectF(0, bottomPartPos, kKnobWidth, cornerRadius));
-
-    // Outer border
-    painter.setPen(borderPen);
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(PainterUtils::adjustedForPen(borderRect, borderPen.widthF()), cornerRadius, cornerRadius);
     painter.restore();
 }
 
 void AudioSlider::drawGroove(QPainter &painter, const QRectF &grooveRect)
 {
     painter.setRenderHint(QPainter::Antialiasing, true);
-    QColor baseColor = palette().color(QPalette::WindowText);
-    bool isDarkTheme = palette().color(QPalette::Window).lightness() < palette().color(QPalette::WindowText).lightness();
-    baseColor.setAlphaF(isDarkTheme ? 0.2 : 0.1);
-    QColor brushColor;
-    if (isEnabled()) {
-        brushColor = baseColor.darker(140);
+    if (orientation() == Qt::Vertical) {
+        qreal trackW = 4.0;
+        qreal trackX = grooveRect.center().x() - trackW / 2.0;
+        QRectF trackRect(trackX, grooveRect.top(), trackW, grooveRect.height());
+
+        // Dark track slot
+        painter.setPen(QPen(QColor(25, 28, 34), 1.0));
+        painter.setBrush(QColor(32, 35, 42));
+        painter.drawRoundedRect(trackRect, 2.0, 2.0);
     } else {
-        brushColor = palette().color(QPalette::Disabled, QPalette::WindowText);
-        brushColor.setAlphaF(0.2);
+        qreal trackH = 4.0;
+        qreal trackY = grooveRect.center().y() - trackH / 2.0;
+        QRectF trackRect(grooveRect.left(), trackY, grooveRect.width(), trackH);
+
+        painter.setPen(QPen(QColor(25, 28, 34), 1.0));
+        painter.setBrush(QColor(32, 35, 42));
+        painter.drawRoundedRect(trackRect, 2.0, 2.0);
     }
-    painter.setBrush(brushColor);
-    QPen borderPen(baseColor);
-    qreal penWidth = 1.0;
-    borderPen.setWidthF(penWidth);
-    painter.setPen(borderPen);
-    painter.setOpacity(isEnabled() ? 1.0 : 0.5);
-    painter.drawRoundedRect(PainterUtils::adjustedForPen(grooveRect, penWidth), 3.0, 3.0);
-    painter.setOpacity(1.0);
 }
 
 QSizeF AudioSlider::calculateTickSize() const
@@ -476,42 +438,34 @@ void AudioSlider::drawTicks(QPainter &painter, const QRectF &tickRect)
     if (!m_ticksVisible || m_tickPositions.empty()) {
         return;
     }
-    QColor textColor = palette().color(QPalette::Text);
     const int min = minimum();
     const int max = maximum();
     const int range = max - min;
     auto valueToSlider = m_valueToSlider ? m_valueToSlider : [](double v) { return static_cast<int>(v); };
-    QSizeF tickSize = calculateTickSize();
+
     if (orientation() == Qt::Vertical) {
-        const qreal tickStartX = tickRect.left() + (tickRect.width() - tickSize.width()) / 2.0;
+        qreal tickLen = 4.0;
+        qreal tickX = tickRect.left() + 1.0;
+        painter.save();
+        painter.setPen(QPen(QColor(110, 120, 135, 180), 1.0));
         for (int tickValue : m_tickPositions) {
             int sliderValue = valueToSlider(tickValue);
             qreal ratio = static_cast<qreal>(sliderValue - min) / range;
             qreal y = tickRect.bottom() - (tickRect.height() - 1.0) * ratio;
-            QLinearGradient tickGradient(tickStartX, y, tickStartX + tickSize.width(), y);
-            tickGradient.setColorAt(0.0, QColor(textColor.red(), textColor.green(), textColor.blue(), 160));
-            tickGradient.setColorAt(1.0, QColor(textColor.red(), textColor.green(), textColor.blue(), 100));
-            painter.save();
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(tickGradient);
-            painter.drawRect(QRectF(tickStartX, y - 1.0, tickSize.width(), tickSize.height()));
-            painter.restore();
+            painter.drawLine(QPointF(tickX, y), QPointF(tickX + tickLen, y));
         }
+        painter.restore();
     } else {
-        const qreal tickStartY = tickRect.top() + (tickRect.height() - tickSize.height()) / 2.0;
+        const qreal tickStartY = tickRect.top() + (tickRect.height() - 4.0) / 2.0;
+        painter.save();
+        painter.setPen(QPen(QColor(110, 120, 135, 180), 1.0));
         for (int tickValue : m_tickPositions) {
             int sliderValue = valueToSlider(tickValue);
             qreal ratio = static_cast<qreal>(sliderValue - min) / range;
             qreal x = tickRect.left() + (tickRect.width() - 1.0) * ratio;
-            QLinearGradient tickGradient(x, tickStartY, x, tickStartY + tickSize.height());
-            tickGradient.setColorAt(0.0, QColor(textColor.red(), textColor.green(), textColor.blue(), 160));
-            tickGradient.setColorAt(1.0, QColor(textColor.red(), textColor.green(), textColor.blue(), 100));
-            painter.save();
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(tickGradient);
-            painter.drawRect(QRectF(x - 1.0, tickStartY, tickSize.width(), tickSize.height()));
-            painter.restore();
+            painter.drawLine(QPointF(x, tickStartY), QPointF(x, tickStartY + 4.0));
         }
+        painter.restore();
     }
 }
 

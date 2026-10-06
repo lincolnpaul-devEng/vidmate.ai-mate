@@ -229,6 +229,14 @@ void TimelineWidget::showClipMenu(int cid)
         isAudioTrack = model()->isAudioTrack(tid);
     }
     m_favCompositions->setEnabled(!isAudioTrack);
+    QAction *aiBgAction = pCore->window()->actionCollection()->action(QStringLiteral("ai_remove_background"));
+    if (aiBgAction) {
+        aiBgAction->setEnabled(!isAudioTrack);
+    }
+    QAction *natronToolAction = pCore->window()->actionCollection()->action(QStringLiteral("natron_select_tool"));
+    if (natronToolAction) {
+        natronToolAction->setEnabled(!isAudioTrack);
+    }
     for (auto ac : std::as_const(effects)) {
         const QString &id = ac->data().toString();
         if (EffectsRepository::get()->isAudioEffect(id) != isAudioTrack) {

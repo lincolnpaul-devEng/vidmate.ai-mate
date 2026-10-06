@@ -7,14 +7,18 @@
  */
 
 #include "natronnodegraphview.h"
+#include "natronselecttooldialog.h"
 #include <QPainter>
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QGraphicsSceneMouseEvent>
 #include <QScrollBar>
 #include <QtMath>
 #include <cmath>
+#include <KLocalizedString>
 
 // ── Natron Category Colors (Matching Natron Engine/Settings.cpp & NodeGui.cpp) ──
 static const QColor COLOR_READER     = QColor(204, 153, 51);  // Gold (#cc9933)
@@ -721,6 +725,13 @@ void NatronNodeGraphView::mouseReleaseEvent(QMouseEvent *event)
 
 void NatronNodeGraphView::keyPressEvent(QKeyEvent *event)
 {
+    // DaVinci Resolve & Natron quick tool selector: Shift+Space or Tab
+    if ((event->key() == Qt::Key_Space && (event->modifiers() & Qt::ShiftModifier)) || event->key() == Qt::Key_Tab) {
+        openSelectToolDialog();
+        event->accept();
+        return;
+    }
+
     // Natron 'D' key shortcut to toggle disable/bypass on selected nodes
     if (event->key() == Qt::Key_D) {
         const auto selected = m_scene->selectedItems();
@@ -741,6 +752,164 @@ void NatronNodeGraphView::keyPressEvent(QKeyEvent *event)
     }
 
     QGraphicsView::keyPressEvent(event);
+}
+
+void NatronNodeGraphView::contextMenuEvent(QContextMenuEvent *event)
+{
+    QMenu menu(this);
+    menu.setStyleSheet(QStringLiteral(
+        "QMenu { background-color: #1e1e24; color: #ffffff; border: 1px solid #3c404d; padding: 4px; }"
+        "QMenu::item { padding: 6px 24px 6px 20px; border-radius: 3px; }"
+        "QMenu::item:selected { background-color: #3b3f4f; color: #ffffff; }"
+        "QMenu::separator { height: 1px; background: #32353e; margin: 4px 0px; }"
+    ));
+
+    auto *actSelectTool = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-select")), i18n("Select Tool / Node... (Shift+Space / Tab)"));
+    menu.addSeparator();
+
+    auto *quickMenu = menu.addMenu(QIcon::fromTheme(QStringLiteral("list-add")), i18n("Quick Insert Node"));
+    auto *actMagicMask = quickMenu->addAction(i18n("Magic Mask (MagM)"));
+    auto *actMerge     = quickMenu->addAction(i18n("Merge (Mrg)"));
+    auto *actGrade     = quickMenu->addAction(i18n("Color Grade / CC (Grd)"));
+    auto *actBlur      = quickMenu->addAction(i18n("Blur / Defocus (Blr)"));
+    auto *actKeyer     = quickMenu->addAction(i18n("Chroma Keyer (Key)"));
+    auto *actTracker   = quickMenu->addAction(i18n("Tracker / Match-Move (Trk)"));
+    auto *actRoto      = quickMenu->addAction(i18n("Roto / Matte (Roto)"));
+    auto *actTransform = quickMenu->addAction(i18n("Transform (Xf)"));
+
+    menu.addSeparator();
+    auto *actFit = menu.addAction(QIcon::fromTheme(QStringLiteral("zoom-fit-best")), i18n("Fit in View (F)"));
+    auto *actDisable = menu.addAction(i18n("Toggle Disable / Bypass (D)"));
+
+    QPointF scenePos = mapToScene(event->pos());
+    QAction *selected = menu.exec(event->globalPos());
+
+    if (selected == actSelectTool) {
+        openSelectToolDialog(scenePos);
+    } else if (selected == actMagicMask) {
+        insertToolNode(QStringLiteral("MagicMask"), QStringLiteral("MagicMask"), NatronNodeItem::NodeCustom, scenePos);
+    } else if (selected == actMerge) {
+        insertToolNode(QStringLiteral("Merge"), QStringLiteral("Merge"), NatronNodeItem::NodeMerge, scenePos);
+    } else if (selected == actGrade) {
+        insertToolNode(QStringLiteral("Grade"), QStringLiteral("Grade"), NatronNodeItem::NodeGrade, scenePos);
+    } else if (selected == actBlur) {
+        insertToolNode(QStringLiteral("Blur"), QStringLiteral("Blur"), NatronNodeItem::NodeBlur, scenePos);
+    } else if (selected == actKeyer) {
+        insertToolNode(QStringLiteral("Keyer"), QStringLiteral("ChromaKeyer"), NatronNodeItem::NodeKeyer, scenePos);
+    } else if (selected == actTracker) {
+        insertToolNode(QStringLiteral("Tracker"), QStringLiteral("Tracker"), NatronNodeItem::NodeTracker, scenePos);
+    } else if (selected == actRoto) {
+        insertToolNode(QStringLiteral("Roto"), QStringLiteral("Roto"), NatronNodeItem::NodeRoto, scenePos);
+    } else if (selected == actTransform) {
+        insertToolNode(QStringLiteral("Transform"), QStringLiteral("Transform"), NatronNodeItem::NodeTransform, scenePos);
+    } else if (selected == actFit) {
+        zoomFit();
+    } else if (selected == actDisable) {
+        const auto selectedItems = m_scene->selectedItems();
+        for (auto *item : selectedItems) {
+            if (auto *node = dynamic_cast<NatronNodeItem *>(item)) {
+                node->toggleDisabled();
+            }
+        }
+    }
+}
+
+void NatronNodeGraphView::openSelectToolDialog(const QPointF &scenePos)
+{
+    NatronToolEntry tool;
+    QPoint globalPos = QCursor::pos();
+    if (NatronSelectToolDialog::selectTool(this, tool, globalPos)) {
+        QPointF insertPos = scenePos;
+        if (insertPos.isNull()) {
+            // If a node is selected, place below it
+            const auto selectedItems = m_scene->selectedItems();
+            if (!selectedItems.isEmpty()) {
+                if (auto *selNode = dynamic_cast<NatronNodeItem *>(selectedItems.first())) {
+                    insertPos = selNode->pos() + QPointF(0, 80);
+                }
+            }
+            if (insertPos.isNull()) {
+                insertPos = mapToScene(viewport()->rect().center());
+            }
+        }
+
+        NatronNodeItem *newNode = insertToolNode(tool.id, tool.name, tool.nodeType, insertPos);
+        if (newNode) {
+            Q_EMIT toolNodeInserted(newNode->nodeId(), tool.id);
+        }
+    }
+}
+
+NatronNodeItem *NatronNodeGraphView::insertToolNode(const QString &toolId, const QString &label, NatronNodeItem::NodeType type, const QPointF &pos)
+{
+    QString uniqueId = QStringLiteral("%1_%2").arg(toolId).arg(m_nodeCounter++);
+    
+    // Check if there is a currently selected node to chain with
+    NatronNodeItem *sourceNode = nullptr;
+    const auto selected = m_scene->selectedItems();
+    for (auto *item : selected) {
+        if (auto *node = dynamic_cast<NatronNodeItem *>(item)) {
+            sourceNode = node;
+            break;
+        }
+    }
+
+    addNode(uniqueId, label, type, pos.isNull() ? mapToScene(viewport()->rect().center()) : pos);
+    auto *node = m_nodes.value(uniqueId);
+    if (!node) return nullptr;
+
+    // Connect automatically if a source node was selected
+    if (sourceNode && sourceNode->nodeType() != NatronNodeItem::NodeWriter) {
+        connectNodes(sourceNode->nodeId(), uniqueId, 0);
+    } else if (!m_nodes.isEmpty()) {
+        // If MediaIn / Read exists and no node is selected, connect from first reader if solitary
+        for (auto it = m_nodes.begin(); it != m_nodes.end(); ++it) {
+            if (it.value()->nodeType() == NatronNodeItem::NodeReader && it.key() != uniqueId) {
+                // Auto chain
+                connectNodes(it.key(), uniqueId, 0);
+                break;
+            }
+        }
+    }
+
+    // Clear previous selection and select the newly added node
+    m_scene->clearSelection();
+    node->setSelected(true);
+
+    return node;
+}
+
+void NatronNodeGraphView::insertNodeBetween(const QString &toolId, const QString &label, NatronNodeItem::NodeType type, const QString &sourceNodeId, const QString &destNodeId)
+{
+    if (!m_nodes.contains(sourceNodeId) || !m_nodes.contains(destNodeId)) return;
+
+    auto *sourceNode = m_nodes[sourceNodeId];
+    auto *destNode = m_nodes[destNodeId];
+
+    QPointF midPos = (sourceNode->pos() + destNode->pos()) / 2.0;
+    QString uniqueId = QStringLiteral("%1_%2").arg(toolId).arg(m_nodeCounter++);
+
+    // Remove old edge between source and dest if exists
+    for (int i = m_edges.size() - 1; i >= 0; --i) {
+        auto *edge = m_edges[i];
+        if (edge->sourceNode() == sourceNode && edge->destNode() == destNode) {
+            m_scene->removeItem(edge);
+            m_edges.removeAt(i);
+            delete edge;
+            break;
+        }
+    }
+
+    addNode(uniqueId, label, type, midPos);
+    connectNodes(sourceNodeId, uniqueId, 0);
+    connectNodes(uniqueId, destNodeId, 0);
+
+    auto *node = m_nodes.value(uniqueId);
+    if (node) {
+        m_scene->clearSelection();
+        node->setSelected(true);
+        Q_EMIT toolNodeInserted(uniqueId, toolId);
+    }
 }
 
 void NatronNodeGraphView::zoomIn()

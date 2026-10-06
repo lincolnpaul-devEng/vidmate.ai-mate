@@ -51,6 +51,8 @@ private:
     void handleInsertClip(const QJsonObject &params);
     void handleAddEffect(const QJsonObject &params);
     void handleRemoveEffect(const QJsonObject &params);
+    void handleRemoveBackground(const QJsonObject &params);
+    void handleInsertNatronTool(const QJsonObject &params);
     void handleAddTrack(const QJsonObject &params);
     void handleAddTransition(const QJsonObject &params);
     void handleAddMix(const QJsonObject &params);

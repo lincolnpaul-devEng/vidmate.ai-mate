@@ -156,9 +156,14 @@ public:
     void zoomOut();
     void zoomFit();
 
+    void openSelectToolDialog(const QPointF &scenePos = QPointF());
+    NatronNodeItem *insertToolNode(const QString &toolId, const QString &label, NatronNodeItem::NodeType type, const QPointF &pos = QPointF());
+    void insertNodeBetween(const QString &toolId, const QString &label, NatronNodeItem::NodeType type, const QString &sourceNodeId, const QString &destNodeId);
+
 Q_SIGNALS:
     void nodeSelected(const QString &nodeId, const QJsonObject &params);
     void nodeDoubleClicked(const QString &nodeId, const QJsonObject &params);
+    void toolNodeInserted(const QString &nodeId, const QString &toolId);
 
 protected:
     void drawBackground(QPainter *painter, const QRectF &rect) override;
@@ -167,6 +172,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
     QGraphicsScene *m_scene{nullptr};
@@ -175,4 +181,5 @@ private:
 
     bool m_panning{false};
     QPoint m_lastPanPos;
+    int m_nodeCounter{1};
 };

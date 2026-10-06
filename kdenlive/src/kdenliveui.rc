@@ -378,6 +378,9 @@
     <Separator/>
     <Action name="audiomixer_button"/>
     <Action name="subtitle_tool"/>
+    <Separator/>
+    <Action name="toggle_natron_timeline"/>
+    <Action name="natron_select_tool"/>
   </ToolBar>
   <ToolBar name="extraToolBar">
     <text>Extra Toolbar</text>

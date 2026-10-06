@@ -1950,10 +1950,7 @@ function getTrackColor(audio, header) {
                         }*/
                         ScrollBar.vertical: ScrollBar {
                             id: vertScroll
-                            parent: scrollView.parent
-                            anchors.top: scrollView.top
-                            anchors.left: scrollView.right
-                            anchors.bottom: scrollView.bottom
+                            policy: ScrollBar.AsNeeded
                         }
                         contentWidth: tracksContainerArea.width
                         contentHeight: tracksContainerArea.height

@@ -168,7 +168,8 @@ void MixerWidget::buildVolumeControls()
     m_volumeSlider->setWhatsThis(xi18nc("@info:whatsthis", "Adjusts the output volume of the audio track (affects all audio clips equally)."));
     m_volumeSlider->setTickPositions(getGainScaleValues());
     m_volumeSlider->setTicksVisible(true);
-    m_volumeSlider->setTickLabelsVisible(true);
+    m_volumeSlider->setTickLabelsVisible(false);
+    m_volumeSlider->setFixedWidth(24);
 
     // Set dB label formatter
     m_volumeSlider->setLabelFormatter([](double v) {
@@ -182,14 +183,20 @@ void MixerWidget::buildVolumeControls()
 
     m_volumeSpin = new StyledDoubleSpinBox(NEUTRAL_VOLUME, this);
     m_volumeSpin->setRange(-50, 24);
-    m_volumeSpin->setFrame(true);
+    m_volumeSpin->setFrame(false);
     m_volumeSpin->setKeyboardTracking(false);
     m_volumeSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    m_volumeSpin->setDecimals(2);
+    m_volumeSpin->setDecimals(1);
+    m_volumeSpin->setSuffix(QStringLiteral(" dB"));
     m_volumeSpin->setAlignment(Qt::AlignCenter);
+    m_volumeSpin->setFixedHeight(20);
+    m_volumeSpin->setMinimumWidth(52);
+    m_volumeSpin->setMaximumWidth(68);
+    m_volumeSpin->setStyleSheet(QStringLiteral("StyledDoubleSpinBox, QDoubleSpinBox { background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 3px; font-weight: bold; color: #90caf9; padding: 1px 2px; font-size: 11px; }"));
 
     m_dbLabel = new QLabel(i18n("dB"), this);
     m_dbLabel->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
+    m_dbLabel->setVisible(false);
 }
 
 void MixerWidget::buildBalanceControls()
@@ -346,13 +353,45 @@ void MixerWidget::setupFilters(Mlt::Tractor *service)
 void MixerWidget::setupLayouts()
 {
     auto *lay = new QVBoxLayout;
-    setContentsMargins(0, 0, 0, 0);
+    setContentsMargins(2, 2, 2, 2);
     lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(2);
+
+    // 1. Top Header: Track Label & numeric dB value display
     lay->addWidget(m_trackLabel);
 
+    auto *volSpinLay = new QHBoxLayout;
+    volSpinLay->setContentsMargins(0, 0, 0, 0);
+    volSpinLay->setSpacing(0);
+    volSpinLay->addStretch();
+    volSpinLay->addWidget(m_volumeSpin);
+    volSpinLay->addStretch();
+    lay->addLayout(volSpinLay);
+
+    // 2. Balance Slider (if stereo)
+    if (m_balanceSlider) {
+        auto *balancelay = new QGridLayout;
+        balancelay->setContentsMargins(2, 0, 2, 0);
+        balancelay->setSpacing(1);
+        balancelay->addWidget(m_balanceSlider, 0, 0, 1, 3);
+        balancelay->addWidget(m_balanceLabelLeft, 1, 0, 1, 1);
+        balancelay->addWidget(m_balanceSpin, 1, 1, 1, 1);
+        balancelay->addWidget(m_balanceLabelRight, 1, 2, 1, 1);
+        lay->addLayout(balancelay);
+    }
+
+    // 3. Middle Body: Volume Fader Slider (left) + Audio Meter & Scale (right)
+    auto *hlay = new QHBoxLayout;
+    hlay->setContentsMargins(2, 0, 2, 0);
+    hlay->setSpacing(2);
+    hlay->addWidget(m_volumeSlider, 0);
+    hlay->addWidget(m_audioMeterWidget.get(), 1);
+    lay->addLayout(hlay, 1);
+
+    // 4. Bottom Controls: Mute, Solo, Monitor, Effects Stack, Collapse
     auto *buttonslay = new QHBoxLayout;
-    buttonslay->setSpacing(0);
-    buttonslay->setContentsMargins(0, 0, 0, 0);
+    buttonslay->setSpacing(1);
+    buttonslay->setContentsMargins(1, 1, 1, 1);
     if (m_collapse) {
         buttonslay->addWidget(m_collapse);
     }
@@ -366,31 +405,6 @@ void MixerWidget::setupLayouts()
     buttonslay->addWidget(m_showEffects);
     lay->addLayout(buttonslay);
 
-    if (m_balanceSlider) {
-        auto *balancelay = new QGridLayout;
-        balancelay->addWidget(m_balanceSlider, 0, 0, 1, 3);
-        balancelay->addWidget(m_balanceLabelLeft, 1, 0, 1, 1);
-        balancelay->addWidget(m_balanceSpin, 1, 1, 1, 1);
-        balancelay->addWidget(m_balanceLabelRight, 1, 2, 1, 1);
-        lay->addLayout(balancelay);
-    }
-
-    auto *hlay = new QHBoxLayout;
-    hlay->setContentsMargins(0, 0, 0, 0);
-    hlay->addWidget(m_audioMeterWidget.get(), 1);
-    hlay->addWidget(m_volumeSlider, 0);
-    hlay->setSpacing(1);
-    lay->addLayout(hlay, 1);
-
-    // Add a horizontal layout for label + spinner, centered
-    auto *volSpinLay = new QHBoxLayout;
-    volSpinLay->setContentsMargins(0, 0, 0, 0);
-    volSpinLay->setSpacing(4);
-    volSpinLay->addStretch();
-    volSpinLay->addWidget(m_volumeSpin);
-    volSpinLay->addWidget(m_dbLabel);
-    volSpinLay->addStretch();
-    lay->addLayout(volSpinLay, 0);
     setLayout(lay);
 }
 
@@ -541,30 +555,29 @@ void MixerWidget::updateTrackLabelStyle()
 {
     QString style;
     bool isDarkTheme = palette().color(QPalette::Window).lightness() < palette().color(QPalette::WindowText).lightness();
-    QColor borderColor = isDarkTheme ? palette().color(QPalette::Light).lighter(120) : palette().color(QPalette::Dark).darker(120);
 
     // Default: neutral background, normal text, underline in text color
     QString bg = QString("background-color: %1;").arg(palette().color(QPalette::Window).name(QColor::HexArgb));
-    QString text = QString("color: %1;").arg(palette().color(QPalette::WindowText).name(QColor::HexArgb));
-    QString underline = QString("border-bottom: 3px solid %1;").arg(palette().color(QPalette::WindowText).name(QColor::HexArgb));
+    QString text = QString("color: %1; font-weight: bold;").arg(palette().color(QPalette::WindowText).name(QColor::HexArgb));
+    QString underline = QString("border-bottom: 2px solid %1;").arg(palette().color(QPalette::WindowText).name(QColor::HexArgb));
 
     QString colorCode;
     if (m_recording) {
-        colorCode = isDarkTheme ? "#c62828" : "#b71c1c"; // Darker red for light theme
+        colorCode = isDarkTheme ? "#ef5350" : "#b71c1c"; // Darker red for light theme
     } else if (m_monitor && m_monitor->isChecked()) {
-        colorCode = isDarkTheme ? "#1976d2" : "#0d47a1"; // Darker blue for light theme
+        colorCode = isDarkTheme ? "#42a5f5" : "#0d47a1"; // Darker blue for light theme
     } else if (m_muteAction->isActive()) {
-        colorCode = isDarkTheme ? "#ef6c00" : "#e65100"; // Darker orange for light theme
+        colorCode = isDarkTheme ? "#ffa726" : "#e65100"; // Darker orange for light theme
     } else if (m_solo && m_solo->isChecked()) {
-        colorCode = isDarkTheme ? "#388e3c" : "#1b5e20"; // Darker green for light theme
+        colorCode = isDarkTheme ? "#66bb6a" : "#1b5e20"; // Darker green for light theme
     }
 
     if (!colorCode.isEmpty()) {
-        text = QString("color: %1;").arg(colorCode);
-        underline = QString("border-bottom: 3px solid %1;").arg(colorCode);
+        text = QString("color: %1; font-weight: bold;").arg(colorCode);
+        underline = QString("border-bottom: 2px solid %1;").arg(colorCode);
     }
 
-    style = QString("%1 %2 padding: 2px; margin: 0; border: 1px solid %3; %4").arg(bg).arg(text).arg(borderColor.name(QColor::HexArgb)).arg(underline);
+    style = QString("%1 %2 padding: 2px 4px; margin: 0; border: none; %3").arg(bg).arg(text).arg(underline);
     m_trackLabel->setStyleSheet(style);
 }
 
@@ -630,11 +643,12 @@ void MixerWidget::updateMonitorState()
             m_balanceSpin->setEnabled(false);
         }
         m_volumeSpin->setRange(0, 100);
+        m_volumeSpin->setSuffix(QStringLiteral(" %"));
         m_dbLabel->setText(QStringLiteral("%"));
         m_volumeSlider->setValueToSliderFunction([](double v) { return static_cast<int>(v * 100.0); });
         std::list<int> tickValues({10, 20, 40, 60, 80, 90});
         m_volumeSlider->setTickPositions(tickValues);
-        m_volumeSlider->setTickLabelsVisible(true);
+        m_volumeSlider->setTickLabelsVisible(false);
         m_volumeSlider->setNeutralPosition(KdenliveSettings::audiocapturevolume() * 100);
         m_volumeSpin->setNeutralPosition(KdenliveSettings::audiocapturevolume());
         m_volumeSpin->setValue(KdenliveSettings::audiocapturevolume());
@@ -646,10 +660,11 @@ void MixerWidget::updateMonitorState()
         }
         int level = m_levelFilter->get_int("level");
         m_volumeSpin->setRange(-100, 60);
+        m_volumeSpin->setSuffix(QStringLiteral(" dB"));
         m_dbLabel->setText(i18n("dB"));
         m_volumeSlider->setValueToSliderFunction([](double dB) { return static_cast<int>(fromDB(dB) * 100.0); });
         m_volumeSlider->setTickPositions(getGainScaleValues());
-        m_volumeSlider->setTickLabelsVisible(true);
+        m_volumeSlider->setTickLabelsVisible(false);
         m_volumeSlider->setNeutralPosition(fromDB(NEUTRAL_VOLUME) * 100);
         m_volumeSpin->setNeutralPosition(NEUTRAL_VOLUME);
         m_volumeSpin->setValue(level);

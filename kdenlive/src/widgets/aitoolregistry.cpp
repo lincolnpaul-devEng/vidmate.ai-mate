@@ -185,6 +185,16 @@ void AIToolRegistry::registerAllTools()
                 makeParams(props, {QStringLiteral("clip_id"), QStringLiteral("effect_index")}));
     }
 
+    // 8b. remove_background — remove background using AI segmentation
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral(
+            "Clip ID to remove background from. If omitted or -1, uses currently selected clip."));
+        addTool(QStringLiteral("remove_background"),
+                QStringLiteral("Remove background from a video or image clip using AI segmentation (SAM2 / auto mask)."),
+                makeParams(props, {}));
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // TRACK MANAGEMENT (ported from Velo manage_timelines)
     // ════════════════════════════════════════════════════════════════════════
@@ -394,6 +404,25 @@ void AIToolRegistry::registerAllTools()
         addTool(QStringLiteral("track_object"),
                 QStringLiteral("Track an object or region in video footage using Natron's Tracker / Match-Move node pipeline. Automatically populates Natron's Node Graph, Curve Editor, and Dope Sheet with keyframes and renders blur privacy, match-move overlay, or rotoscoped matte back to Kdenlive."),
                 makeParams(props, {}),
+                QStringLiteral("natron"));
+    }
+
+    // 17c. insert_natron_tool — insert a Natron VFX compositor node/tool
+    {
+        QJsonObject props;
+        props[QStringLiteral("tool_id")] = enumParam(
+            QStringLiteral("Natron / Fusion Tool identifier."),
+            {QStringLiteral("MagicMask"), QStringLiteral("Merge"), QStringLiteral("Grade"), QStringLiteral("Blur"),
+             QStringLiteral("ChromaKeyer"), QStringLiteral("Tracker"), QStringLiteral("PlanarTracker"), QStringLiteral("Roto"),
+             QStringLiteral("Transform"), QStringLiteral("CornerPin"), QStringLiteral("AIDepthMap"), QStringLiteral("AIRelight"),
+             QStringLiteral("AIFaceRetouch"), QStringLiteral("AIInpaint"), QStringLiteral("AISuperRes"), QStringLiteral("Glow"),
+             QStringLiteral("Defocus"), QStringLiteral("MotionBlur"), QStringLiteral("MosaicBlur"), QStringLiteral("Denoise"),
+             QStringLiteral("ColorCurves"), QStringLiteral("LUTApply"), QStringLiteral("TextPlus"), QStringLiteral("Switch"),
+             QStringLiteral("Dot"), QStringLiteral("Backdrop")});
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID to attach VFX node to. -1 = active timeline clip."));
+        addTool(QStringLiteral("insert_natron_tool"),
+                QStringLiteral("Insert a Natron VFX compositor node/tool (like Magic Mask, Merge, Grade, Blur, Tracker, Roto, ChromaKeyer, AI Depth Map) into the active video clip pipeline."),
+                makeParams(props, {QStringLiteral("tool_id")}),
                 QStringLiteral("natron"));
     }
 

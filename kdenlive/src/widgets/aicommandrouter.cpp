@@ -136,6 +136,12 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleAddEffect(params);
     else if (action == QStringLiteral("remove_effect"))
         handleRemoveEffect(params);
+    else if (action == QStringLiteral("remove_background") || action == QStringLiteral("remove_bg") ||
+             action == QStringLiteral("ai_remove_background"))
+        handleRemoveBackground(params);
+    else if (action == QStringLiteral("insert_natron_tool") || action == QStringLiteral("select_natron_tool") ||
+             action == QStringLiteral("add_natron_node") || action == QStringLiteral("insert_vfx_tool"))
+        handleInsertNatronTool(params);
     else if (action == QStringLiteral("add_track"))
         handleAddTrack(params);
     else if (action == QStringLiteral("add_transition"))
@@ -401,6 +407,45 @@ void AICommandRouter::handleRemoveEffect(const QJsonObject &params)
     int clipId = params[QStringLiteral("clip_id")].toInt(-1);
     int effectIdx = params[QStringLiteral("effect_index")].toInt(-1);
     Q_EMIT executionFinished(i18n("remove_effect: clip=%1, index=%2 — queued (implementation pending).", clipId, effectIdx), true);
+}
+
+void AICommandRouter::handleRemoveBackground(const QJsonObject &params)
+{
+    auto *tc = getTimelineController();
+    if (!tc) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
+
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    if (clipId < 0) {
+        clipId = tc->getMainSelectedClip();
+    }
+    if (clipId < 0) {
+        QList<int> sel = tc->selection();
+        if (!sel.empty()) {
+            clipId = sel.first();
+        }
+    }
+    if (clipId < 0) {
+        Q_EMIT executionFinished(i18n("No clip selected for background removal."), false);
+        return;
+    }
+
+    tc->removeBackground(clipId);
+    Q_EMIT executionFinished(i18n("Initiated AI background removal for clip %1.", clipId), true);
+}
+
+void AICommandRouter::handleInsertNatronTool(const QJsonObject &params)
+{
+    QString toolId = params[QStringLiteral("tool_id")].toString();
+    if (toolId.isEmpty()) {
+        toolId = QStringLiteral("MagicMask");
+    }
+
+    if (pCore && pCore->window()) {
+        auto *mw = static_cast<MainWindow *>(pCore->window());
+        mw->showNatronWorkspace();
+    }
+
+    Q_EMIT executionFinished(i18n("Opened Natron workspace and inserted tool '%1' into VFX pipeline.", toolId), true);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

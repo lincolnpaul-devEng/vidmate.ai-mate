@@ -61,6 +61,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "widgets/aichatwidget.h"
 #include "widgets/natronworkspacewidget.h"
 #include "widgets/veloassetwidget.h"
+#include "widgets/magicmaskwidget.h"
 #include "project/cliptranscode.h"
 #include "project/dialogs/archivewidget.h"
 #include "project/dialogs/guideslist.h"
@@ -391,6 +392,11 @@ void MainWindow::init()
     const QSize stackSize(firstWindowSize.width() * 0.3, 0);
     m_effectStackDock =
         addDock(i18n("Effect/Composition Stack"), QStringLiteral("effect_stack"), m_assetPanel, KDDockWidgets::Location_OnRight, m_timelineDock, stackSize);
+
+    // Inspector — AI Magic Mask & Subject Masking Widget (tabbed with Effect Stack)
+    m_magicMaskWidget = new MagicMaskWidget(this);
+    m_magicMaskDock = addDock(i18n("Inspector — Magic Mask"), QStringLiteral("magic_mask_inspector"), m_magicMaskWidget, KDDockWidgets::Location_None, m_effectStackDock);
+    m_effectStackDock->setAsCurrentTab();
     connect(pCore.get(), &Core::requestShowBinEffectStack, m_assetPanel, &AssetPanel::showEffectStack, Qt::QueuedConnection);
     connect(m_assetPanel, &AssetPanel::doSplitEffect, m_projectMonitor, &Monitor::slotSwitchCompare);
     connect(m_assetPanel, &AssetPanel::doSplitBinEffect, m_clipMonitor, &Monitor::slotSwitchCompare);
@@ -972,6 +978,8 @@ void MainWindow::init()
 void MainWindow::finishUiSetup()
 {
     pCore->restoreLayout();
+    statusBar()->show();
+    statusBar()->setVisible(true);
     Q_EMIT pCore->closeSplash();
     setAutoSaveSettings();
     QObject::disconnect(pCore.get(), &Core::GUISetupDone, this, nullptr);
@@ -1672,6 +1680,8 @@ void MainWindow::setupActions()
     toolbar->setIconSize(QSize(small, small));
     toolbar->layout()->setContentsMargins(0, 0, 0, 0);
     statusBar()->setContentsMargins(0, 0, 0, 0);
+    statusBar()->show();
+    statusBar()->setVisible(true);
 
     addAction(QStringLiteral("normal_mode"), m_normalEditTool);
     addAction(QStringLiteral("overwrite_mode"), m_overwriteEditTool);
@@ -2075,6 +2085,24 @@ void MainWindow::setupActions()
     duplicateClip->setData('C');
     duplicateClip->setEnabled(false);
 
+    QAction *removeBgAction = addAction(QStringLiteral("ai_remove_background"), i18n("AI Background Removal"), this, SLOT(slotRemoveBackground()),
+                                        QIcon::fromTheme(QStringLiteral("view-preview")), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_B), clipActionCategory);
+    removeBgAction->setData('C');
+    removeBgAction->setEnabled(false);
+    removeBgAction->setWhatsThis(xi18nc("@info:whatsthis", "Removes background from selected image or video clip using AI segmentation."));
+
+    QAction *selectToolAction = addAction(QStringLiteral("natron_select_tool"), i18n("Select VFX Tool / Node..."), this, SLOT(slotSelectNatronTool()),
+                                          QIcon::fromTheme(QStringLiteral("edit-select")), QKeySequence(Qt::SHIFT | Qt::Key_Space), clipActionCategory);
+    selectToolAction->setData('C');
+    selectToolAction->setEnabled(true);
+    selectToolAction->setWhatsThis(xi18nc("@info:whatsthis", "Opens the Natron / Fusion tool selection palette to insert any VFX compositor node or effect."));
+
+    QAction *toggleVfxAction = addAction(QStringLiteral("toggle_natron_timeline"), i18n("Toggle Timeline / Natron VFX Workspace"), this, SLOT(slotToggleNatronTimeline()),
+                                         QIcon::fromTheme(QStringLiteral("view-split-left-right")), QKeySequence(Qt::Key_F10), clipActionCategory);
+    toggleVfxAction->setData('C');
+    toggleVfxAction->setEnabled(true);
+    toggleVfxAction->setWhatsThis(xi18nc("@info:whatsthis", "Switches between Kdenlive multi-track timeline and Natron VFX Node Graph workspace."));
+
     addAction(QStringLiteral("cut_timeline_clip"), i18n("Cut Clip"), this, SLOT(slotCutTimelineClip()), QIcon::fromTheme(QStringLiteral("edit-cut")),
               Qt::SHIFT | Qt::Key_R);
 
@@ -2278,6 +2306,7 @@ void MainWindow::setupActions()
     KStandardAction::keyBindings(this, &MainWindow::slotEditKeys, actionCollection());
     KStandardAction::preferences(this, &MainWindow::slotPreferences, actionCollection());
     KStandardAction::configureNotifications(this, &MainWindow::configureNotifications, actionCollection());
+    KStandardAction::showStatusbar(this, &MainWindow::slotShowStatusBar, actionCollection());
     KStandardAction::fullScreen(this, &MainWindow::slotFullScreen, this, actionCollection());
 
     // cppcheck-suppress legacyUninitvar
@@ -3140,6 +3169,34 @@ void MainWindow::showNatronWorkspace()
     }
 }
 
+void MainWindow::slotSelectNatronTool()
+{
+    showNatronWorkspace();
+    if (m_natronWorkspaceWidget) {
+        m_natronWorkspaceWidget->slotAddNodeTriggered();
+    }
+}
+
+void MainWindow::slotToggleNatronTimeline()
+{
+    if (m_natronWorkspaceDock && m_timelineDock) {
+        if (m_natronWorkspaceDock->isVisible() && m_natronWorkspaceDock->asDockWidgetController()->isCurrentTab()) {
+            m_timelineDock->open();
+            m_timelineDock->setAsCurrentTab();
+            m_timelineDock->raise();
+        } else {
+            m_natronWorkspaceDock->open();
+            m_natronWorkspaceDock->setAsCurrentTab();
+            m_natronWorkspaceDock->raise();
+        }
+    }
+}
+
+void MainWindow::slotShowStatusBar(bool show)
+{
+    statusBar()->setVisible(show);
+}
+
 void MainWindow::slotAddClipMarker()
 {
     std::shared_ptr<ProjectClip> clip(nullptr);
@@ -3478,6 +3535,41 @@ void MainWindow::slotDeleteAllGuides()
 void MainWindow::slotDuplicateTimelineClip()
 {
     getCurrentTimeline()->controller()->duplicateClip();
+}
+
+void MainWindow::slotRemoveBackground()
+{
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) {
+        return;
+    }
+    int clipId = getCurrentTimeline()->controller()->getMainSelectedClip();
+    if (clipId == -1) {
+        QList<int> selected = getCurrentTimeline()->controller()->selection();
+        if (!selected.empty()) {
+            clipId = selected.first();
+        }
+    }
+    if (clipId == -1) {
+        pCore->displayMessage(i18n("No clip selected for AI background removal"), ErrorMessage, 500);
+        return;
+    }
+    int trackId = getCurrentTimeline()->model()->getItemTrackId(clipId);
+    if (trackId > -1 && getCurrentTimeline()->model()->isAudioTrack(trackId)) {
+        pCore->displayMessage(i18n("Cannot remove background from an audio track"), ErrorMessage, 500);
+        return;
+    }
+    getCurrentTimeline()->controller()->showAsset(clipId);
+    if (m_magicMaskWidget) {
+        m_magicMaskWidget->setOwner(ObjectId(KdenliveObjectType::TimelineClip, clipId));
+        if (m_magicMaskDock) {
+            m_magicMaskDock->show();
+            m_magicMaskDock->raise();
+            m_magicMaskDock->setAsCurrentTab();
+        }
+    }
+    if (m_assetPanel) {
+        m_assetPanel->launchObjectMask();
+    }
 }
 
 void MainWindow::slotCutTimelineClip()

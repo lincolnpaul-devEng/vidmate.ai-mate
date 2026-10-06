@@ -955,6 +955,30 @@ void TimelineController::duplicateClip()
     }
 }
 
+void TimelineController::removeBackground(int clipId)
+{
+    if (clipId == -1) {
+        clipId = getMainSelectedClip();
+    }
+    if (clipId == -1) {
+        std::unordered_set<int> selectedIds = m_model->getCurrentSelection();
+        if (!selectedIds.empty()) {
+            clipId = *selectedIds.begin();
+        }
+    }
+    if (clipId == -1 || !m_model->isClip(clipId)) {
+        pCore->displayMessage(i18n("No clip selected for AI background removal"), ErrorMessage, 500);
+        return;
+    }
+    int trackId = m_model->getItemTrackId(clipId);
+    if (trackId > -1 && m_model->isAudioTrack(trackId)) {
+        pCore->displayMessage(i18n("Cannot remove background from an audio track"), ErrorMessage, 500);
+        return;
+    }
+    showAsset(clipId);
+    pCore->window()->slotRemoveBackground();
+}
+
 std::pair<int, QString> TimelineController::getCopyItemData()
 {
     std::unordered_set<int> selectedIds = m_model->getCurrentSelection();
