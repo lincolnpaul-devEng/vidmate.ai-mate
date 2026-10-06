@@ -15,7 +15,20 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include "natronnodegraphview.h"
+enum class NatronNodeType {
+    Reader,
+    Writer,
+    Merge,
+    Keyer,
+    Roto,
+    Grade,
+    Blur,
+    Transform,
+    Tracker,
+    Dot,
+    Backdrop,
+    Custom
+};
 
 struct NatronToolEntry {
     QString id;
@@ -23,7 +36,7 @@ struct NatronToolEntry {
     QString abbreviation;
     QString category;
     QString description;
-    NatronNodeItem::NodeType nodeType;
+    NatronNodeType nodeType{NatronNodeType::Custom};
     QString iconName;
 };
 

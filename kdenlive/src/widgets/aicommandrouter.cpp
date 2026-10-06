@@ -17,6 +17,7 @@
 #include "doc/kdenlivedoc.h"
 #include "doc/docundostack.hpp"
 #include "monitor/monitor.h"
+#include "monitor/monitorproxy.h"
 #include "mainwindow.h"
 #include "natronworkspacewidget.h"
 #include "natronscriptgenerator.h"
@@ -36,6 +37,7 @@
 #include <QStandardPaths>
 #include <QBuffer>
 #include <QImage>
+#include <QPainter>
 #include <QAction>
 #include <QDateTime>
 #include <QJsonDocument>
@@ -105,6 +107,8 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
 
     // Start atomic undo macro for mutating timeline edits
     bool isMutating = (action != QStringLiteral("view_timeline_frames") &&
+                       action != QStringLiteral("verify_edit_visually") &&
+                       action != QStringLiteral("visual_verify") &&
                        action != QStringLiteral("get_timeline_state") &&
                        action != QStringLiteral("probe_quality") &&
                        action != QStringLiteral("seek_to") &&
@@ -166,6 +170,9 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleInsertTitle(params);
     else if (action == QStringLiteral("view_timeline_frames"))
         handleViewTimelineFrames(params);
+    else if (action == QStringLiteral("verify_edit_visually") || action == QStringLiteral("visual_verify") ||
+             action == QStringLiteral("verify_visual"))
+        handleVerifyEditVisually(params);
     else if (action == QStringLiteral("get_timeline_state"))
         handleGetTimelineState(params);
     else if (action == QStringLiteral("probe_quality"))
@@ -729,17 +736,101 @@ void AICommandRouter::handleInsertTitle(const QJsonObject &params)
 // VERIFICATION & INSPECTION TOOLS
 // ════════════════════════════════════════════════════════════════════════════
 
+static QJsonObject analyzeImageMetrics(const QImage &img)
+{
+    QJsonObject m;
+    if (img.isNull()) {
+        m[QStringLiteral("valid")] = false;
+        return m;
+    }
+
+    m[QStringLiteral("valid")] = true;
+    m[QStringLiteral("width")] = img.width();
+    m[QStringLiteral("height")] = img.height();
+    m[QStringLiteral("aspect_ratio")] = QStringLiteral("%1:%2").arg(img.width()).arg(img.height());
+
+    qint64 totalLum = 0;
+    int sampleCount = 0;
+    int stepX = qMax(1, img.width() / 64);
+    int stepY = qMax(1, img.height() / 64);
+    int blackPixels = 0;
+    int whitePixels = 0;
+    bool hasAlpha = img.hasAlphaChannel();
+    int semiAlphaPixels = 0;
+
+    for (int y = 0; y < img.height(); y += stepY) {
+        for (int x = 0; x < img.width(); x += stepX) {
+            QRgb p = img.pixel(x, y);
+            int r = qRed(p);
+            int g = qGreen(p);
+            int b = qBlue(p);
+            int lum = int(0.299 * r + 0.587 * g + 0.114 * b);
+            totalLum += lum;
+            sampleCount++;
+
+            if (lum < 5) blackPixels++;
+            if (lum > 250) whitePixels++;
+
+            if (hasAlpha) {
+                int a = qAlpha(p);
+                if (a > 5 && a < 250) semiAlphaPixels++;
+            }
+        }
+    }
+
+    double avgLum = sampleCount > 0 ? (double(totalLum) / sampleCount) : 0.0;
+    double blackRatio = sampleCount > 0 ? (double(blackPixels) / sampleCount) : 0.0;
+    double whiteRatio = sampleCount > 0 ? (double(whitePixels) / sampleCount) : 0.0;
+
+    m[QStringLiteral("avg_luminance")] = avgLum;
+    m[QStringLiteral("avg_brightness_percent")] = qRound(avgLum * 100.0 / 255.0);
+    m[QStringLiteral("is_black_frame")] = (blackRatio > 0.95 || avgLum < 2.0);
+    m[QStringLiteral("is_overexposed")] = (whiteRatio > 0.40 || avgLum > 245.0);
+    m[QStringLiteral("has_alpha")] = hasAlpha;
+    m[QStringLiteral("has_soft_matte_edges")] = (semiAlphaPixels > 0);
+
+    return m;
+}
+
+static QString encodeImageToBase64Jpeg(const QImage &img, int quality = 85)
+{
+    if (img.isNull()) return QString();
+    QByteArray ba;
+    QBuffer buf(&ba);
+    buf.open(QIODevice::WriteOnly);
+    img.save(&buf, "JPEG", quality);
+    return QString::fromLatin1(ba.toBase64());
+}
+
 void AICommandRouter::handleViewTimelineFrames(const QJsonObject &params)
 {
     int frame = params[QStringLiteral("frame")].toInt(-1);
     int count = qBound(1, params[QStringLiteral("count")].toInt(1), 5);
-    Q_UNUSED(count) // TODO: multi-frame capture (evenly-spaced across timeline)
+    QJsonArray targetFrames = params[QStringLiteral("frames")].toArray();
 
-    if (frame == -1) {
+    if (frame == -1 && targetFrames.isEmpty()) {
         frame = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
     }
 
-    // Extract frame using Monitor's extractFrame — saves to temp path
+    QVector<int> framesToCapture;
+    if (!targetFrames.isEmpty()) {
+        for (const auto &val : targetFrames) {
+            framesToCapture.append(val.toInt());
+        }
+    } else if (count > 1) {
+        int duration = 0;
+        if (auto tm = getTimelineModel()) {
+            duration = tm->duration();
+        }
+        if (duration <= 0) duration = 180;
+        int step = qMax(1, duration / count);
+        for (int i = 0; i < count; ++i) {
+            framesToCapture.append(qMin(duration - 1, i * step));
+        }
+    } else {
+        framesToCapture.append(frame);
+    }
+
     Monitor *projMon = static_cast<Monitor *>(pCore->getMonitor(Kdenlive::ProjectMonitor));
     if (!projMon) {
         Q_EMIT executionFinished(i18n("Project monitor not available."), false);
@@ -747,18 +838,179 @@ void AICommandRouter::handleViewTimelineFrames(const QJsonObject &params)
     }
 
     QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    QString framePath = QStringLiteral("%1/ai_frame_%2.png").arg(tmpDir).arg(frame);
+    QJsonArray capturedArray;
+    QString primaryPath;
+    QString primaryBase64;
+    QJsonObject primaryMetrics;
 
-    // Seek to the frame first
-    pCore->seekMonitor(Kdenlive::ProjectMonitor, frame);
-    projMon->extractFrame(framePath);
+    for (int f : framesToCapture) {
+        QString framePath = QStringLiteral("%1/ai_frame_%2.png").arg(tmpDir).arg(f);
+        pCore->seekMonitor(Kdenlive::ProjectMonitor, f);
+        projMon->extractFrame(framePath);
+
+        QImage img(framePath);
+        if (img.isNull() && projMon->getControllerProxy()) {
+            img = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
+            if (!img.isNull()) {
+                img.save(framePath);
+            }
+        }
+
+        QJsonObject fObj;
+        fObj[QStringLiteral("frame")] = f;
+        fObj[QStringLiteral("path")] = framePath;
+        QJsonObject metrics = analyzeImageMetrics(img);
+        fObj[QStringLiteral("metrics")] = metrics;
+        QString b64 = encodeImageToBase64Jpeg(img);
+        fObj[QStringLiteral("image_base64")] = b64;
+
+        if (primaryPath.isEmpty()) {
+            primaryPath = framePath;
+            primaryBase64 = b64;
+            primaryMetrics = metrics;
+        }
+
+        capturedArray.append(fObj);
+    }
 
     QJsonObject frameData;
-    frameData[QStringLiteral("frame")] = frame;
-    frameData[QStringLiteral("path")] = framePath;
+    frameData[QStringLiteral("frame")] = framesToCapture.isEmpty() ? frame : framesToCapture.first();
+    frameData[QStringLiteral("path")] = primaryPath;
+    frameData[QStringLiteral("image_base64")] = primaryBase64;
+    frameData[QStringLiteral("metrics")] = primaryMetrics;
+    frameData[QStringLiteral("frames")] = capturedArray;
 
     Q_EMIT dataOutput(QStringLiteral("view_timeline_frames"), frameData);
-    Q_EMIT executionFinished(i18n("Captured frame %1 → %2.", frame, framePath), true);
+    Q_EMIT executionFinished(i18n("Visual frame snapshot captured (%1 frame(s)) → %2.", capturedArray.size(), primaryPath), true);
+}
+
+void AICommandRouter::handleVerifyEditVisually(const QJsonObject &params)
+{
+    QString editType = params[QStringLiteral("edit_type")].toString(QStringLiteral("general"));
+    int frame = params[QStringLiteral("frame")].toInt(-1);
+    int refFrame = params[QStringLiteral("reference_frame")].toInt(-1);
+    QString comparisonMode = params[QStringLiteral("comparison_mode")].toString(QStringLiteral("post_only"));
+
+    if (frame == -1) {
+        frame = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
+    }
+
+    Monitor *projMon = static_cast<Monitor *>(pCore->getMonitor(Kdenlive::ProjectMonitor));
+    if (!projMon) {
+        Q_EMIT executionFinished(i18n("Project monitor not available for visual verification."), false);
+        return;
+    }
+
+    QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    QString currentFramePath = QStringLiteral("%1/verify_current_%2.png").arg(tmpDir).arg(frame);
+
+    // 1. Capture current edited frame
+    pCore->seekMonitor(Kdenlive::ProjectMonitor, frame);
+    projMon->extractFrame(currentFramePath);
+    QImage currentImg(currentFramePath);
+    if (currentImg.isNull() && projMon->getControllerProxy()) {
+        currentImg = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
+        if (!currentImg.isNull()) currentImg.save(currentFramePath);
+    }
+
+    QJsonObject currentMetrics = analyzeImageMetrics(currentImg);
+
+    // 2. Capture reference frame if provided
+    QImage refImg;
+    QString refFramePath;
+    if (refFrame >= 0) {
+        refFramePath = QStringLiteral("%1/verify_ref_%2.png").arg(tmpDir).arg(refFrame);
+        pCore->seekMonitor(Kdenlive::ProjectMonitor, refFrame);
+        projMon->extractFrame(refFramePath);
+        refImg = QImage(refFramePath);
+        if (refImg.isNull() && projMon->getControllerProxy()) {
+            refImg = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
+            if (!refImg.isNull()) refImg.save(refFramePath);
+        }
+        // Return playhead to original verification frame
+        pCore->seekMonitor(Kdenlive::ProjectMonitor, frame);
+    }
+
+    // 3. Generate side-by-side or difference map if requested
+    QString combinedPath;
+    QString combinedBase64;
+    if (!refImg.isNull() && !currentImg.isNull() && (comparisonMode == QStringLiteral("side_by_side") || comparisonMode == QStringLiteral("diff_map"))) {
+        int w = currentImg.width();
+        int h = currentImg.height();
+        QImage refScaled = refImg.scaled(w, h, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+
+        if (comparisonMode == QStringLiteral("diff_map")) {
+            QImage diffImg(w, h, QImage::Format_RGB32);
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    QRgb p1 = currentImg.pixel(x, y);
+                    QRgb p2 = refScaled.pixel(x, y);
+                    int dr = qAbs(qRed(p1) - qRed(p2));
+                    int dg = qAbs(qGreen(p1) - qGreen(p2));
+                    int db = qAbs(qBlue(p1) - qBlue(p2));
+                    int diff = qMax(dr, qMax(dg, db));
+                    diffImg.setPixel(x, y, qRgb(qMin(255, diff * 3), qMin(255, dr * 2), qMin(255, db * 2)));
+                }
+            }
+            combinedPath = QStringLiteral("%1/verify_diff_%2.png").arg(tmpDir).arg(frame);
+            diffImg.save(combinedPath);
+            combinedBase64 = encodeImageToBase64Jpeg(diffImg);
+        } else {
+            QImage sideBySide(w * 2 + 10, h, QImage::Format_RGB32);
+            sideBySide.fill(QColor(18, 18, 22));
+            QPainter p(&sideBySide);
+            p.drawImage(0, 0, refScaled);
+            p.drawImage(w + 10, 0, currentImg);
+            p.setPen(QColor(255, 220, 0));
+            p.setFont(QFont(QStringLiteral("Sans"), 12, QFont::Bold));
+            p.drawText(10, 24, QStringLiteral("Reference (Frame %1)").arg(refFrame));
+            p.drawText(w + 20, 24, QStringLiteral("Current Edit (Frame %1)").arg(frame));
+            p.end();
+
+            combinedPath = QStringLiteral("%1/verify_sbs_%2.png").arg(tmpDir).arg(frame);
+            sideBySide.save(combinedPath);
+            combinedBase64 = encodeImageToBase64Jpeg(sideBySide);
+        }
+    }
+
+    // 4. Evaluate Heuristics
+    QStringList issues;
+    QString status = QStringLiteral("passed");
+
+    if (currentMetrics[QStringLiteral("is_black_frame")].toBool()) {
+        issues << QStringLiteral("Black frame detected: Render produced an empty/black image.");
+        status = QStringLiteral("warning");
+    }
+    if (currentMetrics[QStringLiteral("is_overexposed")].toBool()) {
+        issues << QStringLiteral("Overexposure detected: Highlights exceed 95% threshold.");
+        status = QStringLiteral("warning");
+    }
+
+    if (editType == QStringLiteral("rotoscope") || editType == QStringLiteral("background_removal")) {
+        if (!currentMetrics[QStringLiteral("has_alpha")].toBool() && !currentMetrics[QStringLiteral("has_soft_matte_edges")].toBool()) {
+            issues << QStringLiteral("Matte edge warning: Alpha transition is sharp or opaque.");
+        }
+    }
+
+    QJsonObject verifyResult;
+    verifyResult[QStringLiteral("edit_type")] = editType;
+    verifyResult[QStringLiteral("frame")] = frame;
+    verifyResult[QStringLiteral("reference_frame")] = refFrame;
+    verifyResult[QStringLiteral("status")] = status;
+    verifyResult[QStringLiteral("issues")] = QJsonArray::fromStringList(issues);
+    verifyResult[QStringLiteral("metrics")] = currentMetrics;
+    verifyResult[QStringLiteral("path")] = currentFramePath;
+    verifyResult[QStringLiteral("image_base64")] = encodeImageToBase64Jpeg(currentImg);
+    if (!combinedPath.isEmpty()) {
+        verifyResult[QStringLiteral("comparison_path")] = combinedPath;
+        verifyResult[QStringLiteral("comparison_base64")] = combinedBase64;
+    }
+
+    Q_EMIT dataOutput(QStringLiteral("verify_edit_visually"), verifyResult);
+    QString summaryMsg = i18n("Visual verification complete for '%1' at frame %2. Status: %3%4",
+                              editType, frame, status.toUpper(),
+                              issues.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(issues.join(QStringLiteral("; "))));
+    Q_EMIT executionFinished(summaryMsg, status == QStringLiteral("passed") || status == QStringLiteral("warning"));
 }
 
 void AICommandRouter::handleGetTimelineState(const QJsonObject &params)

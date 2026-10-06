@@ -64,6 +64,7 @@ private:
     void handleEditSubtitle(const QJsonObject &params);
     void handleInsertTitle(const QJsonObject &params);
     void handleViewTimelineFrames(const QJsonObject &params);
+    void handleVerifyEditVisually(const QJsonObject &params);
     void handleGetTimelineState(const QJsonObject &params);
     void handleProbeQuality(const QJsonObject &params);
     void handleSeekTo(const QJsonObject &params);

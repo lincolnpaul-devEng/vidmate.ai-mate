@@ -19,7 +19,10 @@
 #include "aidispatcher.h"
 #include "aicommandrouter.h"
 #include "authmanager.h"
+#include "core.h"
 #include <QTabWidget>
+#include <QDesktopServices>
+#include <QUrl>
 
 #include <cmath>
 
@@ -292,8 +295,19 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
 
     // ── Message Stream (Flat, borderless, dark) ─────────────────────────────
     m_messageStream = new QTextBrowser(page);
-    m_messageStream->setOpenExternalLinks(true);
+    m_messageStream->setOpenExternalLinks(false);
+    m_messageStream->setOpenLinks(false);
     m_messageStream->setReadOnly(true);
+    connect(m_messageStream, &QTextBrowser::anchorClicked, this, [](const QUrl &url) {
+        if (url.scheme() == QStringLiteral("seek")) {
+            int frame = url.path().toInt();
+            if (frame >= 0 && pCore) {
+                pCore->seekMonitor(Kdenlive::ProjectMonitor, frame);
+            }
+        } else {
+            QDesktopServices::openUrl(url);
+        }
+    });
     m_messageStream->setStyleSheet(QStringLiteral(
         "QTextBrowser {"
         "  background-color: #1e1e1e;"
@@ -1730,6 +1744,42 @@ void AIChatWidget::slotToolDataOutput(const QString &toolName, const QJsonObject
     if (toolName == QStringLiteral("detect_scenes")) {
         int sceneCount = data[QStringLiteral("scene_count")].toInt(0);
         appendToolExecution(toolName, i18n("%1 scene cuts identified", sceneCount), true);
+    } else if (toolName == QStringLiteral("view_timeline_frames") || toolName == QStringLiteral("verify_edit_visually")) {
+        int frame = data[QStringLiteral("frame")].toInt(-1);
+        QString imgPath = data[QStringLiteral("path")].toString();
+        QString compPath = data[QStringLiteral("comparison_path")].toString();
+        QString displayPath = !compPath.isEmpty() ? compPath : imgPath;
+        QJsonObject metrics = data[QStringLiteral("metrics")].toObject();
+        QString status = data[QStringLiteral("status")].toString(QStringLiteral("passed"));
+        int lum = metrics[QStringLiteral("avg_brightness_percent")].toInt(50);
+        int w = metrics[QStringLiteral("width")].toInt(1920);
+        int h = metrics[QStringLiteral("height")].toInt(1080);
+        bool isBlack = metrics[QStringLiteral("is_black_frame")].toBool();
+        bool isOverexposed = metrics[QStringLiteral("is_overexposed")].toBool();
+
+        QString statusColor = (status == QStringLiteral("passed")) ? QStringLiteral("#4ec9b0") : QStringLiteral("#e5c07b");
+        if (isBlack) statusColor = QStringLiteral("#e06c75");
+
+        QString statusText = isBlack ? QStringLiteral("⚠️ BLACK FRAME") :
+                             (isOverexposed ? QStringLiteral("⚠️ OVEREXPOSED") :
+                             (status == QStringLiteral("passed") ? QStringLiteral("✅ VISUALLY VERIFIED") : QStringLiteral("⚠️ CHECK REQUIRED")));
+
+        QString html = QStringLiteral(
+            "<div style='margin: 8px 0; padding: 8px 10px; background: #222228; border-radius: 4px; border: 1px solid #383842;'>"
+            "  <div style='display: flex; justify-content: space-between; margin-bottom: 6px;'>"
+            "    <span style='color: #9cdcfe; font-weight: bold; font-size: 11.5px;'>🔍 Visual Inspection Snapshot (Frame #%1)</span>"
+            "    <span style='color: %2; font-weight: bold; font-size: 10.5px; margin-left: 8px;'>%3</span>"
+            "  </div>"
+            "  <div style='margin: 5px 0; text-align: center;'>"
+            "    <a href='seek:%1'><img src='%4' width='280' style='border-radius: 3px; border: 1px solid #4a4a55; max-width: 100%;'/></a>"
+            "  </div>"
+            "  <div style='font-size: 10.5px; color: #888899; margin-top: 4px;'>"
+            "    Resolution: %5x%6 &middot; Brightness: %7% &middot; <a href='seek:%1' style='color: #3daee9; text-decoration: none; font-weight: 600;'>[Seek Playhead to Frame #%1]</a>"
+            "  </div>"
+            "</div>"
+        ).arg(QString::number(frame), statusColor, statusText, displayPath, QString::number(w), QString::number(h), QString::number(lum));
+
+        m_messageStream->append(html);
     }
 }
 

@@ -22,9 +22,7 @@ set(kdenlive_SRCS
   widgets/aicommandrouter.cpp
   widgets/aitoolregistry.cpp
   widgets/natronscriptgenerator.cpp
-  widgets/natronnodegraphview.cpp
-  widgets/natroncurveeditorview.cpp
-  widgets/natrondopesheetview.cpp
+  widgets/natronguihostwidget.cpp
   widgets/natronworkspacewidget.cpp
   widgets/natronselecttooldialog.cpp
   widgets/veloassetwidget.cpp

@@ -760,8 +760,8 @@ void MagicMaskWidget::slotRunRvmHumanMatting()
         pythonExe = QStringLiteral("python3");
     }
 
-    QString scriptPath = QDir(KdenliveSettings::scriptFolder()).filePath(QStringLiteral("automask/rvm_human_matting.py"));
-    if (!QFile::exists(scriptPath)) {
+    QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/automask/rvm_human_matting.py"));
+    if (scriptPath.isEmpty() || !QFile::exists(scriptPath)) {
         scriptPath = QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/automask/rvm_human_matting.py");
     }
 

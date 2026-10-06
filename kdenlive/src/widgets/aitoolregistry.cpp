@@ -443,6 +443,25 @@ void AIToolRegistry::registerAllTools()
                 makeParams(props, {}));
     }
 
+    // 18b. verify_edit_visually — specialized visual edit validation
+    {
+        QJsonObject props;
+        props[QStringLiteral("edit_type")] = enumParam(
+            QStringLiteral("Type of edit being visually verified."),
+            {QStringLiteral("rotoscope"), QStringLiteral("background_removal"),
+             QStringLiteral("color_grade"), QStringLiteral("title_layout"),
+             QStringLiteral("cut_continuity"), QStringLiteral("vfx_composite"),
+             QStringLiteral("general")});
+        props[QStringLiteral("frame")] = intParam(QStringLiteral("Target frame number to visually verify (-1 = current playhead)."));
+        props[QStringLiteral("reference_frame")] = intParam(QStringLiteral("Optional baseline/reference frame to compare against (-1 = none)."));
+        props[QStringLiteral("comparison_mode")] = enumParam(
+            QStringLiteral("Visual comparison mode."),
+            {QStringLiteral("post_only"), QStringLiteral("side_by_side"), QStringLiteral("diff_map")});
+        addTool(QStringLiteral("verify_edit_visually"),
+                QStringLiteral("Perform visual AI verification of an edit: captures high-res frame, analyzes luminance/alpha/black frames, generates side-by-side or diff heatmap against reference, and returns multimodal base64 payload for vision model evaluation."),
+                makeParams(props, {}));
+    }
+
     // 19. get_timeline_state — query full timeline state
     {
         QJsonObject props;

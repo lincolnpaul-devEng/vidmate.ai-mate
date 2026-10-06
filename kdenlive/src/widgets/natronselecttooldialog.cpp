@@ -111,69 +111,69 @@ void NatronSelectToolDialog::initToolRegistry()
 {
     m_toolRegistry = {
         // AI & Segmentation
-        {QStringLiteral("MagicMask"), i18n("Magic Mask"), QStringLiteral("MagM"), i18n("AI"), i18n("AI Subject & Object segmentation mask"), NatronNodeItem::NodeCustom, QStringLiteral("edit-select")},
-        {QStringLiteral("AIDepthMap"), i18n("AI Depth Map"), QStringLiteral("Dpth"), i18n("AI"), i18n("Monocular AI depth map estimation"), NatronNodeItem::NodeCustom, QStringLiteral("view-split-left-right")},
-        {QStringLiteral("AIRelight"), i18n("AI Relight"), QStringLiteral("RLgt"), i18n("AI"), i18n("Neural 3D point and directional relighting"), NatronNodeItem::NodeCustom, QStringLiteral("light-bulb")},
-        {QStringLiteral("AIFaceRetouch"), i18n("AI Face Retouch"), QStringLiteral("Face"), i18n("AI"), i18n("Neural skin smoothing and facial enhancement"), NatronNodeItem::NodeCustom, QStringLiteral("user")},
-        {QStringLiteral("AIInpaint"), i18n("AI Inpaint / Clean"), QStringLiteral("Inp"), i18n("AI"), i18n("Neural background fill and wire removal"), NatronNodeItem::NodeCustom, QStringLiteral("edit-clear")},
-        {QStringLiteral("AISuperRes"), i18n("AI Super Resolution"), QStringLiteral("UpSc"), i18n("AI"), i18n("Neural 2x/4x frame upscaling"), NatronNodeItem::NodeCustom, QStringLiteral("transform-scale")},
+        {QStringLiteral("MagicMask"), i18n("Magic Mask"), QStringLiteral("MagM"), i18n("AI"), i18n("AI Subject & Object segmentation mask"), NatronNodeType::Custom, QStringLiteral("edit-select")},
+        {QStringLiteral("AIDepthMap"), i18n("AI Depth Map"), QStringLiteral("Dpth"), i18n("AI"), i18n("Monocular AI depth map estimation"), NatronNodeType::Custom, QStringLiteral("view-split-left-right")},
+        {QStringLiteral("AIRelight"), i18n("AI Relight"), QStringLiteral("RLgt"), i18n("AI"), i18n("Neural 3D point and directional relighting"), NatronNodeType::Custom, QStringLiteral("light-bulb")},
+        {QStringLiteral("AIFaceRetouch"), i18n("AI Face Retouch"), QStringLiteral("Face"), i18n("AI"), i18n("Neural skin smoothing and facial enhancement"), NatronNodeType::Custom, QStringLiteral("user")},
+        {QStringLiteral("AIInpaint"), i18n("AI Inpaint / Clean"), QStringLiteral("Inp"), i18n("AI"), i18n("Neural background fill and wire removal"), NatronNodeType::Custom, QStringLiteral("edit-clear")},
+        {QStringLiteral("AISuperRes"), i18n("AI Super Resolution"), QStringLiteral("UpSc"), i18n("AI"), i18n("Neural 2x/4x frame upscaling"), NatronNodeType::Custom, QStringLiteral("transform-scale")},
 
         // Core Compositing & Merging (From DaVinci Fusion & Natron)
-        {QStringLiteral("Merge"), i18n("Merge"), QStringLiteral("Mrg"), i18n("Composite"), i18n("Layer compositing with blend modes (Over, Add, Screen)"), NatronNodeItem::NodeMerge, QStringLiteral("edit-copy")},
-        {QStringLiteral("Merge3D"), i18n("Merge 3D"), QStringLiteral("3Mg"), i18n("3D"), i18n("3D spatial layer merging"), NatronNodeItem::NodeCustom, QStringLiteral("media-default-audio")},
-        {QStringLiteral("MaterialMerge"), i18n("Material Merge"), QStringLiteral("3MM"), i18n("3D"), i18n("Material shader blending for 3D textures"), NatronNodeItem::NodeCustom, QStringLiteral("fill-color")},
-        {QStringLiteral("MatteControl"), i18n("Matte Control"), QStringLiteral("Mat"), i18n("Matte"), i18n("Alpha matte adjustment, spill suppression, and choke"), NatronNodeItem::NodeCustom, QStringLiteral("color-management")},
-        {QStringLiteral("ChannelBoolean"), i18n("Channel Boolean"), QStringLiteral("CBl"), i18n("Channel"), i18n("RGBA channel math and boolean operations"), NatronNodeItem::NodeCustom, QStringLiteral("accessories-calculator")},
-        {QStringLiteral("Switch"), i18n("Switch"), QStringLiteral("Sw"), i18n("Utility"), i18n("Multi-input stream switcher"), NatronNodeItem::NodeDot, QStringLiteral("media-playback-start")},
+        {QStringLiteral("Merge"), i18n("Merge"), QStringLiteral("Mrg"), i18n("Composite"), i18n("Layer compositing with blend modes (Over, Add, Screen)"), NatronNodeType::Merge, QStringLiteral("edit-copy")},
+        {QStringLiteral("Merge3D"), i18n("Merge 3D"), QStringLiteral("3Mg"), i18n("3D"), i18n("3D spatial layer merging"), NatronNodeType::Custom, QStringLiteral("media-default-audio")},
+        {QStringLiteral("MaterialMerge"), i18n("Material Merge"), QStringLiteral("3MM"), i18n("3D"), i18n("Material shader blending for 3D textures"), NatronNodeType::Custom, QStringLiteral("fill-color")},
+        {QStringLiteral("MatteControl"), i18n("Matte Control"), QStringLiteral("Mat"), i18n("Matte"), i18n("Alpha matte adjustment, spill suppression, and choke"), NatronNodeType::Custom, QStringLiteral("color-management")},
+        {QStringLiteral("ChannelBoolean"), i18n("Channel Boolean"), QStringLiteral("CBl"), i18n("Channel"), i18n("RGBA channel math and boolean operations"), NatronNodeType::Custom, QStringLiteral("accessories-calculator")},
+        {QStringLiteral("Switch"), i18n("Switch"), QStringLiteral("Sw"), i18n("Utility"), i18n("Multi-input stream switcher"), NatronNodeType::Dot, QStringLiteral("media-playback-start")},
 
         // Color & Grading
-        {QStringLiteral("ColorCorrector"), i18n("Color Corrector"), QStringLiteral("CC"), i18n("Color"), i18n("Lift, Gamma, Gain, Hue & Saturation color corrector"), NatronNodeItem::NodeGrade, QStringLiteral("color-management")},
-        {QStringLiteral("Grade"), i18n("Grade"), QStringLiteral("Grd"), i18n("Color"), i18n("Natron Grade (BlackPoint, WhitePoint, Gain, Offset)"), NatronNodeItem::NodeGrade, QStringLiteral("fill-color")},
-        {QStringLiteral("ColorCurves"), i18n("Color Curves"), QStringLiteral("Crv"), i18n("Color"), i18n("Bezier RGB spline tonal curve adjustments"), NatronNodeItem::NodeGrade, QStringLiteral("draw-bezier-curves")},
-        {QStringLiteral("HueCurves"), i18n("Hue Curves"), QStringLiteral("HCr"), i18n("Color"), i18n("Selective Hue vs Hue, Hue vs Sat curve editor"), NatronNodeItem::NodeGrade, QStringLiteral("draw-freehand")},
-        {QStringLiteral("LUTApply"), i18n("LUT Apply"), QStringLiteral("LUT"), i18n("Color"), i18n("3D Cube / Look color LUT transform"), NatronNodeItem::NodeGrade, QStringLiteral("view-preview")},
-        {QStringLiteral("OCIORange"), i18n("OCIO ColorSpace"), QStringLiteral("OCIO"), i18n("Color"), i18n("OpenColorIO ACES/Rec709 color conversion"), NatronNodeItem::NodeGrade, QStringLiteral("preferences-system-windows")},
+        {QStringLiteral("ColorCorrector"), i18n("Color Corrector"), QStringLiteral("CC"), i18n("Color"), i18n("Lift, Gamma, Gain, Hue & Saturation color corrector"), NatronNodeType::Grade, QStringLiteral("color-management")},
+        {QStringLiteral("Grade"), i18n("Grade"), QStringLiteral("Grd"), i18n("Color"), i18n("Natron Grade (BlackPoint, WhitePoint, Gain, Offset)"), NatronNodeType::Grade, QStringLiteral("fill-color")},
+        {QStringLiteral("ColorCurves"), i18n("Color Curves"), QStringLiteral("Crv"), i18n("Color"), i18n("Bezier RGB spline tonal curve adjustments"), NatronNodeType::Grade, QStringLiteral("draw-bezier-curves")},
+        {QStringLiteral("HueCurves"), i18n("Hue Curves"), QStringLiteral("HCr"), i18n("Color"), i18n("Selective Hue vs Hue, Hue vs Sat curve editor"), NatronNodeType::Grade, QStringLiteral("draw-freehand")},
+        {QStringLiteral("LUTApply"), i18n("LUT Apply"), QStringLiteral("LUT"), i18n("Color"), i18n("3D Cube / Look color LUT transform"), NatronNodeType::Grade, QStringLiteral("view-preview")},
+        {QStringLiteral("OCIORange"), i18n("OCIO ColorSpace"), QStringLiteral("OCIO"), i18n("Color"), i18n("OpenColorIO ACES/Rec709 color conversion"), NatronNodeType::Grade, QStringLiteral("preferences-system-windows")},
 
         // Filters & Blurs
-        {QStringLiteral("Blur"), i18n("Blur"), QStringLiteral("Blr"), i18n("Filter"), i18n("Gaussian and box blur filter"), NatronNodeItem::NodeBlur, QStringLiteral("blur-effect")},
-        {QStringLiteral("MotionBlur"), i18n("Motion Blur"), QStringLiteral("MoB"), i18n("Filter"), i18n("Directional & vector motion blur"), NatronNodeItem::NodeBlur, QStringLiteral("media-seek-forward")},
-        {QStringLiteral("MosaicBlur"), i18n("Mosaic Blur"), QStringLiteral("MB"), i18n("Filter"), i18n("Pixelation and mosaic blurring"), NatronNodeItem::NodeBlur, QStringLiteral("view-grid")},
-        {QStringLiteral("Defocus"), i18n("Defocus"), QStringLiteral("Df"), i18n("Filter"), i18n("Optical bokeh lens defocus simulation"), NatronNodeItem::NodeBlur, QStringLiteral("camera-photo")},
-        {QStringLiteral("Glow"), i18n("Glow"), QStringLiteral("Glw"), i18n("Filter"), i18n("Exponential light bloom and soft glow"), NatronNodeItem::NodeBlur, QStringLiteral("light-bulb")},
-        {QStringLiteral("Sharpen"), i18n("Sharpen"), QStringLiteral("Shrp"), i18n("Filter"), i18n("High-pass unsharp mask sharpener"), NatronNodeItem::NodeBlur, QStringLiteral("edit-find")},
-        {QStringLiteral("EdgeDetect"), i18n("Edge Detect"), QStringLiteral("ED"), i18n("Filter"), i18n("Sobel and Laplacian edge extraction"), NatronNodeItem::NodeBlur, QStringLiteral("draw-cross")},
-        {QStringLiteral("Denoise"), i18n("Denoise"), QStringLiteral("Dn"), i18n("Filter"), i18n("Spatial & temporal grain reduction"), NatronNodeItem::NodeBlur, QStringLiteral("edit-clear")},
-        {QStringLiteral("Grain"), i18n("Grain"), QStringLiteral("Grn"), i18n("Filter"), i18n("Photographic film grain simulation"), NatronNodeItem::NodeBlur, QStringLiteral("media-optical")},
-        {QStringLiteral("Mirrors"), i18n("Mirrors"), QStringLiteral("Mir"), i18n("Filter"), i18n("Kaleidoscopic and mirror reflection effects"), NatronNodeItem::NodeCustom, QStringLiteral("object-flip-horizontal")},
-        {QStringLiteral("Mandelbrot"), i18n("Mandelbrot"), QStringLiteral("Man"), i18n("Generator"), i18n("Procedural fractal generator"), NatronNodeItem::NodeCustom, QStringLiteral("view-radial")},
+        {QStringLiteral("Blur"), i18n("Blur"), QStringLiteral("Blr"), i18n("Filter"), i18n("Gaussian and box blur filter"), NatronNodeType::Blur, QStringLiteral("blur-effect")},
+        {QStringLiteral("MotionBlur"), i18n("Motion Blur"), QStringLiteral("MoB"), i18n("Filter"), i18n("Directional & vector motion blur"), NatronNodeType::Blur, QStringLiteral("media-seek-forward")},
+        {QStringLiteral("MosaicBlur"), i18n("Mosaic Blur"), QStringLiteral("MB"), i18n("Filter"), i18n("Pixelation and mosaic blurring"), NatronNodeType::Blur, QStringLiteral("view-grid")},
+        {QStringLiteral("Defocus"), i18n("Defocus"), QStringLiteral("Df"), i18n("Filter"), i18n("Optical bokeh lens defocus simulation"), NatronNodeType::Blur, QStringLiteral("camera-photo")},
+        {QStringLiteral("Glow"), i18n("Glow"), QStringLiteral("Glw"), i18n("Filter"), i18n("Exponential light bloom and soft glow"), NatronNodeType::Blur, QStringLiteral("light-bulb")},
+        {QStringLiteral("Sharpen"), i18n("Sharpen"), QStringLiteral("Shrp"), i18n("Filter"), i18n("High-pass unsharp mask sharpener"), NatronNodeType::Blur, QStringLiteral("edit-find")},
+        {QStringLiteral("EdgeDetect"), i18n("Edge Detect"), QStringLiteral("ED"), i18n("Filter"), i18n("Sobel and Laplacian edge extraction"), NatronNodeType::Blur, QStringLiteral("draw-cross")},
+        {QStringLiteral("Denoise"), i18n("Denoise"), QStringLiteral("Dn"), i18n("Filter"), i18n("Spatial & temporal grain reduction"), NatronNodeType::Blur, QStringLiteral("edit-clear")},
+        {QStringLiteral("Grain"), i18n("Grain"), QStringLiteral("Grn"), i18n("Filter"), i18n("Photographic film grain simulation"), NatronNodeType::Blur, QStringLiteral("media-optical")},
+        {QStringLiteral("Mirrors"), i18n("Mirrors"), QStringLiteral("Mir"), i18n("Filter"), i18n("Kaleidoscopic and mirror reflection effects"), NatronNodeType::Custom, QStringLiteral("object-flip-horizontal")},
+        {QStringLiteral("Mandelbrot"), i18n("Mandelbrot"), QStringLiteral("Man"), i18n("Generator"), i18n("Procedural fractal generator"), NatronNodeType::Custom, QStringLiteral("view-radial")},
 
         // Keying & Mattes
-        {QStringLiteral("ChromaKeyer"), i18n("Chroma Keyer"), QStringLiteral("Key"), i18n("Keyer"), i18n("Green/Blue screen chroma keyer with despill"), NatronNodeItem::NodeKeyer, QStringLiteral("color-picker")},
-        {QStringLiteral("DifferenceKeyer"), i18n("Difference Keyer"), QStringLiteral("DKey"), i18n("Keyer"), i18n("Background subtraction difference keyer"), NatronNodeItem::NodeKeyer, QStringLiteral("view-split-left-right")},
-        {QStringLiteral("LumaKeyer"), i18n("Luma Keyer"), QStringLiteral("LKey"), i18n("Keyer"), i18n("Luminance threshold keyer"), NatronNodeItem::NodeKeyer, QStringLiteral("adjustrgb")},
-        {QStringLiteral("Despill"), i18n("Despill"), QStringLiteral("Dsp"), i18n("Keyer"), i18n("Green/Blue spill color suppression"), NatronNodeItem::NodeKeyer, QStringLiteral("color-management")},
+        {QStringLiteral("ChromaKeyer"), i18n("Chroma Keyer"), QStringLiteral("Key"), i18n("Keyer"), i18n("Green/Blue screen chroma keyer with despill"), NatronNodeType::Keyer, QStringLiteral("color-picker")},
+        {QStringLiteral("DifferenceKeyer"), i18n("Difference Keyer"), QStringLiteral("DKey"), i18n("Keyer"), i18n("Background subtraction difference keyer"), NatronNodeType::Keyer, QStringLiteral("view-split-left-right")},
+        {QStringLiteral("LumaKeyer"), i18n("Luma Keyer"), QStringLiteral("LKey"), i18n("Keyer"), i18n("Luminance threshold keyer"), NatronNodeType::Keyer, QStringLiteral("adjustrgb")},
+        {QStringLiteral("Despill"), i18n("Despill"), QStringLiteral("Dsp"), i18n("Keyer"), i18n("Green/Blue spill color suppression"), NatronNodeType::Keyer, QStringLiteral("color-management")},
 
         // Transform & Tracking
-        {QStringLiteral("Transform"), i18n("Transform"), QStringLiteral("Xf"), i18n("Transform"), i18n("2D translation, rotation, scale, and skew"), NatronNodeItem::NodeTransform, QStringLiteral("transform-scale")},
-        {QStringLiteral("Tracker"), i18n("Tracker"), QStringLiteral("Trk"), i18n("Transform"), i18n("Multi-point pattern motion tracker"), NatronNodeItem::NodeTracker, QStringLiteral("crosshairs")},
-        {QStringLiteral("PlanarTracker"), i18n("Planar Tracker"), QStringLiteral("PTrk"), i18n("Transform"), i18n("Planar surface motion tracker and corner pin"), NatronNodeItem::NodeTracker, QStringLiteral("view-presentation")},
-        {QStringLiteral("CameraTracker"), i18n("Camera Tracker"), QStringLiteral("CTrk"), i18n("Transform"), i18n("3D camera motion reconstruction"), NatronNodeItem::NodeTracker, QStringLiteral("camera-video")},
-        {QStringLiteral("CornerPin"), i18n("Corner Pin"), QStringLiteral("CP"), i18n("Transform"), i18n("4-point perspective warp and match-move"), NatronNodeItem::NodeTransform, QStringLiteral("transform-shear")},
-        {QStringLiteral("LensDistortion"), i18n("Lens Distortion"), QStringLiteral("LD"), i18n("Transform"), i18n("Radial and anamorphic lens distortion correction"), NatronNodeItem::NodeTransform, QStringLiteral("zoom-original")},
+        {QStringLiteral("Transform"), i18n("Transform"), QStringLiteral("Xf"), i18n("Transform"), i18n("2D translation, rotation, scale, and skew"), NatronNodeType::Transform, QStringLiteral("transform-scale")},
+        {QStringLiteral("Tracker"), i18n("Tracker"), QStringLiteral("Trk"), i18n("Transform"), i18n("Multi-point pattern motion tracker"), NatronNodeType::Tracker, QStringLiteral("crosshairs")},
+        {QStringLiteral("PlanarTracker"), i18n("Planar Tracker"), QStringLiteral("PTrk"), i18n("Transform"), i18n("Planar surface motion tracker and corner pin"), NatronNodeType::Tracker, QStringLiteral("view-presentation")},
+        {QStringLiteral("CameraTracker"), i18n("Camera Tracker"), QStringLiteral("CTrk"), i18n("Transform"), i18n("3D camera motion reconstruction"), NatronNodeType::Tracker, QStringLiteral("camera-video")},
+        {QStringLiteral("CornerPin"), i18n("Corner Pin"), QStringLiteral("CP"), i18n("Transform"), i18n("4-point perspective warp and match-move"), NatronNodeType::Transform, QStringLiteral("transform-shear")},
+        {QStringLiteral("LensDistortion"), i18n("Lens Distortion"), QStringLiteral("LD"), i18n("Transform"), i18n("Radial and anamorphic lens distortion correction"), NatronNodeType::Transform, QStringLiteral("zoom-original")},
 
         // Draw & Generators
-        {QStringLiteral("Roto"), i18n("Roto"), QStringLiteral("Roto"), i18n("Draw"), i18n("Vector Bezier / B-Spline rotoscoping masks"), NatronNodeItem::NodeRoto, QStringLiteral("draw-freehand")},
-        {QStringLiteral("MaskPaint"), i18n("Mask Paint"), QStringLiteral("PnM"), i18n("Draw"), i18n("Vector brush painting and clone stamping"), NatronNodeItem::NodeRoto, QStringLiteral("draw-brush")},
-        {QStringLiteral("TextPlus"), i18n("Text+"), QStringLiteral("Txt"), i18n("Draw"), i18n("2D/3D animated vector typography"), NatronNodeItem::NodeCustom, QStringLiteral("draw-text")},
-        {QStringLiteral("RadialRamp"), i18n("Radial / Ramp"), QStringLiteral("Rmp"), i18n("Generator"), i18n("Linear and radial color gradients"), NatronNodeItem::NodeCustom, QStringLiteral("view-radial")},
-        {QStringLiteral("Constant"), i18n("Constant / Solid"), QStringLiteral("Col"), i18n("Generator"), i18n("Solid RGBA color frame generator"), NatronNodeItem::NodeCustom, QStringLiteral("fill-color")},
-        {QStringLiteral("ParticleEmitter"), i18n("Particle Emitter"), QStringLiteral("PE"), i18n("Generator"), i18n("2D/3D particle simulator (Smoke, sparks, dust)"), NatronNodeItem::NodeCustom, QStringLiteral("weather-clouds")},
+        {QStringLiteral("Roto"), i18n("Roto"), QStringLiteral("Roto"), i18n("Draw"), i18n("Vector Bezier / B-Spline rotoscoping masks"), NatronNodeType::Roto, QStringLiteral("draw-freehand")},
+        {QStringLiteral("MaskPaint"), i18n("Mask Paint"), QStringLiteral("PnM"), i18n("Draw"), i18n("Vector brush painting and clone stamping"), NatronNodeType::Roto, QStringLiteral("draw-brush")},
+        {QStringLiteral("TextPlus"), i18n("Text+"), QStringLiteral("Txt"), i18n("Draw"), i18n("2D/3D animated vector typography"), NatronNodeType::Custom, QStringLiteral("draw-text")},
+        {QStringLiteral("RadialRamp"), i18n("Radial / Ramp"), QStringLiteral("Rmp"), i18n("Generator"), i18n("Linear and radial color gradients"), NatronNodeType::Custom, QStringLiteral("view-radial")},
+        {QStringLiteral("Constant"), i18n("Constant / Solid"), QStringLiteral("Col"), i18n("Generator"), i18n("Solid RGBA color frame generator"), NatronNodeType::Custom, QStringLiteral("fill-color")},
+        {QStringLiteral("ParticleEmitter"), i18n("Particle Emitter"), QStringLiteral("PE"), i18n("Generator"), i18n("2D/3D particle simulator (Smoke, sparks, dust)"), NatronNodeType::Custom, QStringLiteral("weather-clouds")},
 
         // IO & Topology
-        {QStringLiteral("MediaIn"), i18n("Media In"), QStringLiteral("MI"), i18n("I/O"), i18n("Source video / image clip input stream"), NatronNodeItem::NodeReader, QStringLiteral("media-playback-start")},
-        {QStringLiteral("MediaOut"), i18n("Media Out"), QStringLiteral("MO"), i18n("I/O"), i18n("Composited output destination back to timeline"), NatronNodeItem::NodeWriter, QStringLiteral("media-playback-stop")},
-        {QStringLiteral("Dot"), i18n("Dot"), QStringLiteral("Dot"), i18n("Routing"), i18n("Routing junction dot for clean node layout"), NatronNodeItem::NodeDot, QStringLiteral("draw-donut")},
-        {QStringLiteral("Backdrop"), i18n("Backdrop"), QStringLiteral("Bck"), i18n("Routing"), i18n("Visual color background container for node groups"), NatronNodeItem::NodeBackdrop, QStringLiteral("window-duplicate")}
+        {QStringLiteral("MediaIn"), i18n("Media In"), QStringLiteral("MI"), i18n("I/O"), i18n("Source video / image clip input stream"), NatronNodeType::Reader, QStringLiteral("media-playback-start")},
+        {QStringLiteral("MediaOut"), i18n("Media Out"), QStringLiteral("MO"), i18n("I/O"), i18n("Composited output destination back to timeline"), NatronNodeType::Writer, QStringLiteral("media-playback-stop")},
+        {QStringLiteral("Dot"), i18n("Dot"), QStringLiteral("Dot"), i18n("Routing"), i18n("Routing junction dot for clean node layout"), NatronNodeType::Dot, QStringLiteral("draw-donut")},
+        {QStringLiteral("Backdrop"), i18n("Backdrop"), QStringLiteral("Bck"), i18n("Routing"), i18n("Visual color background container for node groups"), NatronNodeType::Backdrop, QStringLiteral("window-duplicate")}
     };
 }
 
