@@ -43,6 +43,14 @@ static QJsonObject boolParam(const QString &desc)
     return p;
 }
 
+static QJsonObject objectParam(const QString &desc)
+{
+    QJsonObject p;
+    p[QStringLiteral("type")] = QStringLiteral("object");
+    p[QStringLiteral("description")] = desc;
+    return p;
+}
+
 static QJsonObject enumParam(const QString &desc, const QStringList &values)
 {
     QJsonObject p;
@@ -84,30 +92,36 @@ void AIToolRegistry::registerAllTools()
     // TIMELINE EDITING TOOLS (ported from Velo manage_timelines / edit_item)
     // ════════════════════════════════════════════════════════════════════════
 
-    // 1. cut_at_playhead — slice all clips under cursor
+    // 1. cut_at_playhead — slice clips under cursor or specific clip
     {
         QJsonObject props;
         props[QStringLiteral("position")] = intParam(QStringLiteral(
             "Frame position to cut at. Use -1 for current playhead (default)."));
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral(
+            "Optional clip ID to cut. If specified, only this clip will be split; if omitted, all clips under cursor are cut."));
         addTool(QStringLiteral("cut_at_playhead"),
-                QStringLiteral("Cut/split all clips at the given frame position (or current playhead)."),
+                QStringLiteral("Cut/split clips at the given frame position (or current playhead). Can cut a single clip or all clips across tracks."),
                 makeParams(props, {}));
     }
 
     // 2. delete_clips — remove selected or specified clips
     {
         QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral(
+            "Single clip ID to delete."));
         props[QStringLiteral("clip_ids")] = stringParam(QStringLiteral(
-            "Comma-separated clip IDs to delete. Empty = delete current selection."));
+            "Comma-separated clip IDs or array of clip IDs to delete. Empty = delete current selection."));
         addTool(QStringLiteral("delete_clips"),
                 QStringLiteral("Delete clips from the timeline by ID or current selection."),
                 makeParams(props, {}));
     }
 
-    // 3. trim_clip — adjust clip in/out points (ripple or rolling)
+    // 3. trim_clip — adjust clip in/out points or target duration
     {
         QJsonObject props;
         props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID to trim."));
+        props[QStringLiteral("duration")] = intParam(QStringLiteral(
+            "Target duration in frames. Directly resizes the clip length."));
         props[QStringLiteral("delta_in")] = intParam(QStringLiteral(
             "Frames to add/subtract from clip's in-point. Positive = trim from start."));
         props[QStringLiteral("delta_out")] = intParam(QStringLiteral(
@@ -115,7 +129,7 @@ void AIToolRegistry::registerAllTools()
         props[QStringLiteral("ripple")] = boolParam(QStringLiteral(
             "If true, shift subsequent clips to fill/accommodate the trim."));
         addTool(QStringLiteral("trim_clip"),
-                QStringLiteral("Trim a clip's in-point and/or out-point by a frame delta. Supports ripple mode."),
+                QStringLiteral("Trim or resize a clip's duration or in/out points. Ideal for shortening stock footage, SFX, images, and GIFs."),
                 makeParams(props, {QStringLiteral("clip_id")}));
     }
 
@@ -214,27 +228,33 @@ void AIToolRegistry::registerAllTools()
     // 7e. get_effect_parameters — inspect parameter names, types, and current values
     {
         QJsonObject props;
-        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID to inspect."));
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID to inspect (optional if inspecting track or composition)."));
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral("Track ID to inspect (optional)."));
+        props[QStringLiteral("composition_id")] = intParam(QStringLiteral("Composition / Transition ID to inspect (optional)."));
         props[QStringLiteral("effect_id")] = stringParam(QStringLiteral(
-            "Effect ID on the clip (e.g. 'qtblend', 'boxblur', 'lift_gamma_gain')."));
+            "Effect ID on the clip/track (e.g. 'transform' / 'qtblend', 'boxblur', 'lift_gamma_gain'). Leave empty if inspecting composition."));
         addTool(QStringLiteral("get_effect_parameters"),
-                QStringLiteral("Inspect the exact parameter schema, minimum/maximum limits, default values, and current values of an effect applied to a clip."),
-                makeParams(props, {QStringLiteral("clip_id"), QStringLiteral("effect_id")}));
+                QStringLiteral("Inspect the exact parameter schema, sub-effects, minimum/maximum limits, default values, and current values of an effect or transition/composition."),
+                makeParams(props, {}));
     }
 
-    // 7f. set_effect_parameter — tweak or animate an effect parameter
+    // 7f. set_effect_parameter — tweak or animate an effect or composition parameter
     {
         QJsonObject props;
-        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID."));
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID (optional if modifying track or composition)."));
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral("Track ID (optional)."));
+        props[QStringLiteral("composition_id")] = intParam(QStringLiteral("Composition / Transition ID (optional)."));
         props[QStringLiteral("effect_id")] = stringParam(QStringLiteral(
-            "Effect ID on the clip (e.g. 'qtblend', 'boxblur', 'lift_gamma_gain')."));
+            "Effect ID (e.g. 'transform' / 'qtblend', 'boxblur', 'lift_gamma_gain'). Leave empty if modifying composition."));
         props[QStringLiteral("param_name")] = stringParam(QStringLiteral(
-            "Parameter name to modify (e.g. 'rect', 'rotation', 'opacity', 'radius', 'gain', 'compositing')."));
+            "Parameter name to modify (e.g. 'rect', 'rotation', 'opacity', 'radius', 'gain', 'compositing', 'wipe')."));
         props[QStringLiteral("value")] = stringParam(QStringLiteral(
-            "New value or animated keyframe string (e.g. '0 0 1920 1080 1', '45', '12.5')."));
+            "New value or animated keyframe string (e.g. '0 0 1920 1080 1', '45', '12.5', or JSON object)."));
+        props[QStringLiteral("parameters")] = objectParam(QStringLiteral(
+            "Optional map of multiple parameters to update at once, e.g. {'rect': '0 0 1920 1080 1', 'rotation': 10}."));
         addTool(QStringLiteral("set_effect_parameter"),
-                QStringLiteral("Tweak or animate an effect control parameter on a clip like a normal user in the Effects panel."),
-                makeParams(props, {QStringLiteral("clip_id"), QStringLiteral("effect_id"), QStringLiteral("param_name"), QStringLiteral("value")}));
+                QStringLiteral("Tweak or animate an effect or composition control parameter like a normal user in the Effects panel."),
+                makeParams(props, {QStringLiteral("param_name"), QStringLiteral("value")}));
     }
 
     // 8. remove_effect — remove effect from clip
@@ -549,6 +569,16 @@ void AIToolRegistry::registerAllTools()
                 makeParams(props, {}));
     }
 
+    // 20b. probe_media — probe media metadata & quality before/after ingestion
+    {
+        QJsonObject props;
+        props[QStringLiteral("source")] = stringParam(QStringLiteral(
+            "Media source to probe: public HTTPS URL (from search_stock_media), local file path, or timeline clip_id."));
+        addTool(QStringLiteral("probe_media"),
+                QStringLiteral("Probe video/audio streams with ffprobe. Returns duration, resolution (width/height), FPS, codecs, channels, sample rate, and quality risks (low resolution, mono audio, very short) before inserting into timeline."),
+                makeParams(props, {QStringLiteral("source")}));
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // PLAYBACK & NAVIGATION
     // ════════════════════════════════════════════════════════════════════════
@@ -793,6 +823,93 @@ void AIToolRegistry::registerAllTools()
         addTool(QStringLiteral("set_project_profile"),
                 QStringLiteral("Change the project/sequence profile, resolution, or aspect ratio (e.g. switch to 9:16 Vertical HD 1080x1920 for Shorts/Reels/TikTok, 16:9 Widescreen, 1:1 Square)."),
                 makeParams(props, {QStringLiteral("profile")}));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SFX & TIMELINE AUDIO INTELLIGENCE (BEAT THIS + LOCAL SFX SYNTHESIS)
+    // ════════════════════════════════════════════════════════════════════════
+
+    // 35. detect_beats — Beat This transformer beat and downbeat tracking
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Optional ID of the timeline audio/video clip to analyze for musical beats."));
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral("Optional audio track ID containing the music stem to analyze."));
+        props[QStringLiteral("file_path")] = stringParam(QStringLiteral("Optional direct file path to audio/video file."));
+        props[QStringLiteral("generate_guides")] = boolParam(QStringLiteral("Whether to automatically add timeline guide markers at detected beats/downbeats. Default: false."));
+        props[QStringLiteral("guide_category")] = enumParam(
+            QStringLiteral("Which beats to create timeline guides for: 'downbeats' (musical bars/drops) or 'beats' (all rhythmic pulses). Default: 'downbeats'."),
+            {QStringLiteral("downbeats"), QStringLiteral("beats")});
+        addTool(QStringLiteral("detect_beats"),
+                QStringLiteral("Analyze music/audio beats, downbeats, and tempo (BPM) using the high-accuracy Beat This transformer neural network running on ONNX Runtime. Can optionally create timeline guide markers for every beat or downbeat."),
+                makeParams(props, {}));
+    }
+
+    // 36. generate_local_sfx — on-device prompt-to-audio SFX synthesis
+    {
+        QJsonObject props;
+        props[QStringLiteral("prompt")] = stringParam(QStringLiteral("Description of the sound effect to synthesize (e.g. 'cinematic impact sub boom', 'fast whoosh transition swoosh', 'tension riser build-up', 'sub drop 808', 'cyber digital glitch')."));
+        props[QStringLiteral("duration")] = numberParam(QStringLiteral("Desired sound effect duration in seconds (e.g. 1.5, 2.0, 3.5)."));
+        props[QStringLiteral("target_beat_frame")] = intParam(QStringLiteral("Optional timeline frame where the SFX transient peak should land (e.g. aligned with a downbeat or scene cut). The agent automatically accounts for peak offset."));
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral("Optional target audio track ID (defaults to audio track A2/SFX)."));
+        addTool(QStringLiteral("generate_local_sfx"),
+                QStringLiteral("Synthesize studio-grade cinematic sound effects locally (impacts, whooshes, risers, sub drops, glitches) without cloud servers. Automatically calculates peak transient offset and accurately aligns the SFX peak with the target beat frame on the timeline."),
+                makeParams(props, {QStringLiteral("prompt")}));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PROJECT BIN FOLDER & ASSET ORGANIZATION TOOLS
+    // ════════════════════════════════════════════════════════════════════════
+
+    // 37. create_bin_folder — create single or batch asset folders in Project Bin
+    {
+        QJsonObject props;
+        props[QStringLiteral("name")] = stringParam(QStringLiteral("Folder name or comma-separated list of folder names (e.g. '01_SFX, 02_BGM, 03_VOICE, 04_VIDEO_FOOTAGE, 05_TITLES, 06_VFX, 07_EXPORTS')."));
+        props[QStringLiteral("parent_folder_id")] = stringParam(QStringLiteral("Optional parent folder ID (default '-1' for root Project Bin)."));
+        props[QStringLiteral("parent_folder_name")] = stringParam(QStringLiteral("Optional parent folder name to nest inside."));
+        addTool(QStringLiteral("create_bin_folder"),
+                QStringLiteral("Create one or multiple organized asset folders in Kdenlive's Project Bin. Supports single names or batch lists (e.g. creating standard production structure: SFX, BGM, Voice, Video Footage, Titles, VFX, Exports)."),
+                makeParams(props, {QStringLiteral("name")}));
+    }
+
+    // 38. list_bin_folders — list all folders and assets hierarchy
+    {
+        QJsonObject props;
+        props[QStringLiteral("include_clips")] = boolParam(QStringLiteral("Whether to include the clip IDs and names contained within each folder. Default: false."));
+        addTool(QStringLiteral("list_bin_folders"),
+                QStringLiteral("List all folders and hierarchy in the Project Bin, reporting folder IDs, names, parent IDs, and clip counts."),
+                makeParams(props, {}));
+    }
+
+    // 39. move_bin_clip_to_folder — organize clips into specific bin folders
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = stringParam(QStringLiteral("The Bin clip ID (or timeline clip ID) to move."));
+        props[QStringLiteral("folder_id")] = stringParam(QStringLiteral("Optional target folder ID."));
+        props[QStringLiteral("folder_name")] = stringParam(QStringLiteral("Target folder name (e.g. 'SFX', 'BGM', 'Videos', 'Voice')."));
+        addTool(QStringLiteral("move_bin_clip_to_folder"),
+                QStringLiteral("Move a media clip into a specific folder in the Project Bin for asset organization."),
+                makeParams(props, {QStringLiteral("clip_id")}));
+    }
+
+    // 40. rename_bin_folder — rename an existing bin folder
+    {
+        QJsonObject props;
+        props[QStringLiteral("folder_id")] = stringParam(QStringLiteral("Optional folder ID to rename."));
+        props[QStringLiteral("current_name")] = stringParam(QStringLiteral("Current folder name to match."));
+        props[QStringLiteral("new_name")] = stringParam(QStringLiteral("New name for the folder."));
+        addTool(QStringLiteral("rename_bin_folder"),
+                QStringLiteral("Rename an existing folder in the Project Bin."),
+                makeParams(props, {QStringLiteral("new_name")}));
+    }
+
+    // 41. delete_bin_folder — remove a bin folder
+    {
+        QJsonObject props;
+        props[QStringLiteral("folder_id")] = stringParam(QStringLiteral("Optional folder ID to delete."));
+        props[QStringLiteral("folder_name")] = stringParam(QStringLiteral("Folder name to delete."));
+        addTool(QStringLiteral("delete_bin_folder"),
+                QStringLiteral("Delete a folder from the Project Bin."),
+                makeParams(props, {}));
     }
 }
 

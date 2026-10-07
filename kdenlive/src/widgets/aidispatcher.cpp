@@ -17,12 +17,16 @@
 #include "bin/model/subtitlemodel.hpp"
 #include "bin/projectclip.h"
 #include "bin/projectitemmodel.h"
+#include "bin/abstractprojectitem.h"
+#include "bin/projectfolder.h"
 #include "core.h"
 #include "mainwindow.h"
 #include "timeline2/view/timelinewidget.h"
 #include "timeline2/view/timelinecontroller.h"
 #include "timeline2/model/timelinemodel.hpp"
 #include "timeline2/model/timelineitemmodel.hpp"
+#include "timeline2/model/trackmodel.hpp"
+#include <algorithm>
 #include <QTextDocument>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -344,6 +348,58 @@ QString AIDispatcher::buildEditorStateSnapshot()
                     .arg(tm->isAudioTrack(tid) ? QStringLiteral("yes") : QStringLiteral("no"));
             }
 
+            // Timeline clips enumeration with exact frame coordinates
+            int clipCount = tm->getClipsCount();
+            state += QStringLiteral("<timeline_clips count=%1>\n").arg(clipCount);
+            struct ClipSummary {
+                int id;
+                int trackId;
+                QString trackName;
+                QString clipName;
+                int start;
+                int duration;
+                int in;
+                int out;
+                QString binId;
+            };
+            std::vector<ClipSummary> allClips;
+            for (int i = 0; i < trackCount; i++) {
+                int tid = tm->getTrackIndexFromPosition(i);
+                auto cids = tm->getTrackClips(tid);
+                QString trackName = tm->getTrackFullName(tid);
+                for (int cid : cids) {
+                    auto inOut = tm->getClipInOut(cid);
+                    allClips.push_back({
+                        cid,
+                        tid,
+                        trackName,
+                        tm->getClipName(cid),
+                        tm->getClipPosition(cid),
+                        tm->getClipPlaytime(cid),
+                        inOut.first,
+                        inOut.second,
+                        tm->getClipBinId(cid)
+                    });
+                }
+            }
+            std::sort(allClips.begin(), allClips.end(), [](const ClipSummary &a, const ClipSummary &b) {
+                if (a.start != b.start) return a.start < b.start;
+                return a.trackId < b.trackId;
+            });
+            for (const auto &c : allClips) {
+                state += QStringLiteral("  [clip %1] track=%2 (\"%3\") \"%4\" @%5 +%6f (in=%7 out=%8, bin=%9)\n")
+                    .arg(c.id)
+                    .arg(c.trackId)
+                    .arg(c.trackName)
+                    .arg(c.clipName)
+                    .arg(c.start)
+                    .arg(c.duration)
+                    .arg(c.in)
+                    .arg(c.out)
+                    .arg(c.binId);
+            }
+            state += QStringLiteral("</timeline_clips>\n");
+
             // Timeline Subtitles / Captions (Full Text & Timestamps for NLP analysis)
             auto subModel = tm->getSubtitleModel();
             if (subModel && subModel->count() > 0) {
@@ -369,8 +425,47 @@ QString AIDispatcher::buildEditorStateSnapshot()
                 state += QStringLiteral("</timeline_subtitles>\n");
             }
 
-            // Project Bin / Transcribed Clips (kdenlive:speech)
+            // Project Bin Folders & Clips structure
             if (pCore->projectItemModel()) {
+                auto binModel = pCore->projectItemModel();
+                auto root = binModel->getRootFolder();
+                if (root) {
+                    QStringList folderSummaries;
+                    std::function<void(const std::shared_ptr<TreeItem>&, const QString&)> collectFolders =
+                        [&](const std::shared_ptr<TreeItem> &item, const QString &indent) {
+                            for (int i = 0; i < item->childCount(); ++i) {
+                                auto child = item->child(i);
+                                auto projItem = std::dynamic_pointer_cast<AbstractProjectItem>(child);
+                                if (projItem && projItem->itemType() == AbstractProjectItem::FolderItem) {
+                                    int clipCount = 0;
+                                    QStringList clipNames;
+                                    for (int j = 0; j < child->childCount(); ++j) {
+                                        auto subChild = child->child(j);
+                                        auto subItem = std::dynamic_pointer_cast<AbstractProjectItem>(subChild);
+                                        if (subItem && subItem->itemType() == AbstractProjectItem::ClipItem) {
+                                            clipCount++;
+                                            if (clipNames.size() < 4) {
+                                                clipNames << QStringLiteral("\"%1\"").arg(subItem->name());
+                                            }
+                                        }
+                                    }
+                                    QString preview = clipNames.isEmpty() ? QStringLiteral("empty") : clipNames.join(QStringLiteral(", "));
+                                    if (clipCount > 4) preview += QStringLiteral(" (+%1 more)").arg(clipCount - 4);
+                                    folderSummaries << QStringLiteral("  %1[folder %2] \"%3\" (%4 clips: %5)")
+                                        .arg(indent, projItem->clipId(), projItem->name()).arg(clipCount).arg(preview);
+                                    collectFolders(child, indent + QStringLiteral("  "));
+                                }
+                            }
+                        };
+                    collectFolders(root, QString());
+                    if (!folderSummaries.isEmpty()) {
+                        state += QStringLiteral("<project_bin_folders count=%1>\n%2\n</project_bin_folders>\n")
+                            .arg(folderSummaries.size())
+                            .arg(folderSummaries.join(QStringLiteral("\n")));
+                    }
+                }
+
+                // Transcribed Clips (kdenlive:speech)
                 QStringList transcriptSummaries;
                 const auto clipIds = pCore->projectItemModel()->getAllClipIds();
                 for (const auto &id : clipIds) {
@@ -463,6 +558,29 @@ QString AIDispatcher::buildSystemPrompt()
         "- Use `write_memory` / `read_memory` to persist and recall user preferences and styles.\n"
         "- For `track_object` / `natron_vfx`: When asked to track an object, blur an element/face/plate, rotoscope a subject, or perform advanced VFX compositing, use `track_object` or `natron_vfx` targeting `natron`. This automatically updates and synchronizes Natron's Node Graph, Curve Editor, and Dope Sheet directly in Kdenlive's workspace and renders the result.\n"
         "- For `generate_glsl_shader`: Always supply valid GLSL fragment code using ShaderToy signature `void mainImage(out vec4 fragColor, in vec2 fragCoord)` with uniforms `iResolution` (vec3) and `iTime` (float), or choose a preset ('neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix'). Ensure proper GLSL type safety (e.g. float constants like 0.0 vs int 0, matching function signatures) and specify `track_id` and `playhead_frame` for B-roll placement.\n\n"
+
+        "# Effects & Compositions Quick-Reference (Kdenlive Native Controls)\n"
+        "- **Transform / Position / Zoom / Motion**: `add_effect(clip_id, \"transform\")` or `set_effect_parameter(clip_id, \"transform\", \"rect\", \"x y w h opacity\")`.\n"
+        "  - Controls: `rect` (format: \"x y width height opacity\", e.g. \"0 0 1920 1080 1.0\" or object `{\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"opacity\":1.0}`), `rotation` (angle in 10ths of degree: 900 = 90°), `opacity` (0.0 to 1.0), `compositing` (blend mode).\n"
+        "- **Color Grading**: `add_effect(clip_id, \"lift_gamma_gain\")`.\n"
+        "  - Controls: `lift_r`, `lift_g`, `lift_b` (shadows), `gamma_r`, `gamma_g`, `gamma_b` (midtones), `gain_r`, `gain_g`, `gain_b` (highlights).\n"
+        "- **Blur & Glow**: `add_effect(clip_id, \"boxblur\")` (params: `boxblur_hori`, `boxblur_vert`), `frei0r.glow` (param: `blur`), `vignette` (`radius`, `smooth`).\n"
+        "- **Audio & Ducking**: `set_volume(clip_id, volume_db)`, `audio_ducking(speech_track, music_track, duck_level_db)`.\n"
+        "- **Transitions & Compositions**: `add_transition(track_id, position, \"dissolve\"|\"wipe\"|\"slide\"|\"composite\", duration)` or `add_mix`.\n"
+        "  - Tweak transitions via `set_effect_parameter(composition_id=..., param_name=\"...\", value=\"...\")`.\n"
+        "- **Inspection & Verification Tools**:\n"
+        "  - `get_available_effects(query=\"...\")` to query available MLT, Frei0r, and Kdenlive effects.\n"
+        "  - `get_available_compositions(query=\"...\")` to query transitions and wipe types.\n"
+        "  - `get_effect_parameters(clip_id=..., effect_id=\"...\")` or `get_effect_parameters(composition_id=...)` to inspect live parameter schemas, limits, and current values before tweaking.\n"
+        "  - `probe_media(source=\"...\")` to inspect duration, resolution, codecs, and quality risks on remote stock media before downloading.\n\n"
+
+        "# SFX Intelligence & Beat-Synchronized Editing (Beat This! + Local Audio Generation)\n"
+        "- **Beat & Transient Intelligence (`detect_beats`)**: Use `detect_beats` on the background music track or audio clip to detect BPM tempo, musical downbeats (bars/drops), and rhythmic pulses using the native Beat This transformer neural network. Pass `generate_guides: true` to instantly place timeline guide markers at every beat or downbeat on the timeline ruler for snapping.\n"
+        "- **On-Device Cinematic SFX Generation (`generate_local_sfx`)**: Synthesize impacts, whooshes, risers, sub drops, and glitches locally without external servers. Specify `prompt` (e.g. 'cinematic impact sub boom', 'fast whoosh transition swoosh', 'tension riser build-up', 'sub drop 808', 'cyber digital glitch') and `target_beat_frame`. The engine calculates the sound's peak transient offset (`peak_offset_seconds`) and automatically shifts the clip's start frame so its peak lands EXACTLY on `target_beat_frame` (e.g. aligned with a beat marker or cut).\n"
+        "- **Cinematic Fast Cuts & Audio-Visual Sync**: When creating fast cuts or cinematic sequences, first run `detect_beats` to retrieve downbeat/beat timestamps, cut video clips on the beat frames, place transitions (whooshes/swishes) peaking at the cut, and place heavy impacts on the downbeats.\n\n"
+
+        "# Project Organization & Bin Folder Hierarchy (Production Standard)\n"
+        "- **Real Bin Folders (`create_bin_folder`, `list_bin_folders`, `move_bin_clip_to_folder`)**: For production asset management, ALWAYS create and use real Project Bin folders in Kdenlive instead of writing memory placeholders. When asked to create folders (e.g. SFX, BGM, Voice, Footage, Titles, VFX, Exports), call `create_bin_folder` passing comma-separated names (or a JSON array of names) in one atomic tool call. Use `move_bin_clip_to_folder` to organize clips into their respective bins as assets are imported or generated. Inspect `<project_bin_folders>` in `<editor_state>` to observe current bins and clip allocations.\n\n"
 
         "# Output Format\n"
         "Answer concisely with your creative reasoning, then return a JSON action block:\n"
@@ -883,28 +1001,33 @@ void AIDispatcher::processAiResponse(const QByteArray &data)
         Q_EMIT goalStepStarted(m_currentStep, m_maxSteps, actionName);
         Q_EMIT responseReceived(aiText, actionObj);
     } else {
-        // If the model spoke about generating/editing or gave a plan ("I will", "Generating", "Implementing", "Creating")
-        // on early steps without outputting the JSON action block, do NOT quit! Auto-reprompt to force tool output.
+        // If the model spoke about intent/actions without outputting the JSON action block,
+        // do NOT quit early! Auto-reprompt with the active goal to enforce continuous execution.
         bool seemsLikePlanWithoutAction = aiText.contains(QStringLiteral("I will"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("I'll"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Now I"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Next,"), Qt::CaseInsensitive) ||
                                           aiText.contains(QStringLiteral("Generating"), Qt::CaseInsensitive) ||
                                           aiText.contains(QStringLiteral("Implementing"), Qt::CaseInsensitive) ||
                                           aiText.contains(QStringLiteral("Creating"), Qt::CaseInsensitive) ||
-                                          aiText.contains(QStringLiteral("Shader"), Qt::CaseInsensitive) ||
-                                          aiText.contains(QStringLiteral("Animation"), Qt::CaseInsensitive) ||
-                                          aiText.contains(QStringLiteral("Track"), Qt::CaseInsensitive);
+                                          aiText.contains(QStringLiteral("Searching"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Inserting"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Cutting"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Applying"), Qt::CaseInsensitive) ||
+                                          aiText.contains(QStringLiteral("Trimming"), Qt::CaseInsensitive);
 
-        if (m_goalActive && m_currentStep <= 2 && seemsLikePlanWithoutAction) {
+        if (m_goalActive && m_currentStep < m_maxSteps && seemsLikePlanWithoutAction) {
             qDebug() << "[AIDispatcher] Model provided intent/reasoning without JSON action block. Auto-prompting for immediate tool execution...";
             QJsonObject reminderMsg;
             reminderMsg[QStringLiteral("role")] = QStringLiteral("user");
             reminderMsg[QStringLiteral("content")] = QStringLiteral(
-                "You explained your creative plan, but you did NOT output the JSON tool action block. "
-                "You MUST output the complete executable JSON action block now in the exact format:\n"
+                "You described your next step, but did not return the executable JSON tool action block.\n"
+                "To continue towards user goal: \"%1\", output your executable JSON action block now in the exact format:\n"
                 "```json\n"
-                "{\"action\": \"generate_glsl_shader\", \"target\": \"kdenlive\", \"params\": {\"name\": \"...\", \"track_id\": 3, \"playhead_frame\": 0, \"duration_frames\": 180, \"glsl_code\": \"...\"}}\n"
+                "{\"action\": \"<tool_name>\", \"target\": \"kdenlive\", \"params\": {...}}\n"
                 "```\n"
-                "Output the executable JSON block immediately."
-            );
+                "Output the executable JSON action block now."
+            ).arg(m_currentGoal);
             m_conversationMessages.append(reminderMsg);
             m_currentStep++;
             sendCurrentMessages();

@@ -73,6 +73,7 @@ Q_SIGNALS:
 private Q_SLOTS:
     void slotSearchClicked();
     void slotCategoryChanged(int index);
+    void slotGenerateAiSfxClicked();
     void slotGenerateVoiceClicked();
     void slotAssetDoubleClicked(QListWidgetItem *item);
     void slotAssetSelected(QListWidgetItem *current, QListWidgetItem *previous);
@@ -107,6 +108,7 @@ private:
     QLineEdit *m_searchEdit{nullptr};
     QComboBox *m_categoryCombo{nullptr};
     QPushButton *m_searchBtn{nullptr};
+    QPushButton *m_aiSfxBtn{nullptr};
     QListWidget *m_resultsList{nullptr};
     QLabel *m_stockStatusLabel{nullptr};
 

@@ -69,6 +69,7 @@ private:
     void handleVerifyEditVisually(const QJsonObject &params);
     void handleGetTimelineState(const QJsonObject &params);
     void handleProbeQuality(const QJsonObject &params);
+    void handleProbeMedia(const QJsonObject &params);
     void handleSeekTo(const QJsonObject &params);
     void handleSetZone(const QJsonObject &params);
     void handleFindTranscript(const QJsonObject &params);
@@ -90,6 +91,13 @@ private:
     void handleReadMemory(const QJsonObject &params);
     void handleListMemoryKeys(const QJsonObject &params);
     void handleSetProjectProfile(const QJsonObject &params);
+    void handleDetectBeats(const QJsonObject &params);
+    void handleGenerateLocalSfx(const QJsonObject &params);
+    void handleCreateBinFolder(const QJsonObject &params);
+    void handleListBinFolders(const QJsonObject &params);
+    void handleMoveBinClipToFolder(const QJsonObject &params);
+    void handleRenameBinFolder(const QJsonObject &params);
+    void handleDeleteBinFolder(const QJsonObject &params);
 
     // Natron VFX handler
     void executeNatronVfxJob(const QJsonObject &params);

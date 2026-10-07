@@ -34,6 +34,8 @@
 #include <QIcon>
 #include <QSplitter>
 #include <QProcessEnvironment>
+#include <QProcess>
+#include <QInputDialog>
 #include <KLocalizedString>
 #include "authmanager.h"
 
@@ -89,9 +91,19 @@ void VeloAssetWidget::setupUi()
 
     m_searchBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("system-search")), i18n("Search"), stockTab);
 
+    m_aiSfxBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("tools-wizard"), QIcon::fromTheme(QStringLiteral("media-record"))), i18n("AI SFX"), stockTab);
+    m_aiSfxBtn->setToolTip(i18n("Generate AI Sound Effect locally and insert onto Timeline"));
+    m_aiSfxBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #8a2be2, stop:1 #4a00e0); "
+        "color: #ffffff; font-weight: bold; border-radius: 4px; padding: 4px 10px; border: 1px solid #7928ca; }"
+        "QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #9d4edd, stop:1 #5a189a); }"
+        "QPushButton:pressed { background: #3c096c; }"
+    ));
+
     searchRow->addWidget(m_categoryCombo);
     searchRow->addWidget(m_searchEdit, 1);
     searchRow->addWidget(m_searchBtn);
+    searchRow->addWidget(m_aiSfxBtn);
     stockLayout->addLayout(searchRow);
 
     // Splitter between Grid and Preview Panel
@@ -320,6 +332,7 @@ void VeloAssetWidget::setupUi()
 
     // Connections
     connect(m_searchBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotSearchClicked);
+    connect(m_aiSfxBtn, &QPushButton::clicked, this, &VeloAssetWidget::slotGenerateAiSfxClicked);
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &VeloAssetWidget::slotSearchClicked);
     connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &VeloAssetWidget::slotCategoryChanged);
     connect(m_resultsList, &QListWidget::currentItemChanged, this, &VeloAssetWidget::slotAssetSelected);
@@ -489,6 +502,14 @@ void VeloAssetWidget::slotSearchClicked()
 void VeloAssetWidget::slotCategoryChanged(int)
 {
     stopAudioPreview();
+    QString cat = m_categoryCombo->currentData().toString();
+    if (cat == QStringLiteral("sfx")) {
+        m_aiSfxBtn->setText(i18n("Generate AI SFX"));
+        m_searchEdit->setPlaceholderText(i18n("Type SFX prompt (e.g. cinematic impact, whoosh, riser, sub drop)..."));
+    } else {
+        m_aiSfxBtn->setText(i18n("AI SFX"));
+        m_searchEdit->setPlaceholderText(i18n("Search stock assets (e.g. drone, cinematic, whoosh, neon)..."));
+    }
     slotSearchClicked();
 }
 
@@ -1119,6 +1140,154 @@ void VeloAssetWidget::slotAssetDoubleClicked(QListWidgetItem *item)
         const auto &asset = m_currentAssets[row];
         downloadAndIngest(asset.downloadUrl, asset.title, asset.kind, true);
     }
+}
+
+void VeloAssetWidget::slotGenerateAiSfxClicked()
+{
+    QString prompt = m_searchEdit->text().trimmed();
+    if (prompt.isEmpty()) {
+        bool ok = false;
+        prompt = QInputDialog::getText(
+            this,
+            i18n("Generate AI Sound Effect"),
+            i18n("Describe sound effect to synthesize:\n(e.g. 'cinematic impact sub boom', 'fast whoosh transition swoosh', 'tension riser build-up', 'sub drop 808', 'cyber digital glitch')"),
+            QLineEdit::Normal,
+            QStringLiteral("cinematic impact sub boom"),
+            &ok
+        );
+        if (!ok || prompt.trimmed().isEmpty()) return;
+        prompt = prompt.trimmed();
+        m_searchEdit->setText(prompt);
+    }
+
+    // 1. Locate python venv or system python
+    QString pythonExec;
+    QString venvPy = QStringLiteral("/home/lincoln/.local/share/kdenlive/venv/bin/python");
+    if (QFile::exists(venvPy)) {
+        pythonExec = venvPy;
+    } else {
+        pythonExec = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    }
+
+    if (pythonExec.isEmpty()) {
+        m_stockStatusLabel->setText(i18n("Python executable not found for SFX synthesis."));
+        return;
+    }
+
+    // 2. Locate sfx_generator.py
+    QString scriptPath;
+    QStringList candidates = {
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/audio/sfx_generator.py"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/data/scripts/audio/sfx_generator.py"),
+        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/audio/sfx_generator.py"),
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/audio/sfx_generator.py"))
+    };
+    for (const QString &c : candidates) {
+        if (!c.isEmpty() && QFile::exists(c)) {
+            scriptPath = c;
+            break;
+        }
+    }
+
+    if (scriptPath.isEmpty()) {
+        m_stockStatusLabel->setText(i18n("sfx_generator.py script not found."));
+        return;
+    }
+
+    m_stockStatusLabel->setText(i18n("Synthesizing AI Sound Effect for '%1'...", prompt));
+    m_aiSfxBtn->setEnabled(false);
+
+    auto *proc = new QProcess(this);
+    QStringList args = {scriptPath, QStringLiteral("--prompt"), prompt};
+    connect(proc, &QProcess::finished, this, [this, proc, prompt](int exitCode) {
+        m_aiSfxBtn->setEnabled(true);
+        proc->deleteLater();
+        if (exitCode != 0) {
+            QString errStr = QString::fromUtf8(proc->readAllStandardError());
+            m_stockStatusLabel->setText(i18n("SFX generation failed: %1", errStr));
+            return;
+        }
+
+        QByteArray out = proc->readAllStandardOutput();
+        QJsonDocument doc = QJsonDocument::fromJson(out);
+        if (!doc.isObject()) {
+            m_stockStatusLabel->setText(i18n("Invalid result from SFX generator."));
+            return;
+        }
+
+        QJsonObject resObj = doc.object();
+        QString filePath = resObj[QStringLiteral("file_path")].toString();
+        double peakOffset = resObj[QStringLiteral("peak_offset_seconds")].toDouble(0.0);
+        double duration = resObj[QStringLiteral("duration")].toDouble(2.0);
+        QString category = resObj[QStringLiteral("category")].toString();
+
+        if (filePath.isEmpty() || !QFile::exists(filePath)) {
+            m_stockStatusLabel->setText(i18n("Generated audio file missing."));
+            return;
+        }
+
+        // Add to project bin & insert to timeline
+        if (pCore && pCore->bin() && pCore->projectItemModel()) {
+            Fun undo = []() { return true; };
+            Fun redo = []() { return true; };
+            ClipCreator::createClipFromFile(filePath, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo,
+                [this, filePath, duration, category, peakOffset](const QString &binId) {
+                    if (binId.isEmpty() || binId == QStringLiteral("-1")) return;
+
+                    int insertFrame = 0;
+                    int targetTrack = -1;
+                    if (pCore && pCore->window() && pCore->window()->getCurrentTimeline()) {
+                        auto *tc = pCore->window()->getCurrentTimeline()->controller();
+                        auto tm = pCore->window()->getCurrentTimeline()->model();
+                        if (tc && tm) {
+                            int playheadPos = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
+                            double fps = pCore->getCurrentFps();
+                            int peakFrames = qRound(peakOffset * fps);
+                            insertFrame = qMax(0, playheadPos - peakFrames);
+
+                            // Find audio track (prefer A2 / second audio track)
+                            QList<int> audioTracks;
+                            for (int t : tm->getAllTracksIds()) {
+                                if (tm->isAudioTrack(t)) audioTracks.append(t);
+                            }
+                            if (audioTracks.size() >= 2) targetTrack = audioTracks.at(1);
+                            else if (!audioTracks.isEmpty()) targetTrack = audioTracks.first();
+
+                            if (targetTrack >= 0) {
+                                int newClipId = -1;
+                                bool ok = tm->requestClipInsertion(binId, targetTrack, insertFrame, newClipId, true, true, false);
+                                if (ok) {
+                                    Q_EMIT assetInsertedToTimeline(binId, targetTrack, insertFrame);
+                                }
+                            }
+                        }
+                    }
+
+                    m_stockStatusLabel->setText(i18n("Generated '%1' SFX (%2s) and inserted onto timeline at frame %3!", category, QString::number(duration, 'f', 1), insertFrame));
+                    Q_EMIT assetAddedToBin(binId, filePath);
+
+                    // Update preview audition panel so user can listen to it
+                    m_previewTitleLabel->setText(i18n("AI SFX: %1 (%2)", category.toUpper(), m_searchEdit->text()));
+                    m_previewDetailsLabel->setText(i18n("Kind: AI SFX | Duration: %1s | Peak: %2s | Local Synthesis", QString::number(duration, 'f', 1), QString::number(peakOffset, 'f', 2)));
+                    m_previewImageLabel->setPixmap(QIcon::fromTheme(QStringLiteral("audio-x-generic")).pixmap(96, 96));
+                    m_currentAudioUrl = QUrl::fromLocalFile(filePath).toString();
+                    m_audioControlsWidget->setVisible(true);
+                    m_audioProgressSlider->setRange(0, static_cast<int>(duration * 1000));
+                    m_audioProgressSlider->setValue(0);
+                    qint64 totalSec = static_cast<qint64>(duration);
+                    m_audioTimeLabel->setText(QStringLiteral("00:00 / %1:%2")
+                        .arg(totalSec / 60, 2, 10, QLatin1Char('0'))
+                        .arg(totalSec % 60, 2, 10, QLatin1Char('0')));
+                    if (m_audioPlayer) {
+                        m_audioPlayer->setSource(QUrl::fromLocalFile(filePath));
+                        m_audioPlayer->play();
+                    }
+                });
+            pCore->pushUndo(undo, redo, i18nc("@action", "Add AI SFX clip"));
+        }
+    });
+
+    proc->start(pythonExec, args);
 }
 
 void VeloAssetWidget::slotAddSelectedToBin()

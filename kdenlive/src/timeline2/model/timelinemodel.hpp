@@ -369,6 +369,10 @@ public:
        @param trackId Id of the track to test
     */
     int getTrackClipsCount(int trackId) const;
+    /** @brief Returns all clip IDs currently on the given track */
+    std::unordered_set<int> getTrackClips(int trackId) const;
+    /** @brief Returns all clip IDs across the timeline */
+    std::vector<int> getAllClipIds() const;
 
     /** @brief Returns the number of compositions in a given track
        @param trackId Id of the track to test

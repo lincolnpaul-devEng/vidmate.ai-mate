@@ -13,6 +13,8 @@
 #include "timeline2/model/timelinefunctions.hpp"
 #include "timeline2/view/timelinewidget.h"
 #include "timeline2/view/timelinecontroller.h"
+#include "timeline2/model/trackmodel.hpp"
+#include "project/projectmanager.h"
 #include "bin/model/subtitlemodel.hpp"
 #include "doc/kdenlivedoc.h"
 #include "doc/docundostack.hpp"
@@ -24,6 +26,7 @@
 #include "bin/bin.h"
 #include "bin/projectitemmodel.h"
 #include "bin/projectclip.h"
+#include "bin/projectfolder.h"
 #include "bin/clipcreator.hpp"
 #include "undohelper.hpp"
 #include "profiles/profilemodel.hpp"
@@ -214,6 +217,8 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleGetTimelineState(params);
     else if (action == QStringLiteral("probe_quality"))
         handleProbeQuality(params);
+    else if (action == QStringLiteral("probe_media"))
+        handleProbeMedia(params);
     else if (action == QStringLiteral("seek_to"))
         handleSeekTo(params);
     else if (action == QStringLiteral("set_zone"))
@@ -251,8 +256,28 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
     else if (action == QStringLiteral("set_project_profile") || action == QStringLiteral("set_aspect_ratio") ||
              action == QStringLiteral("set_profile") || action == QStringLiteral("switch_profile"))
         handleSetProjectProfile(params);
+    else if (action == QStringLiteral("detect_beats") || action == QStringLiteral("beat_detect") ||
+             action == QStringLiteral("detect_music_beats") || action == QStringLiteral("beat_this"))
+        handleDetectBeats(params);
+    else if (action == QStringLiteral("generate_local_sfx") || action == QStringLiteral("generate_sfx") ||
+             action == QStringLiteral("create_sfx") || action == QStringLiteral("synthesize_sfx"))
+        handleGenerateLocalSfx(params);
+    else if (action == QStringLiteral("create_bin_folder") || action == QStringLiteral("create_folder") ||
+             action == QStringLiteral("add_bin_folder") || action == QStringLiteral("add_folder"))
+        handleCreateBinFolder(params);
+    else if (action == QStringLiteral("list_bin_folders") || action == QStringLiteral("list_folders") ||
+             action == QStringLiteral("get_bin_folders"))
+        handleListBinFolders(params);
+    else if (action == QStringLiteral("move_bin_clip_to_folder") || action == QStringLiteral("move_clip_to_folder") ||
+             action == QStringLiteral("move_to_folder"))
+        handleMoveBinClipToFolder(params);
+    else if (action == QStringLiteral("rename_bin_folder") || action == QStringLiteral("rename_folder"))
+        handleRenameBinFolder(params);
+    else if (action == QStringLiteral("delete_bin_folder") || action == QStringLiteral("delete_folder") ||
+             action == QStringLiteral("remove_bin_folder"))
+        handleDeleteBinFolder(params);
     else
-        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, add_track_effect, get_available_effects, get_available_compositions, get_effect_parameters, set_effect_parameter, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader, write_memory, read_memory, list_memory_keys, set_project_profile.", action), false);
+        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, add_track_effect, get_available_effects, get_available_compositions, get_effect_parameters, set_effect_parameter, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader, write_memory, read_memory, list_memory_keys, set_project_profile, detect_beats, generate_local_sfx, create_bin_folder, list_bin_folders, move_bin_clip_to_folder, rename_bin_folder, delete_bin_folder.", action), false);
 
     if (isMutating && pCore && pCore->undoStack()) {
         pCore->undoStack()->endMacro();
@@ -266,28 +291,50 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
 void AICommandRouter::handleCutAtPlayhead(const QJsonObject &params)
 {
     auto *tc = getTimelineController();
-    if (!tc) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
+    auto tm = getTimelineModel();
+    if (!tc || !tm) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
 
     int pos = params[QStringLiteral("position")].toInt(-1);
-    tc->cutAllClipsUnderCursor(pos);
-    int actualPos = (pos == -1) ? pCore->getMonitorPosition(Kdenlive::ProjectMonitor) : pos;
-    Q_EMIT executionFinished(i18n("Cut all clips at frame %1.", actualPos), true);
+    int actualPos = (pos == -1 && pCore) ? pCore->getMonitorPosition(Kdenlive::ProjectMonitor) : pos;
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+
+    if (clipId >= 0 && tm->isClip(clipId)) {
+        tc->requestClipCut(clipId, actualPos);
+        Q_EMIT executionFinished(i18n("Cut clip %1 at frame %2.", clipId, actualPos), true);
+    } else {
+        tc->cutAllClipsUnderCursor(actualPos);
+        Q_EMIT executionFinished(i18n("Cut all clips under cursor at frame %1.", actualPos), true);
+    }
 }
 
 void AICommandRouter::handleDeleteClips(const QJsonObject &params)
 {
     auto *tc = getTimelineController();
-    if (!tc) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
+    auto tm = getTimelineModel();
+    if (!tc || !tm) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
 
-    QString clipIdsStr = params[QStringLiteral("clip_ids")].toString();
-    if (clipIdsStr.isEmpty()) {
-        // Delete current selection
+    std::unordered_set<int> idsToDelete;
+    if (params.contains(QStringLiteral("clip_id"))) {
+        int singleId = params[QStringLiteral("clip_id")].toInt(-1);
+        if (singleId >= 0) idsToDelete.insert(singleId);
+    }
+    if (params.contains(QStringLiteral("clip_ids"))) {
+        QJsonValue val = params[QStringLiteral("clip_ids")];
+        if (val.isArray()) {
+            for (const auto &v : val.toArray()) idsToDelete.insert(v.toInt());
+        } else if (val.isString()) {
+            const auto parts = val.toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+            for (const auto &p : parts) idsToDelete.insert(p.trimmed().toInt());
+        }
+    }
+
+    if (!idsToDelete.empty()) {
+        tm->requestSetSelection(idsToDelete);
+        tc->deleteSelectedClips();
+        Q_EMIT executionFinished(i18n("Deleted %1 clip(s).", idsToDelete.size()), true);
+    } else {
         tc->deleteSelectedClips();
         Q_EMIT executionFinished(i18n("Deleted selected clips."), true);
-    } else {
-        // TODO: Select specific clip IDs then delete
-        tc->deleteSelectedClips();
-        Q_EMIT executionFinished(i18n("Deleted clips: %1.", clipIdsStr), true);
     }
 }
 
@@ -299,6 +346,7 @@ void AICommandRouter::handleTrimClip(const QJsonObject &params)
     int clipId = params[QStringLiteral("clip_id")].toInt(-1);
     int deltaIn = params[QStringLiteral("delta_in")].toInt(0);
     int deltaOut = params[QStringLiteral("delta_out")].toInt(0);
+    int targetDuration = params[QStringLiteral("duration")].toInt(params[QStringLiteral("length")].toInt(-1));
 
     if (clipId < 0) {
         Q_EMIT executionFinished(i18n("No clip_id specified for trim."), false);
@@ -307,6 +355,13 @@ void AICommandRouter::handleTrimClip(const QJsonObject &params)
 
     if (!tm->isClip(clipId)) {
         Q_EMIT executionFinished(i18n("ID %1 is not a valid clip.", clipId), false);
+        return;
+    }
+
+    if (targetDuration > 0) {
+        int result = tm->requestItemResize(clipId, targetDuration, true, true);
+        bool ok = (result > 0);
+        Q_EMIT executionFinished(i18n("Resized clip %1 to duration %2 frames.", clipId, targetDuration), ok);
         return;
     }
 
@@ -472,47 +527,75 @@ void AICommandRouter::handleAddEffect(const QJsonObject &params)
     int applied = 0;
     for (int id : targets) {
         if (tm->isClip(id)) {
-            tm->addClipEffect(id, effectId, true);
-            applied++;
+            bool isTransform = (effectId == QStringLiteral("qtblend"));
+            auto stack = tm->getClipEffectStackModel(id);
 
-            // If initial parameter overrides provided
-            if (params.contains(QStringLiteral("parameters")) || params.contains(QStringLiteral("rect")) ||
-                params.contains(QStringLiteral("rotation")) || params.contains(QStringLiteral("opacity"))) {
-                auto stack = tm->getClipEffectStackModel(id);
-                if (stack) {
-                    auto assetModel = stack->getAssetModelById(effectId);
-                    if (assetModel) {
-                        if (params.contains(QStringLiteral("rect"))) {
-                            QJsonValue rVal = params[QStringLiteral("rect")];
-                            if (rVal.isString()) assetModel->setParameter(QStringLiteral("rect"), rVal.toString());
-                            else if (rVal.isObject()) {
-                                QJsonObject rObj = rVal.toObject();
-                                double x = rObj[QStringLiteral("x")].toDouble(0);
-                                double y = rObj[QStringLiteral("y")].toDouble(0);
-                                double w = rObj[QStringLiteral("w")].toDouble(rObj[QStringLiteral("width")].toDouble(1920));
-                                double h = rObj[QStringLiteral("h")].toDouble(rObj[QStringLiteral("height")].toDouble(1080));
-                                double op = rObj[QStringLiteral("opacity")].toDouble(1.0);
-                                assetModel->setParameter(QStringLiteral("rect"), QStringLiteral("%1 %2 %3 %4 %5").arg(x).arg(y).arg(w).arg(h).arg(op));
-                            }
+            if (isTransform && stack) {
+                // Enable Kdenlive native built-in transform
+                stack->setBuildInSize(pCore ? pCore->getCurrentFrameDisplaySize() : QSize(1920, 1080));
+                auto assetModel = stack->getAssetModelById(QStringLiteral("qtblend"));
+                if (assetModel) {
+                    assetModel->setActive(true);
+                    assetModel->setParameter(QStringLiteral("disable"), QStringLiteral("0"));
+                }
+                if (pCore) {
+                    Q_EMIT pCore->enableBuildInTransform();
+                }
+                applied++;
+            } else {
+                QVariantList res = tm->addClipEffect(id, effectId, true);
+                if (!res.isEmpty()) {
+                    applied++;
+                }
+                // Refresh stack after adding
+                stack = tm->getClipEffectStackModel(id);
+            }
+
+            // Apply parameter overrides if provided
+            if (stack) {
+                auto assetModel = stack->getAssetModelById(effectId);
+                if (assetModel) {
+                    if (params.contains(QStringLiteral("rect"))) {
+                        QJsonValue rVal = params[QStringLiteral("rect")];
+                        if (rVal.isString()) {
+                            assetModel->setParameter(QStringLiteral("rect"), rVal.toString());
+                        } else if (rVal.isObject()) {
+                            QJsonObject rObj = rVal.toObject();
+                            double x = rObj[QStringLiteral("x")].toDouble(0);
+                            double y = rObj[QStringLiteral("y")].toDouble(0);
+                            double w = rObj[QStringLiteral("w")].toDouble(rObj[QStringLiteral("width")].toDouble(1920));
+                            double h = rObj[QStringLiteral("h")].toDouble(rObj[QStringLiteral("height")].toDouble(1080));
+                            double op = rObj[QStringLiteral("opacity")].toDouble(1.0);
+                            assetModel->setParameter(QStringLiteral("rect"), QStringLiteral("%1 %2 %3 %4 %5").arg(x).arg(y).arg(w).arg(h).arg(op));
                         }
-                        if (params.contains(QStringLiteral("rotation"))) {
-                            assetModel->setParameter(QStringLiteral("rotation"), QString::number(params[QStringLiteral("rotation")].toDouble()));
-                        }
-                        if (params.contains(QStringLiteral("opacity"))) {
-                            assetModel->setParameter(QStringLiteral("opacity"), QString::number(params[QStringLiteral("opacity")].toDouble()));
-                        }
-                        if (params.contains(QStringLiteral("parameters")) && params[QStringLiteral("parameters")].isObject()) {
-                            QJsonObject pMap = params[QStringLiteral("parameters")].toObject();
-                            for (auto it = pMap.begin(); it != pMap.end(); ++it) {
-                                QString vStr = it.value().isString() ? it.value().toString() : QString::number(it.value().toDouble());
-                                assetModel->setParameter(it.key(), vStr);
-                            }
+                    }
+                    if (params.contains(QStringLiteral("rotation"))) {
+                        assetModel->setParameter(QStringLiteral("rotation"), QString::number(params[QStringLiteral("rotation")].toDouble()));
+                    }
+                    if (params.contains(QStringLiteral("opacity"))) {
+                        assetModel->setParameter(QStringLiteral("opacity"), QString::number(params[QStringLiteral("opacity")].toDouble()));
+                    }
+                    if (params.contains(QStringLiteral("parameters")) && params[QStringLiteral("parameters")].isObject()) {
+                        QJsonObject pMap = params[QStringLiteral("parameters")].toObject();
+                        for (auto it = pMap.begin(); it != pMap.end(); ++it) {
+                            QString vStr = it.value().isString() ? it.value().toString() : QString::number(it.value().toDouble());
+                            assetModel->setParameter(it.key(), vStr);
                         }
                     }
                 }
             }
+
+            // Reveal and expand in the Effects dock UI for the user
+            if (tc) {
+                tc->showAsset(id);
+            }
         }
     }
+
+    if (pCore) {
+        pCore->refreshProjectMonitorOnce();
+    }
+
     Q_EMIT executionFinished(i18n("Applied '%1' (%2) to %3 clip(s).", effectId, rawEffectId, applied), applied > 0);
 }
 
@@ -552,6 +635,11 @@ void AICommandRouter::handleAddTrackEffect(const QJsonObject &params)
                 }
             }
         }
+    }
+
+    if (pCore && pCore->projectManager()) {
+        pCore->projectManager()->showTrackEffectStack(trackId);
+        pCore->refreshProjectMonitorOnce();
     }
 
     Q_EMIT executionFinished(
@@ -676,6 +764,32 @@ void AICommandRouter::handleGetEffectParameters(const QJsonObject &params)
         return;
     }
 
+    int compId = params[QStringLiteral("composition_id")].toInt(params[QStringLiteral("transition_id")].toInt(-1));
+    if (compId >= 0 && tm->isComposition(compId)) {
+        auto compModel = tm->getCompositionParameterModel(compId);
+        if (!compModel) {
+            Q_EMIT executionFinished(i18n("Composition %1 parameter model not found.", compId), false);
+            return;
+        }
+
+        QJsonObject resultData;
+        resultData[QStringLiteral("composition_id")] = compId;
+        resultData[QStringLiteral("is_active")] = compModel->isActive();
+
+        QJsonArray paramsArray;
+        auto allParams = compModel->getAllParameters();
+        for (const auto &p : allParams) {
+            QJsonObject pObj;
+            pObj[QStringLiteral("name")] = p.first;
+            pObj[QStringLiteral("value")] = QJsonValue::fromVariant(p.second);
+            paramsArray.append(pObj);
+        }
+        resultData[QStringLiteral("parameters")] = paramsArray;
+        Q_EMIT dataOutput(QStringLiteral("get_effect_parameters"), resultData);
+        Q_EMIT executionFinished(i18n("Composition %1 has %2 parameters configured.", compId, allParams.size()), true);
+        return;
+    }
+
     int clipId = params[QStringLiteral("clip_id")].toInt(-1);
     int trackId = params[QStringLiteral("track_id")].toInt(-2);
     QString rawEffectId = params[QStringLiteral("effect_id")].toString().trimmed();
@@ -704,13 +818,47 @@ void AICommandRouter::handleGetEffectParameters(const QJsonObject &params)
     resultData[QStringLiteral("effect_id")] = effectId.isEmpty() ? rawEffectId : effectId;
 
     QJsonArray paramsArray;
+    QDomElement xml = EffectsRepository::get()->getXml(effectId);
+
+    // Check for sub-effects if this is an effect group
+    if (!xml.isNull() && xml.tagName() == QLatin1String("effectgroup")) {
+        QJsonArray subEffects;
+        QDomNodeList eList = xml.elementsByTagName(QStringLiteral("effect"));
+        for (int i = 0; i < eList.count(); ++i) {
+            QDomElement eElem = eList.at(i).toElement();
+            QJsonObject subObj;
+            subObj[QStringLiteral("id")] = eElem.attribute(QStringLiteral("id"));
+            subObj[QStringLiteral("name")] = eElem.attribute(QStringLiteral("name"));
+            subEffects.append(subObj);
+        }
+        resultData[QStringLiteral("sub_effects")] = subEffects;
+    }
 
     if (assetModel) {
         auto allParams = assetModel->getAllParameters();
+
+        // Build parameter list with XML schema annotations if available
+        QMap<QString, QDomElement> xmlParamDefs;
+        if (!xml.isNull()) {
+            QDomNodeList pList = xml.elementsByTagName(QStringLiteral("parameter"));
+            for (int i = 0; i < pList.count(); ++i) {
+                QDomElement pElem = pList.at(i).toElement();
+                xmlParamDefs.insert(pElem.attribute(QStringLiteral("name")), pElem);
+            }
+        }
+
         for (const auto &p : allParams) {
             QJsonObject pObj;
             pObj[QStringLiteral("name")] = p.first;
-            pObj[QStringLiteral("value")] = QJsonValue::fromVariant(p.second);
+            pObj[QStringLiteral("current_value")] = QJsonValue::fromVariant(p.second);
+            if (xmlParamDefs.contains(p.first)) {
+                QDomElement defElem = xmlParamDefs.value(p.first);
+                pObj[QStringLiteral("type")] = defElem.attribute(QStringLiteral("type"));
+                pObj[QStringLiteral("default")] = defElem.attribute(QStringLiteral("default"));
+                pObj[QStringLiteral("min")] = defElem.attribute(QStringLiteral("min"));
+                pObj[QStringLiteral("max")] = defElem.attribute(QStringLiteral("max"));
+                pObj[QStringLiteral("comment")] = defElem.attribute(QStringLiteral("comment"));
+            }
             paramsArray.append(pObj);
         }
         resultData[QStringLiteral("parameters")] = paramsArray;
@@ -721,7 +869,6 @@ void AICommandRouter::handleGetEffectParameters(const QJsonObject &params)
     }
 
     // If effect is not currently applied, query default parameter definitions from XML
-    QDomElement xml = EffectsRepository::get()->getXml(effectId);
     if (!xml.isNull()) {
         QDomNodeList pList = xml.elementsByTagName(QStringLiteral("parameter"));
         for (int i = 0; i < pList.count(); ++i) {
@@ -732,6 +879,7 @@ void AICommandRouter::handleGetEffectParameters(const QJsonObject &params)
             pObj[QStringLiteral("default")] = pElem.attribute(QStringLiteral("default"));
             pObj[QStringLiteral("min")] = pElem.attribute(QStringLiteral("min"));
             pObj[QStringLiteral("max")] = pElem.attribute(QStringLiteral("max"));
+            pObj[QStringLiteral("comment")] = pElem.attribute(QStringLiteral("comment"));
             paramsArray.append(pObj);
         }
         resultData[QStringLiteral("parameters")] = paramsArray;
@@ -741,7 +889,7 @@ void AICommandRouter::handleGetEffectParameters(const QJsonObject &params)
         return;
     }
 
-    Q_EMIT executionFinished(i18n("Effect '%1' not found on target clip/track and not in repository.", rawEffectId), false);
+    Q_EMIT executionFinished(i18n("Effect '%1' not found on target item and not in repository.", rawEffectId), false);
 }
 
 void AICommandRouter::handleSetEffectParameter(const QJsonObject &params)
@@ -750,50 +898,6 @@ void AICommandRouter::handleSetEffectParameter(const QJsonObject &params)
     auto *tc = getTimelineController();
     if (!tm || !tc) {
         Q_EMIT executionFinished(i18n("No active timeline."), false);
-        return;
-    }
-
-    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
-    int trackId = params[QStringLiteral("track_id")].toInt(-2);
-    QString rawEffectId = params[QStringLiteral("effect_id")].toString().trimmed();
-    QString effectId = normalizeEffectId(rawEffectId);
-    QString paramName = params[QStringLiteral("param_name")].toString(params[QStringLiteral("parameter")].toString()).trimmed();
-    QJsonValue valueVal = params[QStringLiteral("value")];
-
-    if (clipId < 0 && trackId == -2) {
-        clipId = tc->getMainSelectedClip();
-        if (clipId < 0 && !tc->selection().isEmpty()) clipId = tc->selection().first();
-    }
-
-    if (clipId < 0 && trackId == -2) {
-        Q_EMIT executionFinished(i18n("No clip or track selected for set_effect_parameter."), false);
-        return;
-    }
-
-    std::shared_ptr<EffectStackModel> stack;
-    if (clipId >= 0 && tm->isClip(clipId)) {
-        stack = tm->getClipEffectStackModel(clipId);
-        if (stack && !stack->hasFilter(effectId)) {
-            // Auto-apply effect if not present
-            tm->addClipEffect(clipId, effectId, true);
-            stack = tm->getClipEffectStackModel(clipId);
-        }
-    } else if (trackId >= -1) {
-        stack = tm->getTrackEffectStackModel(trackId);
-        if (stack && !stack->hasFilter(effectId)) {
-            tm->addTrackEffect(trackId, effectId);
-            stack = tm->getTrackEffectStackModel(trackId);
-        }
-    }
-
-    if (!stack) {
-        Q_EMIT executionFinished(i18n("Could not access effect stack for target item."), false);
-        return;
-    }
-
-    auto assetModel = stack->getAssetModelById(effectId);
-    if (!assetModel) {
-        Q_EMIT executionFinished(i18n("Effect '%1' is not available in stack.", effectId), false);
         return;
     }
 
@@ -817,6 +921,93 @@ void AICommandRouter::handleSetEffectParameter(const QJsonObject &params)
         return QString();
     };
 
+    // Check if target is a composition/transition
+    int compId = params[QStringLiteral("composition_id")].toInt(params[QStringLiteral("transition_id")].toInt(-1));
+    if (compId >= 0 && tm->isComposition(compId)) {
+        auto compModel = tm->getCompositionParameterModel(compId);
+        if (!compModel) {
+            Q_EMIT executionFinished(i18n("Composition %1 parameter model not found.", compId), false);
+            return;
+        }
+
+        int updatedCount = 0;
+        QString paramName = params[QStringLiteral("param_name")].toString(params[QStringLiteral("parameter")].toString()).trimmed();
+        QJsonValue valueVal = params[QStringLiteral("value")];
+
+        if (params.contains(QStringLiteral("parameters")) && params[QStringLiteral("parameters")].isObject()) {
+            QJsonObject paramMap = params[QStringLiteral("parameters")].toObject();
+            for (auto it = paramMap.begin(); it != paramMap.end(); ++it) {
+                QString vStr = formatParamValue(it.value(), it.key());
+                compModel->setParameter(it.key(), vStr);
+                updatedCount++;
+            }
+        }
+        if (!paramName.isEmpty()) {
+            QString vStr = formatParamValue(valueVal, paramName);
+            compModel->setParameter(paramName, vStr);
+            updatedCount++;
+        }
+
+        tc->showAsset(compId);
+        if (pCore) pCore->refreshProjectMonitorOnce();
+
+        Q_EMIT executionFinished(i18n("Updated %1 parameter(s) on Composition %2.", updatedCount, compId), updatedCount > 0);
+        return;
+    }
+
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    int trackId = params[QStringLiteral("track_id")].toInt(-2);
+    QString rawEffectId = params[QStringLiteral("effect_id")].toString().trimmed();
+    QString effectId = normalizeEffectId(rawEffectId);
+    QString paramName = params[QStringLiteral("param_name")].toString(params[QStringLiteral("parameter")].toString()).trimmed();
+    QJsonValue valueVal = params[QStringLiteral("value")];
+
+    if (clipId < 0 && trackId == -2) {
+        clipId = tc->getMainSelectedClip();
+        if (clipId < 0 && !tc->selection().isEmpty()) clipId = tc->selection().first();
+    }
+
+    if (clipId < 0 && trackId == -2) {
+        Q_EMIT executionFinished(i18n("No clip, track, or composition selected for set_effect_parameter."), false);
+        return;
+    }
+
+    std::shared_ptr<EffectStackModel> stack;
+    if (clipId >= 0 && tm->isClip(clipId)) {
+        stack = tm->getClipEffectStackModel(clipId);
+        if (effectId == QStringLiteral("qtblend")) {
+            if (stack) {
+                stack->setBuildInSize(pCore ? pCore->getCurrentFrameDisplaySize() : QSize(1920, 1080));
+                auto assetModel = stack->getAssetModelById(QStringLiteral("qtblend"));
+                if (assetModel) {
+                    assetModel->setActive(true);
+                    assetModel->setParameter(QStringLiteral("disable"), QStringLiteral("0"));
+                }
+                if (pCore) Q_EMIT pCore->enableBuildInTransform();
+            }
+        } else if (stack && !stack->hasFilter(effectId)) {
+            tm->addClipEffect(clipId, effectId, true);
+            stack = tm->getClipEffectStackModel(clipId);
+        }
+    } else if (trackId >= -1) {
+        stack = tm->getTrackEffectStackModel(trackId);
+        if (stack && !stack->hasFilter(effectId)) {
+            tm->addTrackEffect(trackId, effectId);
+            stack = tm->getTrackEffectStackModel(trackId);
+        }
+    }
+
+    if (!stack) {
+        Q_EMIT executionFinished(i18n("Could not access effect stack for target item."), false);
+        return;
+    }
+
+    auto assetModel = stack->getAssetModelById(effectId);
+    if (!assetModel) {
+        Q_EMIT executionFinished(i18n("Effect '%1' is not available in stack.", effectId), false);
+        return;
+    }
+
     int updatedCount = 0;
 
     // Multiple parameters map support
@@ -834,6 +1025,17 @@ void AICommandRouter::handleSetEffectParameter(const QJsonObject &params)
         QString vStr = formatParamValue(valueVal, paramName);
         assetModel->setParameter(paramName, vStr);
         updatedCount++;
+    }
+
+    // Update UI dock for the user
+    if (tc && clipId >= 0) {
+        tc->showAsset(clipId);
+    } else if (pCore && pCore->projectManager() && trackId >= -1) {
+        pCore->projectManager()->showTrackEffectStack(trackId);
+    }
+
+    if (pCore) {
+        pCore->refreshProjectMonitorOnce();
     }
 
     Q_EMIT executionFinished(
@@ -970,6 +1172,10 @@ void AICommandRouter::handleAddTransition(const QJsonObject &params)
     int duration = params[QStringLiteral("duration")].toInt(-1);
 
     int result = tc->insertComposition(trackId, position, transId, true, duration);
+    if (result >= 0) {
+        tc->showAsset(result);
+        if (pCore) pCore->refreshProjectMonitorOnce();
+    }
     Q_EMIT executionFinished(
         result >= 0 ? i18n("Added '%1' transition at frame %2 (ID: %3).", transId, position, result)
                     : i18n("Failed to add transition '%1'.", transId),
@@ -1525,7 +1731,30 @@ void AICommandRouter::handleGetTimelineState(const QJsonObject &params)
     }
     state[QStringLiteral("tracks")] = tracks;
 
-    Q_UNUSED(includeEffects) // TODO: add effect stack enumeration
+    // Timeline clips enumeration
+    QJsonArray clipsArr;
+    for (int i = 0; i < trackCount; i++) {
+        int tid = tm->getTrackIndexFromPosition(i);
+        auto cids = tm->getTrackClips(tid);
+        for (int cid : cids) {
+            QJsonObject clipObj;
+            clipObj[QStringLiteral("id")] = cid;
+            clipObj[QStringLiteral("track_id")] = tid;
+            clipObj[QStringLiteral("track_name")] = tm->getTrackFullName(tid);
+            clipObj[QStringLiteral("name")] = tm->getClipName(cid);
+            clipObj[QStringLiteral("bin_id")] = tm->getClipBinId(cid);
+            clipObj[QStringLiteral("start_frame")] = tm->getClipPosition(cid);
+            clipObj[QStringLiteral("duration_frames")] = tm->getClipPlaytime(cid);
+            clipObj[QStringLiteral("end_frame")] = tm->getClipPosition(cid) + tm->getClipPlaytime(cid);
+            auto inOut = tm->getClipInOut(cid);
+            clipObj[QStringLiteral("in")] = inOut.first;
+            clipObj[QStringLiteral("out")] = inOut.second;
+            clipsArr.append(clipObj);
+        }
+    }
+    state[QStringLiteral("clips")] = clipsArr;
+
+    Q_UNUSED(includeEffects)
 
     Q_EMIT dataOutput(QStringLiteral("get_timeline_state"), state);
     Q_EMIT executionFinished(i18n("Timeline state: %1 tracks, %2 clips, playhead at frame %3.",
@@ -1538,6 +1767,154 @@ void AICommandRouter::handleProbeQuality(const QJsonObject &params)
     QString checks = params[QStringLiteral("checks")].toString(QStringLiteral("all"));
     Q_EMIT executionFinished(
         i18n("Quality probe '%1' — analysis pipeline queued.", checks), true);
+}
+
+void AICommandRouter::handleProbeMedia(const QJsonObject &params)
+{
+    QString source = params[QStringLiteral("source")].toString().trimmed();
+    if (source.isEmpty()) {
+        source = params[QStringLiteral("url")].toString().trimmed();
+    }
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    if (source.isEmpty() && clipId >= 0) {
+        auto tm = getTimelineModel();
+        if (tm && tm->isClip(clipId)) {
+            QString binId = tm->getClipBinId(clipId);
+            if (pCore && pCore->projectItemModel()) {
+                auto pClip = pCore->projectItemModel()->getClipByBinID(binId);
+                if (pClip) {
+                    source = pClip->clipUrl();
+                }
+            }
+        }
+    }
+
+    if (source.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Source path, public URL, or clip_id required for probe_media."), false);
+        return;
+    }
+
+    // Run ffprobe synchronously via QProcess
+    QProcess probeProc;
+    QStringList args;
+    args << QStringLiteral("-v") << QStringLiteral("quiet")
+         << QStringLiteral("-print_format") << QStringLiteral("json")
+         << QStringLiteral("-show_streams")
+         << QStringLiteral("-show_format")
+         << source;
+
+    probeProc.start(QStringLiteral("ffprobe"), args);
+    if (!probeProc.waitForFinished(10000)) {
+        probeProc.kill();
+        Q_EMIT executionFinished(i18n("ffprobe timed out or failed to execute on '%1'.", source), false);
+        return;
+    }
+
+    QByteArray outBytes = probeProc.readAllStandardOutput();
+    QJsonDocument doc = QJsonDocument::fromJson(outBytes);
+    if (!doc.isObject()) {
+        Q_EMIT executionFinished(i18n("Failed to parse ffprobe JSON output for '%1'.", source), false);
+        return;
+    }
+
+    QJsonObject root = doc.object();
+    QJsonArray streams = root[QStringLiteral("streams")].toArray();
+    QJsonObject formatObj = root[QStringLiteral("format")].toObject();
+
+    double duration = formatObj[QStringLiteral("duration")].toString().toDouble();
+    int width = 0;
+    int height = 0;
+    double fps = 0.0;
+    bool hasAudio = false;
+    bool hasVideo = false;
+    QString videoCodec;
+    QString audioCodec;
+    int audioChannels = 0;
+    int sampleRate = 0;
+
+    for (const auto &sVal : streams) {
+        QJsonObject sObj = sVal.toObject();
+        QString codecType = sObj[QStringLiteral("codec_type")].toString();
+        if (codecType == QStringLiteral("video") && !hasVideo) {
+            hasVideo = true;
+            width = sObj[QStringLiteral("width")].toInt();
+            height = sObj[QStringLiteral("height")].toInt();
+            videoCodec = sObj[QStringLiteral("codec_name")].toString();
+            QString rFps = sObj[QStringLiteral("r_frame_rate")].toString();
+            QString avgFps = sObj[QStringLiteral("avg_frame_rate")].toString();
+            QString fpsStr = avgFps.contains(QLatin1Char('/')) ? avgFps : rFps;
+            if (fpsStr.contains(QLatin1Char('/'))) {
+                QStringList parts = fpsStr.split(QLatin1Char('/'));
+                if (parts.size() == 2 && parts[1].toDouble() > 0) {
+                    fps = std::round((parts[0].toDouble() / parts[1].toDouble()) * 100.0) / 100.0;
+                }
+            } else {
+                fps = fpsStr.toDouble();
+            }
+            if (duration <= 0.0 && sObj.contains(QStringLiteral("duration"))) {
+                duration = sObj[QStringLiteral("duration")].toString().toDouble();
+            }
+        } else if (codecType == QStringLiteral("audio") && !hasAudio) {
+            hasAudio = true;
+            audioCodec = sObj[QStringLiteral("codec_name")].toString();
+            audioChannels = sObj[QStringLiteral("channels")].toInt();
+            sampleRate = sObj[QStringLiteral("sample_rate")].toString().toInt();
+            if (duration <= 0.0 && sObj.contains(QStringLiteral("duration"))) {
+                duration = sObj[QStringLiteral("duration")].toString().toDouble();
+            }
+        }
+    }
+
+    QJsonArray qualityRisks;
+    if (hasVideo && width > 0 && height > 0 && (width < 720 || height < 480)) {
+        qualityRisks.append(QStringLiteral("low_resolution: %1x%2 (may appear soft on 1080p/4K)").arg(width).arg(height));
+    }
+    if (hasAudio && audioChannels == 1) {
+        qualityRisks.append(QStringLiteral("mono_audio: single audio channel"));
+    }
+    if (duration > 0.0 && duration < 3.0) {
+        qualityRisks.append(QStringLiteral("very_short: duration is under 3 seconds (%1s)").arg(QString::number(duration, 'f', 1)));
+    }
+    if (fps > 0.0 && fps < 20.0) {
+        qualityRisks.append(QStringLiteral("low_frame_rate: %1 fps may stutter").arg(fps));
+    }
+
+    QJsonObject probeData;
+    probeData[QStringLiteral("source")] = source;
+    probeData[QStringLiteral("duration_seconds")] = duration;
+    probeData[QStringLiteral("width")] = width;
+    probeData[QStringLiteral("height")] = height;
+    probeData[QStringLiteral("fps")] = fps;
+    probeData[QStringLiteral("has_video")] = hasVideo;
+    probeData[QStringLiteral("has_audio")] = hasAudio;
+    probeData[QStringLiteral("video_codec")] = videoCodec;
+    probeData[QStringLiteral("audio_codec")] = audioCodec;
+    probeData[QStringLiteral("audio_channels")] = audioChannels;
+    probeData[QStringLiteral("sample_rate")] = sampleRate;
+    probeData[QStringLiteral("quality_risks")] = qualityRisks;
+
+    Q_EMIT dataOutput(QStringLiteral("probe_media"), probeData);
+
+    QString riskStr;
+    if (!qualityRisks.isEmpty()) {
+        QStringList rList;
+        for (const auto &r : qualityRisks) rList << r.toString();
+        riskStr = QStringLiteral("Risks: %1").arg(rList.join(QStringLiteral(", ")));
+    } else {
+        riskStr = QStringLiteral("No quality risks detected.");
+    }
+
+    QString summary = i18n("Probed '%1': %2%3, %4s, %5 FPS, Codecs: %6/%7. %8",
+                           QFileInfo(source).fileName().isEmpty() ? source : QFileInfo(source).fileName(),
+                           hasVideo ? QStringLiteral("%1x%2").arg(width).arg(height) : QStringLiteral("Audio only"),
+                           hasAudio ? QStringLiteral(" (%1ch)").arg(audioChannels) : QString(),
+                           QString::number(duration, 'f', 1),
+                           QString::number(fps, 'f', 1),
+                           videoCodec.isEmpty() ? QStringLiteral("none") : videoCodec,
+                           audioCodec.isEmpty() ? QStringLiteral("none") : audioCodec,
+                           riskStr);
+
+    Q_EMIT executionFinished(summary, true);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1946,8 +2323,8 @@ void AICommandRouter::handleSearchStockMedia(const QJsonObject &params)
         reply = m_nam->get(req);
     } else if (category == QStringLiteral("images")) {
         QString path = query.isEmpty()
-            ? QStringLiteral("pexels-proxy?type=images&page=%1&per_page=24").arg(page)
-            : QStringLiteral("pexels-proxy?type=images&query=%1&page=%2&per_page=24").arg(QUrl::toPercentEncoding(query)).arg(page);
+            ? QStringLiteral("pexels-proxy?type=photos&page=%1&per_page=24").arg(page)
+            : QStringLiteral("pexels-proxy?type=photos&query=%1&page=%2&per_page=24").arg(QUrl::toPercentEncoding(query)).arg(page);
         req = createSupabaseRequest(path);
         reply = m_nam->get(req);
     } else if (category == QStringLiteral("sfx")) {
@@ -1994,30 +2371,60 @@ void AICommandRouter::handleSearchStockMedia(const QJsonObject &params)
 
         if (category == QStringLiteral("videos")) {
             QJsonArray vids;
-            if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) {
-                vids = root[QStringLiteral("data")].toArray();
-            } else if (root.contains(QStringLiteral("videos")) && root[QStringLiteral("videos")].isArray()) {
+            if (root.contains(QStringLiteral("videos")) && root[QStringLiteral("videos")].isArray()) {
                 vids = root[QStringLiteral("videos")].toArray();
+            } else if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) {
+                vids = root[QStringLiteral("data")].toArray();
             }
 
             for (const auto &vVal : vids) {
                 QJsonObject v = vVal.toObject();
                 QString id = v[QStringLiteral("id")].isDouble() ? QString::number(v[QStringLiteral("id")].toVariant().toLongLong()) : v[QStringLiteral("id")].toString();
-                QString title = v.contains(QStringLiteral("title")) ? v[QStringLiteral("title")].toString() : QStringLiteral("Video #%1").arg(id);
-                double duration = v[QStringLiteral("duration")].toDouble();
-                int width = v[QStringLiteral("width")].toInt();
-                int height = v[QStringLiteral("height")].toInt();
-                QString previewUrl = v[QStringLiteral("image")].toString();
+                QString title;
+                if (v.contains(QStringLiteral("title")) && !v[QStringLiteral("title")].toString().isEmpty()) {
+                    title = v[QStringLiteral("title")].toString();
+                } else if (v.contains(QStringLiteral("metadata"))) {
+                    QJsonObject meta = v[QStringLiteral("metadata")].toObject();
+                    QString userName = meta[QStringLiteral("user")].toObject()[QStringLiteral("name")].toString();
+                    title = userName.isEmpty() ? QStringLiteral("Video #%1").arg(id) : QStringLiteral("Video by %1").arg(userName);
+                } else {
+                    title = QStringLiteral("Video #%1").arg(id);
+                }
+
+                double duration = 0.0;
+                int width = 0;
+                int height = 0;
+                QString previewUrl = v[QStringLiteral("preview")].toString();
+                if (previewUrl.isEmpty()) previewUrl = v[QStringLiteral("image")].toString();
                 QString downloadUrl;
 
-                QJsonArray files = v[QStringLiteral("video_files")].toArray();
-                for (const auto &fVal : files) {
-                    QJsonObject f = fVal.toObject();
-                    QString link = f[QStringLiteral("link")].toString();
-                    if (link.isEmpty()) continue;
-                    QString quality = f[QStringLiteral("quality")].toString();
-                    if (downloadUrl.isEmpty() || quality == QStringLiteral("hd") || quality == QStringLiteral("fhd")) {
-                        downloadUrl = link;
+                // 1. Check transformed "details" object from Supabase pexels-proxy
+                if (v.contains(QStringLiteral("details"))) {
+                    QJsonObject details = v[QStringLiteral("details")].toObject();
+                    downloadUrl = details[QStringLiteral("src")].toString();
+                    width = details[QStringLiteral("width")].toInt(1920);
+                    height = details[QStringLiteral("height")].toInt(1080);
+                    duration = details[QStringLiteral("duration")].toDouble(10.0);
+                }
+
+                // 2. Fallback to raw video_files or metadata.video_files
+                if (downloadUrl.isEmpty()) {
+                    width = v[QStringLiteral("width")].toInt(1920);
+                    height = v[QStringLiteral("height")].toInt(1080);
+                    duration = v[QStringLiteral("duration")].toDouble(10.0);
+
+                    QJsonArray files = v[QStringLiteral("video_files")].toArray();
+                    if (files.isEmpty() && v.contains(QStringLiteral("metadata"))) {
+                        files = v[QStringLiteral("metadata")].toObject()[QStringLiteral("video_files")].toArray();
+                    }
+                    for (const auto &fVal : files) {
+                        QJsonObject f = fVal.toObject();
+                        QString link = f[QStringLiteral("link")].toString();
+                        if (link.isEmpty()) continue;
+                        QString quality = f[QStringLiteral("quality")].toString();
+                        if (downloadUrl.isEmpty() || quality == QStringLiteral("hd") || quality == QStringLiteral("fhd")) {
+                            downloadUrl = link;
+                        }
                     }
                 }
                 if (downloadUrl.isEmpty() && !previewUrl.isEmpty()) downloadUrl = previewUrl;
@@ -2042,20 +2449,46 @@ void AICommandRouter::handleSearchStockMedia(const QJsonObject &params)
             }
         } else if (category == QStringLiteral("images")) {
             QJsonArray photos;
-            if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) photos = root[QStringLiteral("data")].toArray();
-            else if (root.contains(QStringLiteral("photos")) && root[QStringLiteral("photos")].isArray()) photos = root[QStringLiteral("photos")].toArray();
+            if (root.contains(QStringLiteral("photos")) && root[QStringLiteral("photos")].isArray()) photos = root[QStringLiteral("photos")].toArray();
+            else if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) photos = root[QStringLiteral("data")].toArray();
+            else if (root.contains(QStringLiteral("hits")) && root[QStringLiteral("hits")].isArray()) photos = root[QStringLiteral("hits")].toArray();
 
             for (const auto &pVal : photos) {
                 QJsonObject p = pVal.toObject();
                 QString id = p[QStringLiteral("id")].isDouble() ? QString::number(p[QStringLiteral("id")].toVariant().toLongLong()) : p[QStringLiteral("id")].toString();
                 QString alt = p[QStringLiteral("alt")].toString();
+                if (alt.isEmpty()) alt = p[QStringLiteral("title")].toString();
+                if (alt.isEmpty()) alt = p[QStringLiteral("tags")].toString();
                 if (alt.isEmpty()) alt = QStringLiteral("Photo #%1").arg(id);
-                int width = p[QStringLiteral("width")].toInt();
-                int height = p[QStringLiteral("height")].toInt();
-                QJsonObject src = p[QStringLiteral("src")].toObject();
-                QString previewUrl = src[QStringLiteral("medium")].toString();
-                QString downloadUrl = src[QStringLiteral("original")].toString();
-                if (downloadUrl.isEmpty()) downloadUrl = src[QStringLiteral("large2x")].toString();
+
+                int width = 0;
+                int height = 0;
+                QString previewUrl = p[QStringLiteral("preview")].toString();
+                QString downloadUrl;
+
+                // 1. Check transformed "details" object from Supabase pexels-proxy
+                if (p.contains(QStringLiteral("details"))) {
+                    QJsonObject details = p[QStringLiteral("details")].toObject();
+                    downloadUrl = details[QStringLiteral("src")].toString();
+                    width = details[QStringLiteral("width")].toInt(1920);
+                    height = details[QStringLiteral("height")].toInt(1080);
+                    if (details.contains(QStringLiteral("alt")) && !details[QStringLiteral("alt")].toString().isEmpty()) {
+                        alt = details[QStringLiteral("alt")].toString();
+                    }
+                }
+
+                // 2. Fallback to raw src object
+                if (downloadUrl.isEmpty()) {
+                    width = p[QStringLiteral("width")].toInt(1920);
+                    height = p[QStringLiteral("height")].toInt(1080);
+                    QJsonObject src = p[QStringLiteral("src")].toObject();
+                    if (previewUrl.isEmpty()) previewUrl = src[QStringLiteral("medium")].toString();
+                    downloadUrl = src[QStringLiteral("large2x")].toString();
+                    if (downloadUrl.isEmpty()) downloadUrl = src[QStringLiteral("original")].toString();
+                }
+
+                if (previewUrl.isEmpty() && p.contains(QStringLiteral("previewUrl"))) previewUrl = p[QStringLiteral("previewUrl")].toString();
+                if (downloadUrl.isEmpty() && p.contains(QStringLiteral("downloadUrl"))) downloadUrl = p[QStringLiteral("downloadUrl")].toString();
 
                 if (!downloadUrl.isEmpty()) {
                     QJsonObject itemObj;
@@ -2076,17 +2509,35 @@ void AICommandRouter::handleSearchStockMedia(const QJsonObject &params)
             }
         } else if (category == QStringLiteral("sfx")) {
             QJsonArray sounds;
-            if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) sounds = root[QStringLiteral("data")].toArray();
+            if (root.contains(QStringLiteral("soundEffects")) && root[QStringLiteral("soundEffects")].isArray()) sounds = root[QStringLiteral("soundEffects")].toArray();
+            else if (root.contains(QStringLiteral("data")) && root[QStringLiteral("data")].isArray()) sounds = root[QStringLiteral("data")].toArray();
             else if (root.contains(QStringLiteral("results")) && root[QStringLiteral("results")].isArray()) sounds = root[QStringLiteral("results")].toArray();
 
             for (const auto &sVal : sounds) {
                 QJsonObject s = sVal.toObject();
                 QString id = s[QStringLiteral("id")].isDouble() ? QString::number(s[QStringLiteral("id")].toVariant().toLongLong()) : s[QStringLiteral("id")].toString();
                 QString name = s[QStringLiteral("name")].toString();
-                double duration = s[QStringLiteral("duration")].toDouble();
-                QJsonObject previews = s[QStringLiteral("previews")].toObject();
-                QString downloadUrl = previews[QStringLiteral("preview-hq-mp3")].toString();
-                if (downloadUrl.isEmpty()) downloadUrl = previews[QStringLiteral("preview-lq-mp3")].toString();
+                if (name.isEmpty()) name = s[QStringLiteral("title")].toString();
+                if (name.isEmpty()) name = QStringLiteral("SFX #%1").arg(id);
+
+                double duration = 0.0;
+                QString downloadUrl;
+
+                // 1. Check transformed "details" object from Supabase freesound-proxy
+                if (s.contains(QStringLiteral("details"))) {
+                    downloadUrl = s[QStringLiteral("details")].toObject()[QStringLiteral("src")].toString();
+                } else if (s.contains(QStringLiteral("downloadUrl"))) {
+                    downloadUrl = s[QStringLiteral("downloadUrl")].toString();
+                } else if (s.contains(QStringLiteral("previews"))) {
+                    downloadUrl = s[QStringLiteral("previews")].toObject()[QStringLiteral("preview-hq-mp3")].toString();
+                    if (downloadUrl.isEmpty()) downloadUrl = s[QStringLiteral("previews")].toObject()[QStringLiteral("preview-lq-mp3")].toString();
+                }
+
+                if (s.contains(QStringLiteral("metadata"))) {
+                    duration = s[QStringLiteral("metadata")].toObject()[QStringLiteral("duration")].toDouble(1.0);
+                } else {
+                    duration = s[QStringLiteral("duration")].toDouble(1.0);
+                }
 
                 if (!downloadUrl.isEmpty()) {
                     QJsonObject itemObj;
@@ -2248,11 +2699,6 @@ void AICommandRouter::handleGenerateVoiceover(const QJsonObject &params)
         QString outPath = QStringLiteral("%1/voice_%2.mp3").arg(cacheDir).arg(QDateTime::currentMSecsSinceEpoch());
 
         auto finishImportAndInsert = [this, text, voiceNameOrId, trackId, frame, duration](const QString &localPath) {
-            int pos = frame;
-            if (pos < 0 && pCore) {
-                pos = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
-            }
-
             auto *tc = getTimelineController();
             auto tm = getTimelineModel();
             int targetTrack = trackId;
@@ -2269,6 +2715,22 @@ void AICommandRouter::handleGenerateVoiceover(const QJsonObject &params)
                     }
                 }
             }
+
+            int pos = frame;
+            if (pos < 0) {
+                int trackEnd = 0;
+                if (tm && targetTrack >= 0) {
+                    auto cids = tm->getTrackClips(targetTrack);
+                    for (int cid : cids) {
+                        int end = tm->getClipPosition(cid) + tm->getClipPlaytime(cid);
+                        if (end > trackEnd) trackEnd = end;
+                    }
+                }
+                int playheadPos = pCore ? pCore->getMonitorPosition(Kdenlive::ProjectMonitor) : 0;
+                pos = std::max(playheadPos, trackEnd);
+            }
+
+            int estimatedFrames = static_cast<int>(duration * (pCore ? pCore->getCurrentFps() : 25.0));
 
             QString binId;
             if (pCore && pCore->bin() && pCore->projectItemModel() && QFile::exists(localPath)) {
@@ -2291,13 +2753,15 @@ void AICommandRouter::handleGenerateVoiceover(const QJsonObject &params)
             data[QStringLiteral("track_id")] = targetTrack;
             data[QStringLiteral("playhead_frame")] = pos;
             data[QStringLiteral("duration_seconds")] = duration;
+            data[QStringLiteral("duration_frames")] = estimatedFrames;
+            data[QStringLiteral("end_frame")] = pos + estimatedFrames;
             data[QStringLiteral("local_path")] = localPath;
             data[QStringLiteral("text")] = text;
 
             Q_EMIT dataOutput(QStringLiteral("generate_voiceover"), data);
             Q_EMIT executionFinished(
-                i18n("Generated ElevenLabs neural voiceover for \"%1\" (%2s, Voice: %3).\nAuto-imported to Bin '%4' and inserted onto Audio Track %5 at frame %6.",
-                     text.left(35), QString::number(duration, 'f', 1), voiceNameOrId, binId, targetTrack, pos),
+                i18n("Generated ElevenLabs neural voiceover for \"%1\" (%2s, Voice: %3).\nAuto-imported to Bin '%4' and inserted onto Audio Track %5 at frame %6 to %7 (+%8f).",
+                     text.left(35), QString::number(duration, 'f', 1), voiceNameOrId, binId, targetTrack, pos, pos + estimatedFrames, estimatedFrames),
                 true);
         };
 
@@ -2368,11 +2832,6 @@ void AICommandRouter::handleInsertMediaUrl(const QJsonObject &params)
     QString localPath = QStringLiteral("%1/%2%3").arg(cacheDir, QString::fromUtf8(hash), ext);
 
     auto doImportAndInsert = [this, localPath, name, kind, trackId, frame](const QString &path) {
-        int pos = frame;
-        if (pos < 0 && pCore) {
-            pos = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
-        }
-
         auto *tc = getTimelineController();
         auto tm = getTimelineModel();
         int targetTrack = trackId;
@@ -2393,6 +2852,20 @@ void AICommandRouter::handleInsertMediaUrl(const QJsonObject &params)
                     if (!vTracks.isEmpty()) targetTrack = vTracks.last();
                 }
             }
+        }
+
+        int pos = frame;
+        if (pos < 0) {
+            int trackEnd = 0;
+            if (tm && targetTrack >= 0) {
+                auto cids = tm->getTrackClips(targetTrack);
+                for (int cid : cids) {
+                    int end = tm->getClipPosition(cid) + tm->getClipPlaytime(cid);
+                    if (end > trackEnd) trackEnd = end;
+                }
+            }
+            int playheadPos = pCore ? pCore->getMonitorPosition(Kdenlive::ProjectMonitor) : 0;
+            pos = std::max(playheadPos, trackEnd);
         }
 
         QString binId;
@@ -3027,6 +3500,629 @@ void AICommandRouter::handleSetProjectProfile(const QJsonObject &params)
 
     Q_EMIT executionFinished(i18n("Project profile changed to '%1' (%2x%3 @ %4 fps).", desc, QString::number(w), QString::number(h), QString::number(fps, 'f', 2)), true);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// SFX & TIMELINE AUDIO INTELLIGENCE (BEAT THIS + LOCAL SFX SYNTHESIS)
+// ════════════════════════════════════════════════════════════════════════════
+
+void AICommandRouter::handleDetectBeats(const QJsonObject &params)
+{
+    auto tm = getTimelineModel();
+    if (!tm) {
+        Q_EMIT executionFinished(i18n("No active timeline for beat analysis."), false);
+        return;
+    }
+
+    // 1. Locate beat_this_cpp binary
+    QString beatBin = QStandardPaths::findExecutable(QStringLiteral("beat_this_cpp"));
+    if (beatBin.isEmpty() || !QFile::exists(beatBin)) {
+        QStringList candidates = {
+            QCoreApplication::applicationDirPath() + QStringLiteral("/beat_this_cpp"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/build/bin/beat_this_cpp"),
+            QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/build/bin/beat_this_cpp"),
+            QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/beat_this_cpp/build/beat_this_cpp")
+        };
+        for (const QString &c : candidates) {
+            if (QFile::exists(c)) {
+                beatBin = c;
+                break;
+            }
+        }
+    }
+
+    if (beatBin.isEmpty() || !QFile::exists(beatBin)) {
+        Q_EMIT executionFinished(i18n("beat_this_cpp binary not found. Please compile beat_this_cpp."), false);
+        return;
+    }
+
+    // 2. Locate beat_this.onnx model
+    QString modelPath;
+    QStringList modelCandidates = {
+        QCoreApplication::applicationDirPath() + QStringLiteral("/beat_this.onnx"),
+        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/build/bin/beat_this.onnx"),
+        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/beat_this_cpp/onnx/beat_this.onnx"),
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("models/beat_this.onnx"))
+    };
+    for (const QString &m : modelCandidates) {
+        if (!m.isEmpty() && QFile::exists(m)) {
+            modelPath = m;
+            break;
+        }
+    }
+    if (modelPath.isEmpty()) {
+        Q_EMIT executionFinished(i18n("beat_this.onnx model not found."), false);
+        return;
+    }
+
+    // 3. Resolve input audio file path
+    QString audioPath = params[QStringLiteral("file_path")].toString().trimmed();
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    int trackId = params[QStringLiteral("track_id")].toInt(-1);
+    int clipOffset = 0;
+
+    if (audioPath.isEmpty()) {
+        if (clipId >= 0 && tm->isClip(clipId)) {
+            clipOffset = tm->getClipPosition(clipId);
+            QString binId = tm->getClipBinId(clipId);
+            if (pCore && pCore->projectItemModel()) {
+                auto binClip = pCore->projectItemModel()->getClipByBinID(binId);
+                if (binClip) audioPath = binClip->clipUrl();
+            }
+        } else if (trackId >= 0 && tm->isTrack(trackId)) {
+            auto cids = tm->getTrackClips(trackId);
+            if (!cids.empty()) {
+                int firstCid = *cids.begin();
+                clipOffset = tm->getClipPosition(firstCid);
+                QString binId = tm->getClipBinId(firstCid);
+                if (pCore && pCore->projectItemModel()) {
+                    auto binClip = pCore->projectItemModel()->getClipByBinID(binId);
+                    if (binClip) audioPath = binClip->clipUrl();
+                }
+            }
+        } else {
+            // Find first audio track with clips
+            for (int tid : tm->getAllTracksIds()) {
+                if (tm->isAudioTrack(tid)) {
+                    auto cids = tm->getTrackClips(tid);
+                    if (!cids.empty()) {
+                        int cid = *cids.begin();
+                        clipOffset = tm->getClipPosition(cid);
+                        QString binId = tm->getClipBinId(cid);
+                        if (pCore && pCore->projectItemModel()) {
+                            auto binClip = pCore->projectItemModel()->getClipByBinID(binId);
+                            if (binClip) { audioPath = binClip->clipUrl(); break; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (audioPath.isEmpty() || !QFile::exists(audioPath)) {
+        Q_EMIT executionFinished(i18n("No valid audio file or timeline clip found for beat detection."), false);
+        return;
+    }
+
+    // If input is video or non-WAV, extract temporary 44.1kHz audio via ffmpeg
+    QString cleanAudioPath = audioPath;
+    bool createdTempWav = false;
+    if (!audioPath.endsWith(QStringLiteral(".wav"), Qt::CaseInsensitive)) {
+        QString tempWav = QDir::temp().filePath(QStringLiteral("kdenlive_beat_%1.wav").arg(QDateTime::currentMSecsSinceEpoch()));
+        QProcess ffmpegProc;
+        QStringList fArgs = {QStringLiteral("-y"), QStringLiteral("-i"), audioPath,
+                             QStringLiteral("-vn"), QStringLiteral("-ac"), QStringLiteral("2"),
+                             QStringLiteral("-ar"), QStringLiteral("44100"), tempWav};
+        ffmpegProc.start(QStringLiteral("ffmpeg"), fArgs);
+        if (ffmpegProc.waitForFinished(45000) && QFile::exists(tempWav) && QFileInfo(tempWav).size() > 1000) {
+            cleanAudioPath = tempWav;
+            createdTempWav = true;
+        }
+    }
+
+    // 4. Run beat_this_cpp
+    QString tempJson = QDir::temp().filePath(QStringLiteral("kdenlive_beat_res_%1.json").arg(QDateTime::currentMSecsSinceEpoch()));
+    QProcess beatProc;
+    QStringList beatArgs = {modelPath, cleanAudioPath, QStringLiteral("--output-json"), tempJson};
+    beatProc.start(beatBin, beatArgs);
+    if (!beatProc.waitForStarted(5000)) {
+        if (createdTempWav) QFile::remove(cleanAudioPath);
+        Q_EMIT executionFinished(i18n("Failed to launch beat_this_cpp process."), false);
+        return;
+    }
+
+    if (!beatProc.waitForFinished(90000)) {
+        beatProc.kill();
+        if (createdTempWav) QFile::remove(cleanAudioPath);
+        Q_EMIT executionFinished(i18n("Beat This analysis timed out."), false);
+        return;
+    }
+
+    if (createdTempWav) QFile::remove(cleanAudioPath);
+
+    if (!QFile::exists(tempJson)) {
+        QString errStr = QString::fromUtf8(beatProc.readAllStandardError());
+        Q_EMIT executionFinished(i18n("beat_this_cpp failed to generate result: %1", errStr), false);
+        return;
+    }
+
+    QFile jsonFile(tempJson);
+    QByteArray jsonData;
+    if (jsonFile.open(QIODevice::ReadOnly)) {
+        jsonData = jsonFile.readAll();
+        jsonFile.close();
+    }
+    QFile::remove(tempJson);
+
+    QJsonDocument doc = QJsonDocument::fromJson(jsonData);
+    if (!doc.isObject()) {
+        Q_EMIT executionFinished(i18n("Invalid JSON returned by beat_this_cpp."), false);
+        return;
+    }
+
+    QJsonObject resObj = doc.object();
+    double bpm = resObj[QStringLiteral("bpm")].toDouble();
+    QJsonArray beatsArr = resObj[QStringLiteral("beats")].toArray();
+    QJsonArray downbeatsArr = resObj[QStringLiteral("downbeats")].toArray();
+
+    // 5. Optionally generate timeline guide markers
+    bool generateGuides = params[QStringLiteral("generate_guides")].toBool(false);
+    QString guideCategory = params[QStringLiteral("guide_category")].toString(QStringLiteral("downbeats")).toLower();
+    int markersAdded = 0;
+
+    if (generateGuides && pCore && tm->getGuideModel()) {
+        const QJsonArray &targetList = (guideCategory == QStringLiteral("beats")) ? beatsArr : downbeatsArr;
+        double fps = pCore->getCurrentFps();
+        for (int i = 0; i < targetList.size(); ++i) {
+            double sec = targetList[i].toDouble();
+            int frame = clipOffset + qRound(sec * fps);
+            QString label = (guideCategory == QStringLiteral("beats"))
+                ? QStringLiteral("Beat %1").arg(i + 1)
+                : QStringLiteral("Bar %1").arg(i + 1);
+            tm->getGuideModel()->addMarker(GenTime(frame, fps), label);
+            markersAdded++;
+        }
+    }
+
+    resObj[QStringLiteral("guides_created")] = markersAdded;
+    resObj[QStringLiteral("clip_offset_frame")] = clipOffset;
+
+    Q_EMIT dataOutput(QStringLiteral("detect_beats"), resObj);
+    Q_EMIT executionFinished(i18n("Beat This analysis complete: Estimated BPM %1, detected %2 beats, %3 downbeats (%4 guide markers added).",
+                                  QString::number(bpm, 'f', 1), beatsArr.size(), downbeatsArr.size(), markersAdded), true);
+}
+
+void AICommandRouter::handleGenerateLocalSfx(const QJsonObject &params)
+{
+    QString prompt = params[QStringLiteral("prompt")].toString().trimmed();
+    if (prompt.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Prompt required for generate_local_sfx."), false);
+        return;
+    }
+
+    double duration = params[QStringLiteral("duration")].toDouble(0.0);
+    int targetFrame = params[QStringLiteral("target_beat_frame")].toInt(-1);
+    int reqTrackId = params[QStringLiteral("track_id")].toInt(-1);
+
+    // 1. Locate python venv
+    QString pythonExec;
+    QString venvPy = QStringLiteral("/home/lincoln/.local/share/kdenlive/venv/bin/python");
+    if (QFile::exists(venvPy)) {
+        pythonExec = venvPy;
+    } else {
+        pythonExec = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    }
+
+    if (pythonExec.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Python executable not found for SFX synthesis."), false);
+        return;
+    }
+
+    // 2. Locate sfx_generator.py
+    QString scriptPath;
+    QStringList candidates = {
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/audio/sfx_generator.py"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/data/scripts/audio/sfx_generator.py"),
+        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/audio/sfx_generator.py"),
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/audio/sfx_generator.py"))
+    };
+    for (const QString &c : candidates) {
+        if (!c.isEmpty() && QFile::exists(c)) {
+            scriptPath = c;
+            break;
+        }
+    }
+
+    if (scriptPath.isEmpty()) {
+        Q_EMIT executionFinished(i18n("sfx_generator.py script not found."), false);
+        return;
+    }
+
+    // 3. Run sfx_generator.py
+    QProcess proc;
+    QStringList args = {scriptPath, QStringLiteral("--prompt"), prompt};
+    if (duration > 0.05) {
+        args << QStringLiteral("--duration") << QString::number(duration, 'f', 2);
+    }
+
+    proc.start(pythonExec, args);
+    if (!proc.waitForStarted(5000)) {
+        Q_EMIT executionFinished(i18n("Failed to launch sfx_generator.py."), false);
+        return;
+    }
+
+    if (!proc.waitForFinished(60000)) {
+        proc.kill();
+        Q_EMIT executionFinished(i18n("Local SFX synthesis timed out."), false);
+        return;
+    }
+
+    QByteArray out = proc.readAllStandardOutput();
+    QJsonDocument doc = QJsonDocument::fromJson(out);
+    if (!doc.isObject()) {
+        QString errStr = QString::fromUtf8(proc.readAllStandardError());
+        Q_EMIT executionFinished(i18n("Local SFX synthesis failed: %1", errStr), false);
+        return;
+    }
+
+    QJsonObject resObj = doc.object();
+    QString filePath = resObj[QStringLiteral("file_path")].toString();
+    double peakOffset = resObj[QStringLiteral("peak_offset_seconds")].toDouble(0.0);
+    double actualDuration = resObj[QStringLiteral("duration")].toDouble(duration);
+    QString category = resObj[QStringLiteral("category")].toString();
+
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+        Q_EMIT executionFinished(i18n("Synthesized audio file missing: %1", filePath), false);
+        return;
+    }
+
+    // 4. Resolve target audio track & frame
+    auto *tc = getTimelineController();
+    auto tm = getTimelineModel();
+    int targetTrack = reqTrackId;
+    if (targetTrack < 0 && tm && tc) {
+        // Look for audio tracks. Prefer the second audio track (A2/SFX) if available, otherwise first.
+        QList<int> audioTracks;
+        for (int t : tm->getAllTracksIds()) {
+            if (tm->isAudioTrack(t)) audioTracks.append(t);
+        }
+        if (audioTracks.size() >= 2) {
+            targetTrack = audioTracks.at(1); // Track A2
+        } else if (!audioTracks.isEmpty()) {
+            targetTrack = audioTracks.first();
+        }
+    }
+
+    // 5. Calculate transient-aligned insertion frame
+    int insertFrame = targetFrame;
+    double fps = (pCore) ? pCore->getCurrentFps() : 25.0;
+    if (insertFrame >= 0) {
+        int peakFrames = qRound(peakOffset * fps);
+        insertFrame = qMax(0, targetFrame - peakFrames);
+    } else {
+        int playheadPos = (pCore) ? pCore->getMonitorPosition(Kdenlive::ProjectMonitor) : 0;
+        insertFrame = playheadPos;
+    }
+
+    // 6. Import clip into bin and insert onto timeline
+    QString binId;
+    if (pCore && pCore->bin() && pCore->projectItemModel() && QFile::exists(filePath)) {
+        Fun undo;
+        Fun redo;
+        auto insertCallback = [tc, tm, targetTrack, insertFrame](const QString &insertedBinId) {
+            if (tc && tm && targetTrack >= 0 && !insertedBinId.isEmpty() && insertFrame >= 0) {
+                tc->insertClips(targetTrack, insertFrame, {insertedBinId}, true, true);
+            }
+        };
+        binId = ClipCreator::createClipFromFile(filePath, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo, insertCallback);
+        if (binId != QStringLiteral("-1")) {
+            pCore->pushUndo(undo, redo, i18nc("@action", "Add Synthesized SFX"));
+        }
+    }
+
+    resObj[QStringLiteral("bin_id")] = binId;
+    resObj[QStringLiteral("track_id")] = targetTrack;
+    resObj[QStringLiteral("inserted_frame")] = insertFrame;
+    resObj[QStringLiteral("target_beat_frame")] = targetFrame;
+
+    Q_EMIT dataOutput(QStringLiteral("generate_local_sfx"), resObj);
+    Q_EMIT executionFinished(i18n("Generated local '%1' SFX (%2s, peak at %3s). Inserted onto Track %4 at frame %5 (aligned with target beat frame %6). File: %7",
+                                  category, QString::number(actualDuration, 'f', 2), QString::number(peakOffset, 'f', 3),
+                                  targetTrack, insertFrame, targetFrame, filePath), true);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROJECT BIN FOLDER & ASSET ORGANIZATION
+// ════════════════════════════════════════════════════════════════════════════
+
+static std::shared_ptr<ProjectFolder> findFolderHelper(const QString &folderId, const QString &folderName)
+{
+    if (!pCore || !pCore->projectItemModel()) return nullptr;
+    auto model = pCore->projectItemModel();
+    if (!folderId.isEmpty() && folderId != QStringLiteral("-1")) {
+        auto folder = model->getFolderByBinId(folderId);
+        if (folder) return folder;
+    }
+    if (folderName.isEmpty()) return nullptr;
+
+    auto root = model->getRootFolder();
+    if (!root) return nullptr;
+
+    std::function<std::shared_ptr<ProjectFolder>(const std::shared_ptr<TreeItem>&)> searchTree =
+        [&](const std::shared_ptr<TreeItem> &item) -> std::shared_ptr<ProjectFolder> {
+            for (int i = 0; i < item->childCount(); ++i) {
+                auto child = item->child(i);
+                auto projItem = std::dynamic_pointer_cast<AbstractProjectItem>(child);
+                if (projItem && projItem->itemType() == AbstractProjectItem::FolderItem) {
+                    if (projItem->name().compare(folderName, Qt::CaseInsensitive) == 0 ||
+                        projItem->name().contains(folderName, Qt::CaseInsensitive)) {
+                        return std::dynamic_pointer_cast<ProjectFolder>(projItem);
+                    }
+                    auto sub = searchTree(child);
+                    if (sub) return sub;
+                }
+            }
+            return nullptr;
+        };
+
+    return searchTree(root);
+}
+
+void AICommandRouter::handleCreateBinFolder(const QJsonObject &params)
+{
+    if (!pCore || !pCore->projectItemModel()) {
+        Q_EMIT executionFinished(i18n("Project Item Model not available."), false);
+        return;
+    }
+    auto model = pCore->projectItemModel();
+
+    QString parentId = params[QStringLiteral("parent_folder_id")].toString(QStringLiteral("-1")).trimmed();
+    QString parentName = params[QStringLiteral("parent_folder_name")].toString().trimmed();
+    if (!parentName.isEmpty()) {
+        auto parentFolder = findFolderHelper(QString(), parentName);
+        if (parentFolder) {
+            parentId = parentFolder->clipId();
+        }
+    }
+    if (parentId.isEmpty()) parentId = QStringLiteral("-1");
+
+    QStringList folderNames;
+    if (params.contains(QStringLiteral("folders")) && params[QStringLiteral("folders")].isArray()) {
+        QJsonArray arr = params[QStringLiteral("folders")].toArray();
+        for (const auto &val : arr) {
+            QString name = val.toString().trimmed();
+            if (!name.isEmpty()) folderNames << name;
+        }
+    }
+    if (folderNames.isEmpty()) {
+        QString rawName = params[QStringLiteral("name")].toString().trimmed();
+        if (!rawName.isEmpty()) {
+            if (rawName.contains(QLatin1Char(',')) || rawName.contains(QLatin1Char('\n'))) {
+                QStringList parts = rawName.split(QRegularExpression(QStringLiteral("[,\\n]+")), Qt::SkipEmptyParts);
+                for (QString &p : parts) {
+                    p = p.trimmed();
+                    p.remove(QRegularExpression(QStringLiteral("^\\d+[\\.\\-\\)\\s]+")));
+                    if (!p.isEmpty()) folderNames << p;
+                }
+            } else {
+                folderNames << rawName;
+            }
+        }
+    }
+
+    if (folderNames.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Folder name(s) required to create folder(s)."), false);
+        return;
+    }
+
+    QJsonArray createdArray;
+    QStringList createdNames;
+
+    for (const QString &fName : folderNames) {
+        auto existing = findFolderHelper(QString(), fName);
+        if (existing) {
+            QJsonObject fObj;
+            fObj[QStringLiteral("id")] = existing->clipId();
+            fObj[QStringLiteral("name")] = existing->name();
+            fObj[QStringLiteral("parent_id")] = parentId;
+            fObj[QStringLiteral("status")] = QStringLiteral("already_exists");
+            createdArray.append(fObj);
+            createdNames << QStringLiteral("%1 (exists, id=%2)").arg(existing->name(), existing->clipId());
+            continue;
+        }
+
+        QString newId;
+        Fun undo = []() { return true; };
+        Fun redo = []() { return true; };
+        bool ok = model->requestAddFolder(newId, fName, parentId, undo, redo);
+        if (ok) {
+            pCore->pushUndo(undo, redo, i18n("Create bin folder"));
+            QJsonObject fObj;
+            fObj[QStringLiteral("id")] = newId;
+            fObj[QStringLiteral("name")] = fName;
+            fObj[QStringLiteral("parent_id")] = parentId;
+            fObj[QStringLiteral("status")] = QStringLiteral("created");
+            createdArray.append(fObj);
+            createdNames << QStringLiteral("%1 (id=%2)").arg(fName, newId);
+        }
+    }
+
+    QJsonObject res;
+    res[QStringLiteral("created_folders")] = createdArray;
+    res[QStringLiteral("count")] = createdArray.size();
+
+    Q_EMIT dataOutput(QStringLiteral("create_bin_folder"), res);
+    Q_EMIT executionFinished(i18n("Created %1 Project Bin folder(s): %2", createdArray.size(), createdNames.join(QStringLiteral(", "))), true);
+}
+
+void AICommandRouter::handleListBinFolders(const QJsonObject &params)
+{
+    if (!pCore || !pCore->projectItemModel()) {
+        Q_EMIT executionFinished(i18n("Project Item Model not available."), false);
+        return;
+    }
+    bool includeClips = params[QStringLiteral("include_clips")].toBool(false);
+    auto model = pCore->projectItemModel();
+    auto root = model->getRootFolder();
+    if (!root) {
+        Q_EMIT executionFinished(i18n("Root folder not available."), false);
+        return;
+    }
+
+    QJsonArray foldersArray;
+    std::function<void(const std::shared_ptr<TreeItem>&, const QString&)> collect =
+        [&](const std::shared_ptr<TreeItem> &item, const QString &pId) {
+            for (int i = 0; i < item->childCount(); ++i) {
+                auto child = item->child(i);
+                auto projItem = std::dynamic_pointer_cast<AbstractProjectItem>(child);
+                if (projItem && projItem->itemType() == AbstractProjectItem::FolderItem) {
+                    QJsonObject fObj;
+                    fObj[QStringLiteral("id")] = projItem->clipId();
+                    fObj[QStringLiteral("name")] = projItem->name();
+                    fObj[QStringLiteral("parent_id")] = pId;
+
+                    int clipCount = 0;
+                    QJsonArray clipsArr;
+                    for (int j = 0; j < child->childCount(); ++j) {
+                        auto subChild = child->child(j);
+                        auto subItem = std::dynamic_pointer_cast<AbstractProjectItem>(subChild);
+                        if (subItem && subItem->itemType() == AbstractProjectItem::ClipItem) {
+                            clipCount++;
+                            if (includeClips) {
+                                QJsonObject cObj;
+                                cObj[QStringLiteral("id")] = subItem->clipId();
+                                cObj[QStringLiteral("name")] = subItem->name();
+                                clipsArr.append(cObj);
+                            }
+                        }
+                    }
+                    fObj[QStringLiteral("clip_count")] = clipCount;
+                    if (includeClips) fObj[QStringLiteral("clips")] = clipsArr;
+
+                    foldersArray.append(fObj);
+                    collect(child, projItem->clipId());
+                }
+            }
+        };
+
+    collect(root, QStringLiteral("-1"));
+
+    QJsonObject res;
+    res[QStringLiteral("folders")] = foldersArray;
+    res[QStringLiteral("count")] = foldersArray.size();
+
+    Q_EMIT dataOutput(QStringLiteral("list_bin_folders"), res);
+    Q_EMIT executionFinished(i18n("Project Bin has %1 folder(s).", foldersArray.size()), true);
+}
+
+void AICommandRouter::handleMoveBinClipToFolder(const QJsonObject &params)
+{
+    if (!pCore || !pCore->projectItemModel()) {
+        Q_EMIT executionFinished(i18n("Project Item Model not available."), false);
+        return;
+    }
+    QString rawClipId = params[QStringLiteral("clip_id")].toVariant().toString().trimmed();
+    if (rawClipId.isEmpty()) {
+        Q_EMIT executionFinished(i18n("clip_id required to move clip to folder."), false);
+        return;
+    }
+
+    auto model = pCore->projectItemModel();
+    QString binId = rawClipId;
+
+    auto tm = getTimelineModel();
+    if (tm && tm->isClip(rawClipId.toInt())) {
+        binId = tm->getClipBinId(rawClipId.toInt());
+    }
+
+    auto clip = model->getClipByBinID(binId);
+    if (!clip) {
+        Q_EMIT executionFinished(i18n("Bin clip '%1' not found in Project Bin.", rawClipId), false);
+        return;
+    }
+
+    QString folderId = params[QStringLiteral("folder_id")].toString().trimmed();
+    QString folderName = params[QStringLiteral("folder_name")].toString().trimmed();
+
+    auto targetFolder = findFolderHelper(folderId, folderName);
+    if (!targetFolder) {
+        Q_EMIT executionFinished(i18n("Target bin folder not found (id: '%1', name: '%2').", folderId, folderName), false);
+        return;
+    }
+
+    clip->changeParent(targetFolder);
+
+    QJsonObject res;
+    res[QStringLiteral("clip_id")] = binId;
+    res[QStringLiteral("clip_name")] = clip->name();
+    res[QStringLiteral("folder_id")] = targetFolder->clipId();
+    res[QStringLiteral("folder_name")] = targetFolder->name();
+
+    Q_EMIT dataOutput(QStringLiteral("move_bin_clip_to_folder"), res);
+    Q_EMIT executionFinished(i18n("Moved clip '%1' (id=%2) into folder '%3' (id=%4).",
+                                  clip->name(), binId, targetFolder->name(), targetFolder->clipId()), true);
+}
+
+void AICommandRouter::handleRenameBinFolder(const QJsonObject &params)
+{
+    if (!pCore || !pCore->projectItemModel()) {
+        Q_EMIT executionFinished(i18n("Project Item Model not available."), false);
+        return;
+    }
+    QString newName = params[QStringLiteral("new_name")].toString().trimmed();
+    if (newName.isEmpty()) {
+        Q_EMIT executionFinished(i18n("new_name required to rename folder."), false);
+        return;
+    }
+
+    QString folderId = params[QStringLiteral("folder_id")].toString().trimmed();
+    QString currName = params[QStringLiteral("current_name")].toString().trimmed();
+
+    auto folder = findFolderHelper(folderId, currName);
+    if (!folder) {
+        Q_EMIT executionFinished(i18n("Folder not found to rename."), false);
+        return;
+    }
+
+    QString oldName = folder->name();
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    bool ok = pCore->projectItemModel()->requestRenameFolder(folder, newName, undo, redo);
+    if (ok) {
+        pCore->pushUndo(undo, redo, i18n("Rename bin folder"));
+        Q_EMIT executionFinished(i18n("Renamed folder '%1' to '%2' (id=%3).", oldName, newName, folder->clipId()), true);
+    } else {
+        Q_EMIT executionFinished(i18n("Failed to rename folder '%1'.", oldName), false);
+    }
+}
+
+void AICommandRouter::handleDeleteBinFolder(const QJsonObject &params)
+{
+    if (!pCore || !pCore->projectItemModel()) {
+        Q_EMIT executionFinished(i18n("Project Item Model not available."), false);
+        return;
+    }
+    QString folderId = params[QStringLiteral("folder_id")].toString().trimmed();
+    QString folderName = params[QStringLiteral("folder_name")].toString().trimmed();
+
+    auto folder = findFolderHelper(folderId, folderName);
+    if (!folder) {
+        Q_EMIT executionFinished(i18n("Folder not found to delete."), false);
+        return;
+    }
+
+    QString name = folder->name();
+    QString id = folder->clipId();
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    bool ok = pCore->projectItemModel()->requestBinClipDeletion(folder, undo, redo);
+    if (ok) {
+        pCore->pushUndo(undo, redo, i18n("Delete bin folder"));
+        Q_EMIT executionFinished(i18n("Deleted bin folder '%1' (id=%2).", name, id), true);
+    } else {
+        Q_EMIT executionFinished(i18n("Failed to delete bin folder '%1'.", name), false);
+    }
+}
+
 
 
 

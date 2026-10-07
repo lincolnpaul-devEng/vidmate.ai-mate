@@ -455,6 +455,26 @@ int TimelineModel::getTrackClipsCount(int trackId) const
     return count;
 }
 
+std::unordered_set<int> TimelineModel::getTrackClips(int trackId) const
+{
+    READ_LOCK();
+    if (isTrack(trackId)) {
+        return getTrackById_const(trackId)->getClipsInRange(0, -1);
+    }
+    return {};
+}
+
+std::vector<int> TimelineModel::getAllClipIds() const
+{
+    READ_LOCK();
+    std::vector<int> ids;
+    ids.reserve(m_allClips.size());
+    for (const auto &pair : m_allClips) {
+        ids.push_back(pair.first);
+    }
+    return ids;
+}
+
 int TimelineModel::getClipByStartPosition(int trackId, int position) const
 {
     READ_LOCK();
