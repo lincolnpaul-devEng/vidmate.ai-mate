@@ -10,6 +10,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QProcess>
+#include <QNetworkRequest>
+#include <QNetworkAccessManager>
 
 class TimelineController;
 class TimelineItemModel;
@@ -77,6 +79,11 @@ private:
     void handleSearchStockMedia(const QJsonObject &params);
     void handleGenerateVoiceover(const QJsonObject &params);
     void handleInsertMediaUrl(const QJsonObject &params);
+    void handleGetAvailableEffects(const QJsonObject &params);
+    void handleGetAvailableCompositions(const QJsonObject &params);
+    void handleGetEffectParameters(const QJsonObject &params);
+    void handleSetEffectParameter(const QJsonObject &params);
+    void handleAddTrackEffect(const QJsonObject &params);
     void handleDetectScenes(const QJsonObject &params);
     void handleGenerateGlslShader(const QJsonObject &params);
     void handleWriteMemory(const QJsonObject &params);
@@ -88,6 +95,9 @@ private:
     void executeNatronVfxJob(const QJsonObject &params);
     void handleTrackObject(const QJsonObject &params);
 
+    QNetworkRequest createSupabaseRequest(const QString &functionPath) const;
+
+    QNetworkAccessManager *m_nam{nullptr};
     QProcess *m_natronProcess{nullptr};
     QString m_lastVfxOutputPath;
 };

@@ -28,6 +28,8 @@ set(kdenlive_SRCS
   widgets/veloassetwidget.cpp
   widgets/authmanager.cpp
   widgets/aimemorystore.cpp
+  widgets/aisessionmanager.cpp
+  widgets/aisessiondialog.cpp
   widgets/magicmaskwidget.cpp
   ../../agent.cpp/src/context_compaction.cpp
   ../../agent.cpp/src/run_ledger.cpp

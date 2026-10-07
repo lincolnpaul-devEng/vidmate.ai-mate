@@ -128,6 +128,8 @@ private Q_SLOTS:
     void slotGoalStepStarted(int step, int maxSteps, const QString &actionName);
     void slotGoalStepFinished(int step, int maxSteps, const QString &actionName, bool success);
     void slotGoalFinished(const QString &finalSummary);
+    void slotOpenSessionDialog();
+    void slotNewSession();
 
 private:
     void setupUi();
@@ -160,6 +162,9 @@ private:
     QPushButton *m_clearBtn{nullptr};
     QPushButton *m_assetStudioBtn{nullptr};
     QPushButton *m_inspectorBtn{nullptr};
+    QPushButton *m_sessionTitleBtn{nullptr};
+    QPushButton *m_newSessionBtn{nullptr};
+    QPushButton *m_sessionsHistoryBtn{nullptr};
     QLabel *m_modeBadge{nullptr};
     QComboBox *m_engineTargetSelector{nullptr};
 

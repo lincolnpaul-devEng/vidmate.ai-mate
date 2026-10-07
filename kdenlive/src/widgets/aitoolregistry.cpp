@@ -167,11 +167,74 @@ void AIToolRegistry::registerAllTools()
         props[QStringLiteral("clip_id")] = intParam(QStringLiteral(
             "Clip ID. Use -1 to apply to current selection."));
         props[QStringLiteral("effect_id")] = stringParam(QStringLiteral(
-            "Effect identifier, e.g. 'frei0r.glow', 'frei0r.glitch0r', 'boxblur', 'volume', "
-            "'brightness', 'charcoal', 'sepia', 'frei0r.coloradj_RGB'."));
+            "Effect identifier or alias, e.g. 'transform' (qtblend), 'boxblur', 'frei0r.glow', "
+            "'lift_gamma_gain', 'volume', 'brightness', 'sepia', 'vignette', 'fadein', 'fadeout'."));
+        props[QStringLiteral("parameters")] = stringParam(QStringLiteral(
+            "Optional JSON object of initial parameter values to configure upon adding."));
         addTool(QStringLiteral("add_effect"),
-                QStringLiteral("Apply a video/audio effect to a clip. Supports frei0r, MLT built-in, and LADSPA effects."),
+                QStringLiteral("Apply a video/audio effect to a clip. Supports Transform (qtblend), color grading, blurs, and audio filters."),
                 makeParams(props, {QStringLiteral("effect_id")}));
+    }
+
+    // 7b. add_track_effect — apply effect to entire track or master
+    {
+        QJsonObject props;
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral(
+            "Track ID to apply effect to. Use -1 for Master Output Track."));
+        props[QStringLiteral("effect_id")] = stringParam(QStringLiteral(
+            "Effect identifier, e.g. 'qtblend', 'lift_gamma_gain', 'volume', 'audio_compressor'."));
+        addTool(QStringLiteral("add_track_effect"),
+                QStringLiteral("Apply an effect/filter to an entire video/audio track or to the Master Output timeline."),
+                makeParams(props, {QStringLiteral("effect_id")}));
+    }
+
+    // 7c. get_available_effects — discover all available effects and plugins
+    {
+        QJsonObject props;
+        props[QStringLiteral("query")] = stringParam(QStringLiteral(
+            "Search keyword to filter effects (e.g. 'blur', 'color', 'transform', 'noise', 'glow')."));
+        props[QStringLiteral("category")] = enumParam(
+            QStringLiteral("Filter by effect category."),
+            {QStringLiteral("all"), QStringLiteral("video"), QStringLiteral("audio")});
+        addTool(QStringLiteral("get_available_effects"),
+                QStringLiteral("Query and discover all available built-in, frei0r, MLT, and LADSPA effects/plugins registered in Kdenlive."),
+                makeParams(props, {}));
+    }
+
+    // 7d. get_available_compositions — discover all transitions and compositions
+    {
+        QJsonObject props;
+        props[QStringLiteral("query")] = stringParam(QStringLiteral(
+            "Search keyword for transitions (e.g. 'dissolve', 'wipe', 'luma', 'slide', 'qtblend')."));
+        addTool(QStringLiteral("get_available_compositions"),
+                QStringLiteral("Query and list all available transition types, luma wipes, and track composition blend modes in Kdenlive."),
+                makeParams(props, {}));
+    }
+
+    // 7e. get_effect_parameters — inspect parameter names, types, and current values
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID to inspect."));
+        props[QStringLiteral("effect_id")] = stringParam(QStringLiteral(
+            "Effect ID on the clip (e.g. 'qtblend', 'boxblur', 'lift_gamma_gain')."));
+        addTool(QStringLiteral("get_effect_parameters"),
+                QStringLiteral("Inspect the exact parameter schema, minimum/maximum limits, default values, and current values of an effect applied to a clip."),
+                makeParams(props, {QStringLiteral("clip_id"), QStringLiteral("effect_id")}));
+    }
+
+    // 7f. set_effect_parameter — tweak or animate an effect parameter
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Clip ID."));
+        props[QStringLiteral("effect_id")] = stringParam(QStringLiteral(
+            "Effect ID on the clip (e.g. 'qtblend', 'boxblur', 'lift_gamma_gain')."));
+        props[QStringLiteral("param_name")] = stringParam(QStringLiteral(
+            "Parameter name to modify (e.g. 'rect', 'rotation', 'opacity', 'radius', 'gain', 'compositing')."));
+        props[QStringLiteral("value")] = stringParam(QStringLiteral(
+            "New value or animated keyframe string (e.g. '0 0 1920 1080 1', '45', '12.5')."));
+        addTool(QStringLiteral("set_effect_parameter"),
+                QStringLiteral("Tweak or animate an effect control parameter on a clip like a normal user in the Effects panel."),
+                makeParams(props, {QStringLiteral("clip_id"), QStringLiteral("effect_id"), QStringLiteral("param_name"), QStringLiteral("value")}));
     }
 
     // 8. remove_effect — remove effect from clip

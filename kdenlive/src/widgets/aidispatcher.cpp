@@ -489,6 +489,14 @@ void AIDispatcher::clearConversation()
     m_currentGoal.clear();
 }
 
+void AIDispatcher::setConversationMessages(const QJsonArray &messages)
+{
+    m_conversationMessages = messages;
+    m_goalActive = false;
+    m_currentGoal.clear();
+    m_currentStep = 0;
+}
+
 void AIDispatcher::cancelCurrentGoal()
 {
     if (m_goalActive) {

@@ -51,6 +51,9 @@ public:
     void cancelCurrentGoal();
     void clearConversation();
 
+    QJsonArray conversationMessages() const { return m_conversationMessages; }
+    void setConversationMessages(const QJsonArray &messages);
+
     bool isGoalActive() const { return m_goalActive; }
     int currentStep() const { return m_currentStep; }
     int maxSteps() const { return m_maxSteps; }

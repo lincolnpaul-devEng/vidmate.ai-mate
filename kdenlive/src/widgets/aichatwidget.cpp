@@ -19,6 +19,9 @@
 #include "aidispatcher.h"
 #include "aicommandrouter.h"
 #include "authmanager.h"
+#include "aisessionmanager.h"
+#include "aisessiondialog.h"
+#include "doc/kdenlivedoc.h"
 #include "core.h"
 #include <QTabWidget>
 #include <QDesktopServices>
@@ -148,6 +151,69 @@ AIChatWidget::AIChatWidget(QWidget *parent)
     connect(m_statusTimer, &QTimer::timeout, this, &AIChatWidget::slotUpdateLiveTimer);
     connect(AuthManager::instance(), &AuthManager::authStateChanged, this, &AIChatWidget::slotAuthStateChanged);
 
+    connect(AISessionManager::instance(), &AISessionManager::sessionLoaded, this,
+            [this](const AISessionMetadata &meta, const QVector<AISessionStep> &steps, const QJsonArray &llmContext) {
+                m_messages.clear();
+                m_toolOutcomes.clear();
+                m_sessionMetrics = SessionMetrics{};
+                m_sessionMetrics.lastModel = meta.lastModel;
+                m_sessionMetrics.totalInputTokens = meta.totalTokens;
+
+                for (const auto &step : steps) {
+                    ChatMessageEntry entry;
+                    if (step.type == QStringLiteral("USER_INPUT")) {
+                        entry.role = ChatMessageEntry::User;
+                        entry.text = step.content;
+                    } else if (step.type == QStringLiteral("ASSISTANT")) {
+                        entry.role = ChatMessageEntry::Assistant;
+                        entry.text = step.content;
+                        entry.thinkingText = step.thinking;
+                    } else if (step.type == QStringLiteral("TOOL_RESULT")) {
+                        entry.role = ChatMessageEntry::Tool;
+                        entry.toolName = step.toolName;
+                        entry.toolArgsSummary = step.toolArgsSummary;
+                        entry.toolSuccess = step.toolSuccess;
+                        entry.toolError = step.toolError;
+                        entry.text = step.content;
+                    } else {
+                        entry.role = ChatMessageEntry::System;
+                        entry.text = step.content;
+                    }
+                    entry.timestamp = step.createdAt;
+                    m_messages.append(entry);
+                }
+
+                if (m_sessionTitleBtn) {
+                    m_sessionTitleBtn->setText(meta.title.isEmpty() ? i18n("Untitled Session") : meta.title);
+                }
+
+                if (m_dispatcher) {
+                    m_dispatcher->setConversationMessages(llmContext);
+                }
+
+                rebuildMessageView();
+                scrollToBottomIfFollowing();
+            });
+
+    connect(AISessionManager::instance(), &AISessionManager::sessionChanged, this, [this](const QString &/*sessionId*/) {
+        auto meta = AISessionManager::instance()->activeSessionMetadata();
+        if (m_sessionTitleBtn) {
+            m_sessionTitleBtn->setText(meta.title.isEmpty() ? i18n("Untitled Session") : meta.title);
+        }
+    });
+
+    // Auto-resume latest session for current project or create new
+    QString currentProj;
+    if (pCore && pCore->currentDoc()) {
+        currentProj = pCore->currentDoc()->url().toLocalFile();
+    }
+    QString lastSession = AISessionManager::instance()->resumeLatestForProject(currentProj);
+    if (!lastSession.isEmpty()) {
+        AISessionManager::instance()->loadSession(lastSession);
+    } else {
+        AISessionManager::instance()->createNewSession(currentProj);
+    }
+
     updateMetricsDisplay(0, 0, m_dispatcher->currentModel());
     m_dispatcher->fetchAvailableModels();
 }
@@ -262,6 +328,47 @@ void AIChatWidget::setupWorkspacePage(QWidget *page)
     headerLayout->addWidget(m_settingsBtn);
     headerLayout->addWidget(m_clearBtn);
     mainLayout->addWidget(headerWidget);
+
+    // ── Session Control Bar (Antigravity-inspired session switcher & controls) ─
+    auto *sessionWidget = new QWidget(page);
+    sessionWidget->setStyleSheet(QStringLiteral(
+        "QWidget { background-color: #252526; border-bottom: 1px solid #2d2d2d; padding: 2px 4px; }"
+    ));
+    auto *sessionLayout = new QHBoxLayout(sessionWidget);
+    sessionLayout->setContentsMargins(6, 2, 6, 2);
+    sessionLayout->setSpacing(6);
+
+    auto *sessionIcon = new QLabel(QStringLiteral("💬"), sessionWidget);
+    sessionIcon->setStyleSheet(QStringLiteral("border: none; font-size: 11px;"));
+
+    m_sessionTitleBtn = new QPushButton(sessionWidget);
+    m_sessionTitleBtn->setText(i18n("New Edit Session"));
+    m_sessionTitleBtn->setToolTip(i18n("Click to switch, rename, or resume conversation sessions"));
+    m_sessionTitleBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; border: none; color: #4ec9b0; font-weight: 600; font-size: 11px; text-align: left; padding: 2px 4px; }"
+        "QPushButton:hover { background: #2d2d2d; border-radius: 2px; text-decoration: underline; }"
+    ));
+    connect(m_sessionTitleBtn, &QPushButton::clicked, this, &AIChatWidget::slotOpenSessionDialog);
+
+    m_newSessionBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("list-add")), i18n("New Chat"), sessionWidget);
+    m_newSessionBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #2d2d2d; border: 1px solid #3c3c3c; border-radius: 2px; padding: 2px 7px; color: #cccccc; font-size: 10.5px; }"
+        "QPushButton:hover { background-color: #3e3e42; color: #ffffff; border-color: #007acc; }"
+    ));
+    connect(m_newSessionBtn, &QPushButton::clicked, this, &AIChatWidget::slotNewSession);
+
+    m_sessionsHistoryBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-history")), i18n("Sessions"), sessionWidget);
+    m_sessionsHistoryBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #2d2d2d; border: 1px solid #3c3c3c; border-radius: 2px; padding: 2px 7px; color: #cccccc; font-size: 10.5px; }"
+        "QPushButton:hover { background-color: #3e3e42; color: #ffffff; border-color: #007acc; }"
+    ));
+    connect(m_sessionsHistoryBtn, &QPushButton::clicked, this, &AIChatWidget::slotOpenSessionDialog);
+
+    sessionLayout->addWidget(sessionIcon);
+    sessionLayout->addWidget(m_sessionTitleBtn, 1);
+    sessionLayout->addWidget(m_newSessionBtn);
+    sessionLayout->addWidget(m_sessionsHistoryBtn);
+    mainLayout->addWidget(sessionWidget);
 
     // ── Live Run Status Bar (Pulsing dot + thinking phrase + elapsed timer) ─
     m_liveStatusBar = new QFrame(page);
@@ -898,6 +1005,8 @@ void AIChatWidget::appendUserMessage(const QString &text)
     entry.timestamp = QDateTime::currentMSecsSinceEpoch();
     m_messages.append(entry);
 
+    AISessionManager::instance()->appendUserStep(text);
+
     QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm"));
 
     QString html = QStringLiteral(
@@ -955,6 +1064,14 @@ void AIChatWidget::appendAssistantResponse(const QString &text)
     entry.timestamp = QDateTime::currentMSecsSinceEpoch();
     m_messages.append(entry);
 
+    AISessionManager::instance()->appendAssistantStep(visibleText, thinkingText, QJsonArray(),
+                                                     m_sessionMetrics.lastInputTokens,
+                                                     m_sessionMetrics.lastOutputTokens,
+                                                     m_sessionMetrics.lastModel);
+    if (m_dispatcher) {
+        AISessionManager::instance()->saveLlmContext(m_dispatcher->conversationMessages());
+    }
+
     QString html;
 
     // Render thinking block (collapsible-style, dimmed, monospace)
@@ -1003,6 +1120,12 @@ void AIChatWidget::appendToolExecution(const QString &toolName, const QString &p
     entry.toolError = errorMsg;
     entry.timestamp = QDateTime::currentMSecsSinceEpoch();
     m_messages.append(entry);
+
+    // Persist tool outcome to transcript JSONL
+    AISessionManager::instance()->appendToolResultStep(toolName, paramsSummary, success, errorMsg);
+    if (m_dispatcher) {
+        AISessionManager::instance()->saveLlmContext(m_dispatcher->conversationMessages());
+    }
 
     // Record in inspector tool outcomes ring buffer
     ToolOutcomeEntry outcome;
@@ -1650,12 +1773,24 @@ void AIChatWidget::slotQuickActionTriggered()
 
 void AIChatWidget::slotClearChat()
 {
-    m_messageStream->clear();
-    m_messages.clear();
-    m_toolOutcomes.clear();
-    m_sessionMetrics = SessionMetrics{};
-    m_proposalCard->setVisible(false);
-    appendSystemMessage(i18n("History cleared."));
+    slotNewSession();
+}
+
+void AIChatWidget::slotOpenSessionDialog()
+{
+    AISessionDialog dlg(this);
+    dlg.exec();
+}
+
+void AIChatWidget::slotNewSession()
+{
+    QString currentProj;
+    if (pCore && pCore->currentDoc()) {
+        currentProj = pCore->currentDoc()->url().toLocalFile();
+    }
+    QString newId = AISessionManager::instance()->createNewSession(currentProj);
+    AISessionManager::instance()->loadSession(newId);
+    appendSystemMessage(i18n("Started new edit session."));
 }
 
 void AIChatWidget::slotResponseReceived(const QString &summaryText, const QJsonObject &actionPayload)
