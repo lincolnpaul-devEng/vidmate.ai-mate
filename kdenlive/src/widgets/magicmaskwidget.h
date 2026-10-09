@@ -24,6 +24,7 @@
 #include <QProgressBar>
 #include <QLineEdit>
 #include <QDir>
+#include <KMessageWidget>
 #include <memory>
 
 class AutomaskHelper;
@@ -41,6 +42,8 @@ public:
     void setOwner(const ObjectId &owner);
     void setMaskManager(MaskManager *maskManager);
     void updateStatus(bool active, const QString &statusText = QString());
+    void updateControlsState(bool enabled);
+    void applyRvmMaskToClip();
 
 public Q_SLOTS:
     void slotLaunchTrackingForward();
@@ -69,7 +72,6 @@ Q_SIGNALS:
 
 private:
     void buildUI();
-    void setupStyle();
     QWidget *buildHeader();
     QWidget *buildTrackingTab();
     QWidget *buildMatteTab();
@@ -81,12 +83,11 @@ private:
     AutomaskHelper *m_maskHelper{nullptr};
 
     // Header widgets
-    QLabel *m_statusLed{nullptr};
     QLabel *m_titleLabel{nullptr};
-    QToolButton *m_presetBtn{nullptr};
     QToolButton *m_resetBtn{nullptr};
-    QToolButton *m_pinBtn{nullptr};
-    QToolButton *m_lockBtn{nullptr};
+
+    // Native Target Clip Info Banner
+    KMessageWidget *m_clipMessageWidget{nullptr};
 
     // Tab widget
     QTabWidget *m_tabWidget{nullptr};
@@ -129,6 +130,7 @@ private:
     QCheckBox *m_postMultiplyCheck{nullptr};
     QCheckBox *m_autoApplyCheck{nullptr};
 
+    QPushButton *m_rvmHumanBtn{nullptr};
     QPushButton *m_generateBtn{nullptr};
     QProgressBar *m_progressBar{nullptr};
     QLabel *m_statusMsgLabel{nullptr};

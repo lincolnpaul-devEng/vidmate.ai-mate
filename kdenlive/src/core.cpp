@@ -1189,9 +1189,9 @@ int Core::getItemIn(const ObjectId &id)
     }
     switch (id.type) {
     case KdenliveObjectType::TimelineClip: {
-        auto timeline = currentDoc()->getTimeline(id.uuid);
+        auto timeline = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
         if (timeline && timeline->isClip(id.itemId)) {
-            return currentDoc()->getTimeline(id.uuid)->getClipIn(id.itemId);
+            return timeline->getClipIn(id.itemId);
         } else {
             qWarning() << "querying non clip properties";
         }
@@ -1212,13 +1212,15 @@ int Core::getItemIn(const ObjectId &id)
 std::pair<PlaylistState::ClipState, ClipType::ProducerType> Core::getItemState(const ObjectId &id)
 {
     switch (id.type) {
-    case KdenliveObjectType::TimelineClip:
-        if (currentDoc()->getTimeline(id.uuid)->isClip(id.itemId)) {
-            return currentDoc()->getTimeline(id.uuid)->getClipState(id.itemId);
+    case KdenliveObjectType::TimelineClip: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        if (tl && tl->isClip(id.itemId)) {
+            return tl->getClipState(id.itemId);
         } else {
             qWarning() << "querying non clip properties";
         }
         break;
+    }
     case KdenliveObjectType::TimelineComposition:
         return {PlaylistState::VideoOnly, ClipType::Unknown};
     case KdenliveObjectType::BinClip:
@@ -1226,8 +1228,10 @@ std::pair<PlaylistState::ClipState, ClipType::ProducerType> Core::getItemState(c
             return {PlaylistState::Disabled, ClipType::Unknown};
         }
         return projectItemModel()->getClipState(id.itemId);
-    case KdenliveObjectType::TimelineTrack:
-        return {currentDoc()->getTimeline(id.uuid)->isAudioTrack(id.itemId) ? PlaylistState::AudioOnly : PlaylistState::VideoOnly, ClipType::Unknown};
+    case KdenliveObjectType::TimelineTrack: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        return {tl && tl->isAudioTrack(id.itemId) ? PlaylistState::AudioOnly : PlaylistState::VideoOnly, ClipType::Unknown};
+    }
     case KdenliveObjectType::Master:
         return {PlaylistState::Disabled, ClipType::Unknown};
     default:
@@ -1240,31 +1244,39 @@ std::pair<PlaylistState::ClipState, ClipType::ProducerType> Core::getItemState(c
 int Core::getItemDuration(const ObjectId &id)
 {
     switch (id.type) {
-    case KdenliveObjectType::TimelineClip:
-        if (currentDoc()->getTimeline(id.uuid)->isClip(id.itemId)) {
-            return currentDoc()->getTimeline(id.uuid)->getClipPlaytime(id.itemId);
+    case KdenliveObjectType::TimelineClip: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        if (tl && tl->isClip(id.itemId)) {
+            return tl->getClipPlaytime(id.itemId);
         } else {
             qWarning() << "querying non clip properties";
         }
         break;
-    case KdenliveObjectType::TimelineComposition:
-        if (currentDoc()->getTimeline(id.uuid)->isComposition(id.itemId)) {
-            return currentDoc()->getTimeline(id.uuid)->getCompositionPlaytime(id.itemId);
+    }
+    case KdenliveObjectType::TimelineComposition: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        if (tl && tl->isComposition(id.itemId)) {
+            return tl->getCompositionPlaytime(id.itemId);
         }
         break;
+    }
     case KdenliveObjectType::BinClip:
         if (!m_guiConstructed) return 0;
         return int(m_mainWindow->getBin()->getClipDuration(id.itemId));
     case KdenliveObjectType::TimelineTrack:
-    case KdenliveObjectType::Master:
-        return currentDoc()->getTimeline(id.uuid)->duration();
-    case KdenliveObjectType::TimelineMix:
-        if (currentDoc()->getTimeline(id.uuid)->isClip(id.itemId)) {
-            return currentDoc()->getTimeline(id.uuid)->getMixDuration(id.itemId);
+    case KdenliveObjectType::Master: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        return tl ? tl->duration() : 0;
+    }
+    case KdenliveObjectType::TimelineMix: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        if (tl && tl->isClip(id.itemId)) {
+            return tl->getMixDuration(id.itemId);
         } else {
             qWarning() << "querying non clip properties";
         }
         break;
+    }
     default:
         qWarning() << "unhandled object type: " << (int)id.type;
     }
@@ -1274,13 +1286,15 @@ int Core::getItemDuration(const ObjectId &id)
 QSize Core::getItemFrameSize(const ObjectId &id)
 {
     switch (id.type) {
-    case KdenliveObjectType::TimelineClip:
-        if (currentDoc()->getTimeline(id.uuid)->isClip(id.itemId)) {
-            return currentDoc()->getTimeline(id.uuid)->getClipFrameSize(id.itemId);
+    case KdenliveObjectType::TimelineClip: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        if (tl && tl->isClip(id.itemId)) {
+            return tl->getClipFrameSize(id.itemId);
         } else {
             qWarning() << "querying non clip properties";
         }
         break;
+    }
     case KdenliveObjectType::BinClip:
         if (!m_guiConstructed) return QSize();
         return m_mainWindow->getBin()->getFrameSize(id.itemId);
@@ -1300,8 +1314,13 @@ int Core::getItemTrack(const ObjectId &id)
     switch (id.type) {
     case KdenliveObjectType::TimelineClip:
     case KdenliveObjectType::TimelineComposition:
-    case KdenliveObjectType::TimelineMix:
-        return currentDoc()->getTimeline(id.uuid)->getItemTrackId(id.itemId);
+    case KdenliveObjectType::TimelineMix: {
+        auto tl = currentDoc() ? currentDoc()->getTimeline(id.uuid, true) : nullptr;
+        if (tl) {
+            return tl->getItemTrackId(id.itemId);
+        }
+        return -1;
+    }
     default:
         qWarning() << "unhandled object type";
     }

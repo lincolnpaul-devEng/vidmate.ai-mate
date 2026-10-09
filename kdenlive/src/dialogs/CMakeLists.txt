@@ -25,5 +25,6 @@ set(kdenlive_SRCS
   dialogs/splash.cpp
   dialogs/settings/kdenlivesettingsdialog.cpp
   dialogs/settings/pluginssettings.cpp
+  dialogs/preferencesdialog.cpp
   PARENT_SCOPE)
 

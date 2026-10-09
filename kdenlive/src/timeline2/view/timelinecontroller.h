@@ -293,7 +293,7 @@ public:
     Q_INVOKABLE void duplicateClip();
     /** @brief Launch AI Background Removal on the currently selected clip (or clipId)
      */
-    Q_INVOKABLE void removeBackground(int clipId = -1);
+    Q_INVOKABLE bool removeBackground(int clipId = -1);
     /** @brief Returns id of the timeline selected clip if there is only 1 clip selected
      * or an AVSplit group. If allowComposition is true, returns composition id if
      * only 1 is selected, otherwise returns -1. If restrictToCurrentPos is true, it will

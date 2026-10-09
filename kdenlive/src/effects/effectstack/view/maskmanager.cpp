@@ -148,6 +148,7 @@ MaskManager::MaskManager(QWidget *parent)
         disconnectMonitor();
     });
     connect(buttonStop, &QPushButton::clicked, m_maskHelper, &AutomaskHelper::abortJob);
+    connect(buttonGenerate, &QPushButton::clicked, this, [this]() { generateMask(); });
     connect(buttonApply, &QPushButton::clicked, this, [this]() { applyMask(); });
     connect(pCore.get(), &Core::samConfigUpdated, this, &MaskManager::checkModelAvailability);
 }
@@ -298,6 +299,7 @@ void MaskManager::exportFrames(bool autoAdd, bool editMode)
         buttonAdd->setEnabled(!pCore->taskManager.hasPendingJob(m_owner, AbstractTask::MELTJOB));
         Monitor *clipMon = pCore->getMonitor(Kdenlive::ClipMonitor);
         clipMon->slotActivateMonitor();
+        clipMon->getControllerProxy()->setMaskMode(MaskModeType::MaskInput);
         if (editMode) {
             pCore->bin()->selectClipById(binId, zone.x(), zone, true);
         } else if (m_owner.type == KdenliveObjectType::TimelineClip) {
@@ -314,10 +316,11 @@ void MaskManager::exportFrames(bool autoAdd, bool editMode)
             const QString maskFile = maskTree->currentItem()->data(0, MASKFILE).toString();
             clipMon->previewMask(binId, maskFile, zone.x(), zone.y(), MaskModeType::MaskInput);
         } else {
-            clipMon->loadQmlScene(SceneType::MonitorSceneAutoMask);
             clipMon->getControllerProxy()->setMaskMode(MaskModeType::MaskInput);
+            clipMon->loadQmlScene(SceneType::MonitorSceneAutoMask);
         }
         m_maskHelper->launchSam(previewFolder, clipMon->getZoneStart(), m_owner, autoAdd, zone.x());
+        pCore->displayMessage(i18n("Click on the subject in the Clip Monitor or drag a box around it to track with SAM 2"), InformationMessage, 6000);
         return true;
     };
     const QString binId = clip->clipId();
@@ -431,11 +434,15 @@ void MaskManager::setOwner(ObjectId owner)
 
 void MaskManager::generateMask()
 {
-    pCore->getMonitor(Kdenlive::ClipMonitor)->abortPreviewMask();
     std::shared_ptr<ProjectClip> clip = getOwnerClip();
     if (!clip) {
         return;
     }
+    if (!m_maskHelper->hasPointsOrBoxes()) {
+        pCore->displayMessage(i18n("Click on the subject in the Clip Monitor or drag a box around it first"), ErrorMessage, 4000);
+        return;
+    }
+    pCore->getMonitor(Kdenlive::ClipMonitor)->abortPreviewMask();
     QString maskFile;
     QString maskName;
     if (buttonEdit->isChecked() && maskTree->currentItem()) {

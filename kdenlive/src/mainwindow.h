@@ -222,6 +222,7 @@ public:
     bool hasRunningTask() const;
     /** @brief If a render task is running */
     bool hasRunningRenderTask() const;
+    MagicMaskWidget *magicMaskWidget() const { return m_magicMaskWidget; }
 
 protected:
     /** @brief Closes the window.
@@ -405,6 +406,7 @@ public Q_SLOTS:
 
     void slotPreferences();
     void slotShowPreferencePage(Kdenlive::ConfigPage page, int option = -1);
+    void slotShowClassicPreferencePage(Kdenlive::ConfigPage page = Kdenlive::NoPage, int option = -1);
     void connectDocument();
     /** @brief Reload project profile in config dialog if changed. */
     void slotRefreshProfiles();
@@ -456,7 +458,7 @@ public Q_SLOTS:
     /** @brief Open Velo stock media and AI voiceover studio dock */
     void slotOpenAssetStudio();
     /** @brief Launch AI Background Removal & Subject Masking */
-    void slotRemoveBackground();
+    bool slotRemoveBackground(int targetClipId = -1);
     /** @brief Open Natron / Fusion Select Tool palette */
     void slotSelectNatronTool();
     /** @brief Toggle between Kdenlive Timeline and Natron VFX Workspace */

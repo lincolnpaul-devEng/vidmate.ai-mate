@@ -519,8 +519,8 @@ void AutomaskHelper::monitorSeek(int pos)
 {
     Monitor *mon = pCore->getMonitor(Kdenlive::ClipMonitor);
     if (!mon->effectSceneDisplayed(SceneType::MonitorSceneAutoMask)) {
-        qDebug() << "::::: SEEKING WHILE MONITOR NOT READY!!!";
-        // Monitor mask scene is not yet loaded
+        qDebug() << "::::: SEEKING WHILE MONITOR NOT READY - ENFORCING AUTOMASK SCENE";
+        mon->loadQmlScene(SceneType::MonitorSceneAutoMask);
         m_seekPos = pos;
         connect(mon, &Monitor::sceneChanged, this, &AutomaskHelper::sceneUpdated, static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::UniqueConnection));
         return;

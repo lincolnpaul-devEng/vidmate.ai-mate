@@ -14,3 +14,11 @@ INSTALL(FILES
     generate_transition_previews.py
 
 DESTINATION ${KDE_INSTALL_DATADIR}${DATA_INSTALL_PREFIX}/scripts)
+
+file(COPY 
+    checkpackages.py
+    otiointerface.py
+    checkgpu.py
+    generate_transition_previews.py
+    DESTINATION ${CMAKE_BINARY_DIR}/bin/scripts
+)

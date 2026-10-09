@@ -395,9 +395,16 @@ void MainWindow::init()
 
     // Inspector — AI Magic Mask & Subject Masking Widget (tabbed with Effect Stack)
     m_magicMaskWidget = new MagicMaskWidget(this);
+    m_magicMaskWidget->setMaskManager(m_assetPanel->maskManager());
     m_magicMaskDock = addDock(i18n("Inspector — Magic Mask"), QStringLiteral("magic_mask_inspector"), m_magicMaskWidget, KDDockWidgets::Location_None, m_effectStackDock);
     m_effectStackDock->setAsCurrentTab();
-    connect(pCore.get(), &Core::requestShowBinEffectStack, m_assetPanel, &AssetPanel::showEffectStack, Qt::QueuedConnection);
+    connect(pCore.get(), &Core::requestShowBinEffectStack, this,
+            [this](const QString &clipName, const std::shared_ptr<EffectStackModel> &model, QSize frameSize, bool showKeyframes) {
+                m_assetPanel->showEffectStack(clipName, model, frameSize, showKeyframes);
+                if (m_magicMaskWidget && model) {
+                    m_magicMaskWidget->setOwner(model->getOwnerId());
+                }
+            }, Qt::QueuedConnection);
     connect(m_assetPanel, &AssetPanel::doSplitEffect, m_projectMonitor, &Monitor::slotSwitchCompare);
     connect(m_assetPanel, &AssetPanel::doSplitBinEffect, m_clipMonitor, &Monitor::slotSwitchCompare);
     connect(m_assetPanel, &AssetPanel::switchCurrentComposition, this,
@@ -426,10 +433,17 @@ void MainWindow::init()
     connect(m_timelineTabs, &TimelineTabs::showItemEffectStack, this,
             [&](const QString &clipName, std::shared_ptr<EffectStackModel> model, QSize size, bool showKeyframes) {
                 if (model == nullptr && m_assetPanel->effectStackOwner().type == KdenliveObjectType::BinClip) {
-                    // Effect stask is currently displaying a bin clip, do nothing
+                    // Effect stack is currently displaying a bin clip, do nothing
                     return;
                 }
                 m_assetPanel->showEffectStack(clipName, model, size, showKeyframes);
+                if (m_magicMaskWidget) {
+                    if (model && (model->getOwnerId().type == KdenliveObjectType::TimelineClip || model->getOwnerId().type == KdenliveObjectType::BinClip)) {
+                        m_magicMaskWidget->setOwner(model->getOwnerId());
+                    } else if (!model) {
+                        m_magicMaskWidget->setOwner(ObjectId(KdenliveObjectType::NoItem, -1, pCore->currentTimelineId()));
+                    }
+                }
                 if (m_effectStackDock->asDockWidgetController()->isTabbed() && m_effectStackDock->parent() == m_timelineDock->parent()) {
                     // Don't raise if tabbed with timeline
                     return;
@@ -2975,6 +2989,11 @@ void MainWindow::slotPreferences()
     slotShowPreferencePage(m_lastConfigPage);
 }
 
+void MainWindow::slotShowClassicPreferencePage(Kdenlive::ConfigPage page, int option)
+{
+    slotShowPreferencePage(page, option);
+}
+
 void MainWindow::slotShowPreferencePage(Kdenlive::ConfigPage page, int option)
 {
     /*
@@ -3537,12 +3556,15 @@ void MainWindow::slotDuplicateTimelineClip()
     getCurrentTimeline()->controller()->duplicateClip();
 }
 
-void MainWindow::slotRemoveBackground()
+bool MainWindow::slotRemoveBackground(int targetClipId)
 {
     if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) {
-        return;
+        return false;
     }
-    int clipId = getCurrentTimeline()->controller()->getMainSelectedClip();
+    int clipId = targetClipId;
+    if (clipId == -1) {
+        clipId = getCurrentTimeline()->controller()->getMainSelectedClip();
+    }
     if (clipId == -1) {
         QList<int> selected = getCurrentTimeline()->controller()->selection();
         if (!selected.empty()) {
@@ -3551,16 +3573,20 @@ void MainWindow::slotRemoveBackground()
     }
     if (clipId == -1) {
         pCore->displayMessage(i18n("No clip selected for AI background removal"), ErrorMessage, 500);
-        return;
+        return false;
     }
     int trackId = getCurrentTimeline()->model()->getItemTrackId(clipId);
     if (trackId > -1 && getCurrentTimeline()->model()->isAudioTrack(trackId)) {
         pCore->displayMessage(i18n("Cannot remove background from an audio track"), ErrorMessage, 500);
-        return;
+        return false;
     }
+    getCurrentTimeline()->model()->requestSetSelection({clipId});
     getCurrentTimeline()->controller()->showAsset(clipId);
     if (m_magicMaskWidget) {
-        m_magicMaskWidget->setOwner(ObjectId(KdenliveObjectType::TimelineClip, clipId));
+        if (m_assetPanel && m_assetPanel->maskManager()) {
+            m_magicMaskWidget->setMaskManager(m_assetPanel->maskManager());
+        }
+        m_magicMaskWidget->setOwner(ObjectId(KdenliveObjectType::TimelineClip, clipId, getCurrentTimeline()->getUuid()));
         if (m_magicMaskDock) {
             m_magicMaskDock->show();
             m_magicMaskDock->raise();
@@ -3570,6 +3596,7 @@ void MainWindow::slotRemoveBackground()
     if (m_assetPanel) {
         m_assetPanel->launchObjectMask();
     }
+    return true;
 }
 
 void MainWindow::slotCutTimelineClip()
@@ -5884,6 +5911,16 @@ void MainWindow::connectTimeline()
     connect(getCurrentTimeline()->controller(), &TimelineController::timelineClipSelected, this, [&](bool selected) {
         m_loopClip->setEnabled(selected);
         Q_EMIT pCore->library()->enableAddSelection(selected);
+        if (m_magicMaskWidget) {
+            if (selected) {
+                int cId = getCurrentTimeline()->controller()->getMainSelectedClip();
+                if (cId > -1 && getCurrentTimeline()->model()->isClip(cId)) {
+                    m_magicMaskWidget->setOwner(ObjectId(KdenliveObjectType::TimelineClip, cId, uuid));
+                }
+            } else {
+                m_magicMaskWidget->setOwner(ObjectId(KdenliveObjectType::NoItem, -1, uuid));
+            }
+        }
     });
     connect(pCore->library(), &LibraryWidget::saveTimelineSelection, getCurrentTimeline()->controller(), &TimelineController::saveTimelineSelection,
             Qt::UniqueConnection);

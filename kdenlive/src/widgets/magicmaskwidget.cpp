@@ -18,7 +18,11 @@
 #include "bin/projectitemmodel.h"
 #include "kdenlivesettings.h"
 #include "effects/effectstack/view/maskmanager.hpp"
+#include "effects/effectstack/model/effectstackmodel.hpp"
 #include "assets/keyframes/model/automask/automaskhelper.hpp"
+#include "timeline2/view/timelinewidget.h"
+#include "timeline2/view/timelinecontroller.h"
+#include "timeline2/model/timelineitemmodel.hpp"
 
 #include <KLocalizedString>
 #include <KMessageBox>
@@ -39,8 +43,8 @@ MagicMaskWidget::MagicMaskWidget(QWidget *parent)
     : QWidget(parent)
 {
     buildUI();
-    setupStyle();
     slotCheckModelStatus();
+    updateControlsState(false);
 }
 
 MagicMaskWidget::~MagicMaskWidget() = default;
@@ -53,25 +57,88 @@ void MagicMaskWidget::setMaskManager(MaskManager *maskManager)
 void MagicMaskWidget::setOwner(const ObjectId &owner)
 {
     m_owner = owner;
+    if (m_owner.type == KdenliveObjectType::TimelineClip && m_owner.uuid.isNull() && pCore->currentDoc()) {
+        m_owner.uuid = pCore->currentTimelineId();
+    }
     std::shared_ptr<ProjectClip> clip = getOwnerClip();
-    if (clip) {
-        m_titleLabel->setText(QStringLiteral("MagicMask: %1").arg(clip->clipName()));
-        int duration = pCore->getItemDuration(m_owner);
+    bool isAudio = false;
+    int duration = 0;
+    QString trackName;
+    int in = 0;
+
+    if (m_owner.type == KdenliveObjectType::TimelineClip && pCore->currentDoc()) {
+        auto timeline = pCore->window()->getCurrentTimeline();
+        if (timeline && timeline->model() && m_owner.itemId > -1 && timeline->model()->isClip(m_owner.itemId)) {
+            int trackId = timeline->model()->getItemTrackId(m_owner.itemId);
+            if (trackId > -1) {
+                isAudio = timeline->model()->isAudioTrack(trackId);
+                trackName = timeline->controller()->getTrackNameFromIndex(trackId);
+                if (trackName.isEmpty()) {
+                    trackName = isAudio ? QStringLiteral("Audio Track %1").arg(trackId) : QStringLiteral("Video Track %1").arg(trackId);
+                }
+            }
+            duration = timeline->model()->getClipPlaytime(m_owner.itemId);
+            in = timeline->model()->getClipIn(m_owner.itemId);
+        }
+    } else if (clip) {
+        duration = clip->duration().frames(pCore->getCurrentFps());
+    }
+
+    if (clip && !isAudio) {
+        QString timecode = pCore->timecode().getTimecodeFromFrames(duration);
+        m_titleLabel->setText(i18n("Magic Mask: %1", clip->clipName()));
+        if (m_clipMessageWidget) {
+            m_clipMessageWidget->setMessageType(KMessageWidget::Positive);
+            m_clipMessageWidget->setIcon(QIcon::fromTheme(QStringLiteral("video-clip")));
+            QString location = trackName.isEmpty() ? (m_owner.type == KdenliveObjectType::BinClip ? i18n("Project Bin") : i18n("Timeline")) : trackName;
+            QString details = i18n("Target: %1 (%2) — In: %3 | Duration: %4",
+                                   clip->clipName(),
+                                   location,
+                                   pCore->timecode().getTimecodeFromFrames(in),
+                                   timecode);
+            m_clipMessageWidget->setText(details);
+            m_clipMessageWidget->animatedShow();
+        }
         m_refTimeSlider->setRange(0, qMax(0, duration));
         m_rangeEndSpin->setValue(duration / pCore->getCurrentFps());
-        updateStatus(true, i18n("Ready for subject tracking"));
+        updateStatus(true, i18n("Ready: %1", clip->clipName()));
+        updateControlsState(true);
     } else {
-        m_titleLabel->setText(QStringLiteral("MagicMask (No Clip Selected)"));
-        updateStatus(false, i18n("Select a video or image clip in the timeline"));
+        m_titleLabel->setText(i18n("Magic Mask"));
+        if (m_clipMessageWidget) {
+            if (isAudio) {
+                m_clipMessageWidget->setMessageType(KMessageWidget::Warning);
+                m_clipMessageWidget->setIcon(QIcon::fromTheme(QStringLiteral("dialog-warning")));
+                m_clipMessageWidget->setText(i18n("Audio clip selected (%1). Magic Mask and matting require a video or image clip.", trackName));
+            } else {
+                m_clipMessageWidget->setMessageType(KMessageWidget::Information);
+                m_clipMessageWidget->setIcon(QIcon::fromTheme(QStringLiteral("dialog-information")));
+                m_clipMessageWidget->setText(i18n("Select a video or image clip in the timeline or Project Bin."));
+            }
+            m_clipMessageWidget->animatedShow();
+        }
+        updateStatus(false, isAudio ? i18n("Audio clip selected") : i18n("No clip selected"));
+        updateControlsState(false);
     }
 }
 
 std::shared_ptr<ProjectClip> MagicMaskWidget::getOwnerClip()
 {
+    if (m_owner.itemId < 0 || m_owner.type == KdenliveObjectType::NoItem) {
+        return nullptr;
+    }
     QString binId;
     switch (m_owner.type) {
     case KdenliveObjectType::TimelineClip: {
-        binId = pCore->getTimelineClipBinId(m_owner);
+        if (m_owner.uuid.isNull() && pCore->currentDoc()) {
+            m_owner.uuid = pCore->currentTimelineId();
+        }
+        auto timeline = pCore->window()->getCurrentTimeline();
+        if (timeline && timeline->model() && timeline->model()->isClip(m_owner.itemId)) {
+            binId = timeline->model()->getClipBinId(m_owner.itemId);
+        } else if (!m_owner.uuid.isNull()) {
+            binId = pCore->getTimelineClipBinId(m_owner);
+        }
         break;
     }
     case KdenliveObjectType::BinClip: {
@@ -81,7 +148,7 @@ std::shared_ptr<ProjectClip> MagicMaskWidget::getOwnerClip()
     default:
         break;
     }
-    if (binId.isEmpty()) {
+    if (binId.isEmpty() || !pCore->projectItemModel()) {
         return nullptr;
     }
     return pCore->projectItemModel()->getClipByBinID(binId);
@@ -89,26 +156,76 @@ std::shared_ptr<ProjectClip> MagicMaskWidget::getOwnerClip()
 
 void MagicMaskWidget::updateStatus(bool active, const QString &statusText)
 {
-    if (m_statusLed) {
-        m_statusLed->setStyleSheet(active
-            ? QStringLiteral("background-color: #27ae60; border-radius: 5px; border: 1px solid #2ecc71;")
-            : QStringLiteral("background-color: #7f8c8d; border-radius: 5px; border: 1px solid #95a5a6;"));
-    }
+    Q_UNUSED(active);
     if (m_statusMsgLabel && !statusText.isEmpty()) {
         m_statusMsgLabel->setText(statusText);
     }
 }
 
+void MagicMaskWidget::updateControlsState(bool enabled)
+{
+    if (m_rvmHumanBtn) m_rvmHumanBtn->setEnabled(enabled);
+    if (m_generateBtn) m_generateBtn->setEnabled(enabled);
+    if (m_btnTrackStart) m_btnTrackStart->setEnabled(enabled);
+    if (m_btnTrackBack) m_btnTrackBack->setEnabled(enabled);
+    if (m_btnTrackStop) m_btnTrackStop->setEnabled(enabled);
+    if (m_btnTrackBidi) m_btnTrackBidi->setEnabled(enabled);
+    if (m_btnTrackFwd) m_btnTrackFwd->setEnabled(enabled);
+    if (m_btnTrackEnd) m_btnTrackEnd->setEnabled(enabled);
+    if (m_btnGoStart) m_btnGoStart->setEnabled(enabled);
+    if (m_btnGoRef) m_btnGoRef->setEnabled(enabled);
+    if (m_btnGoEnd) m_btnGoEnd->setEnabled(enabled);
+    if (m_strokeAddBtn) m_strokeAddBtn->setEnabled(enabled);
+    if (m_strokeSubBtn) m_strokeSubBtn->setEnabled(enabled);
+    if (m_strokeSelectBtn) m_strokeSelectBtn->setEnabled(enabled);
+    if (m_strokeDeleteBtn) m_strokeDeleteBtn->setEnabled(enabled);
+    if (m_clearCurrentBtn) m_clearCurrentBtn->setEnabled(enabled);
+    if (m_clearRangeBtn) m_clearRangeBtn->setEnabled(enabled);
+    if (m_clearAllBtn) m_clearAllBtn->setEnabled(enabled);
+    if (m_regenCacheBtn) m_regenCacheBtn->setEnabled(enabled);
+    if (m_clearCacheBtn) m_clearCacheBtn->setEnabled(enabled);
+    if (m_refTimeSlider) m_refTimeSlider->setEnabled(enabled);
+    if (m_rangeStartSpin) m_rangeStartSpin->setEnabled(enabled);
+    if (m_rangeEndSpin) m_rangeEndSpin->setEnabled(enabled);
+    if (m_modeFasterBtn) m_modeFasterBtn->setEnabled(enabled);
+    if (m_modeBetterBtn) m_modeBetterBtn->setEnabled(enabled);
+    if (m_postMultiplyCheck) m_postMultiplyCheck->setEnabled(enabled);
+    if (m_autoApplyCheck) m_autoApplyCheck->setEnabled(enabled);
+    if (m_invertMaskCheck) m_invertMaskCheck->setEnabled(enabled);
+    if (m_radiusSlider) m_radiusSlider->setEnabled(enabled);
+    if (m_radiusSpin) m_radiusSpin->setEnabled(enabled);
+    if (m_featherSlider) m_featherSlider->setEnabled(enabled);
+    if (m_featherSpin) m_featherSpin->setEnabled(enabled);
+    if (m_cleanBlackSlider) m_cleanBlackSlider->setEnabled(enabled);
+    if (m_cleanBlackSpin) m_cleanBlackSpin->setEnabled(enabled);
+    if (m_cleanWhiteSlider) m_cleanWhiteSlider->setEnabled(enabled);
+    if (m_cleanWhiteSpin) m_cleanWhiteSpin->setEnabled(enabled);
+    if (m_blurSlider) m_blurSlider->setEnabled(enabled);
+    if (m_blurSpin) m_blurSpin->setEnabled(enabled);
+    if (m_despillSlider) m_despillSlider->setEnabled(enabled);
+    if (m_despillSpin) m_despillSpin->setEnabled(enabled);
+    if (m_previewModeCombo) m_previewModeCombo->setEnabled(enabled);
+}
+
 void MagicMaskWidget::buildUI()
 {
     auto *mainLay = new QVBoxLayout(this);
-    mainLay->setContentsMargins(6, 6, 6, 6);
+    mainLay->setContentsMargins(4, 4, 4, 4);
     mainLay->setSpacing(6);
 
-    // 1. Header (Resolve Inspector style)
+    // 1. Header
     mainLay->addWidget(buildHeader());
 
-    // 2. Tab Widget (Tracking, Matte, Settings)
+    // 2. Native Target Clip Info Banner
+    m_clipMessageWidget = new KMessageWidget(this);
+    m_clipMessageWidget->setCloseButtonVisible(false);
+    m_clipMessageWidget->setWordWrap(true);
+    m_clipMessageWidget->setMessageType(KMessageWidget::Information);
+    m_clipMessageWidget->setIcon(QIcon::fromTheme(QStringLiteral("dialog-information")));
+    m_clipMessageWidget->setText(i18n("No clip selected. Select a video or image clip in the timeline or Project Bin."));
+    mainLay->addWidget(m_clipMessageWidget);
+
+    // 3. Tab Widget (Tracking, Matte, Settings)
     m_tabWidget = new QTabWidget(this);
     m_tabWidget->setDocumentMode(true);
 
@@ -122,52 +239,28 @@ void MagicMaskWidget::buildUI()
 QWidget *MagicMaskWidget::buildHeader()
 {
     auto *headerWidget = new QWidget(this);
-    headerWidget->setObjectName(QStringLiteral("inspectorHeader"));
     auto *hLay = new QHBoxLayout(headerWidget);
-    hLay->setContentsMargins(4, 2, 4, 4);
-    hLay->setSpacing(8);
+    hLay->setContentsMargins(0, 0, 0, 0);
+    hLay->setSpacing(6);
 
-    m_statusLed = new QLabel(this);
-    m_statusLed->setFixedSize(10, 10);
-    m_statusLed->setStyleSheet(QStringLiteral("background-color: #e74c3c; border-radius: 5px; border: 1px solid #c0392b;"));
-    hLay->addWidget(m_statusLed);
+    auto *titleIcon = new QLabel(headerWidget);
+    titleIcon->setPixmap(QIcon::fromTheme(QStringLiteral("draw-polygon")).pixmap(16, 16));
+    hLay->addWidget(titleIcon);
 
-    m_titleLabel = new QLabel(QStringLiteral("MagicMask1"), this);
-    m_titleLabel->setStyleSheet(QStringLiteral("font-weight: bold; font-size: 12px; color: #ffffff;"));
+    m_titleLabel = new QLabel(i18n("Magic Mask"), headerWidget);
+    QFont boldFont = m_titleLabel->font();
+    boldFont.setBold(true);
+    m_titleLabel->setFont(boldFont);
     hLay->addWidget(m_titleLabel);
-
-    auto *badge = new QLabel(QStringLiteral("AI-SAM2"), this);
-    badge->setStyleSheet(QStringLiteral("background-color: #e54242; color: white; font-weight: bold; font-size: 9px; padding: 1px 4px; border-radius: 3px;"));
-    hLay->addWidget(badge);
 
     hLay->addStretch();
 
-    m_presetBtn = new QToolButton(this);
-    m_presetBtn->setIcon(QIcon::fromTheme(QStringLiteral("arrow-down")));
-    m_presetBtn->setToolTip(i18n("Magic Mask Presets"));
-    m_presetBtn->setAutoRaise(true);
-    hLay->addWidget(m_presetBtn);
-
-    m_resetBtn = new QToolButton(this);
+    m_resetBtn = new QToolButton(headerWidget);
     m_resetBtn->setIcon(QIcon::fromTheme(QStringLiteral("edit-undo")));
-    m_resetBtn->setToolTip(i18n("Reset Mask"));
+    m_resetBtn->setToolTip(i18n("Reset Strokes"));
     m_resetBtn->setAutoRaise(true);
     connect(m_resetBtn, &QToolButton::clicked, this, &MagicMaskWidget::slotClearAllStrokes);
     hLay->addWidget(m_resetBtn);
-
-    m_pinBtn = new QToolButton(this);
-    m_pinBtn->setIcon(QIcon::fromTheme(QStringLiteral("pin")));
-    m_pinBtn->setToolTip(i18n("Pin Inspector Window"));
-    m_pinBtn->setCheckable(true);
-    m_pinBtn->setAutoRaise(true);
-    hLay->addWidget(m_pinBtn);
-
-    m_lockBtn = new QToolButton(this);
-    m_lockBtn->setIcon(QIcon::fromTheme(QStringLiteral("object-locked")));
-    m_lockBtn->setToolTip(i18n("Lock Mask"));
-    m_lockBtn->setCheckable(true);
-    m_lockBtn->setAutoRaise(true);
-    hLay->addWidget(m_lockBtn);
 
     return headerWidget;
 }
@@ -183,41 +276,46 @@ QWidget *MagicMaskWidget::buildTrackingTab()
     lay->setContentsMargins(4, 4, 4, 4);
     lay->setSpacing(8);
 
-    // ── 1. Transport / Tracking Bar ──────────────────────────────────────────
-    auto *trackGroup = new QGroupBox(i18n("Track Direction"), content);
+    // ── 1. Tracking Transport Bar ──────────────────────────────────────────
+    auto *trackGroup = new QGroupBox(i18n("Tracking Transport"), content);
     auto *trackLay = new QHBoxLayout(trackGroup);
     trackLay->setContentsMargins(4, 6, 4, 6);
-    trackLay->setSpacing(3);
+    trackLay->setSpacing(4);
 
     m_btnTrackStart = new QToolButton(trackGroup);
     m_btnTrackStart->setIcon(QIcon::fromTheme(QStringLiteral("media-skip-backward")));
     m_btnTrackStart->setToolTip(i18n("Track Reverse to Start"));
+    m_btnTrackStart->setAutoRaise(true);
     connect(m_btnTrackStart, &QToolButton::clicked, this, &MagicMaskWidget::slotTrackToStart);
 
     m_btnTrackBack = new QToolButton(trackGroup);
     m_btnTrackBack->setIcon(QIcon::fromTheme(QStringLiteral("media-seek-backward")));
-    m_btnTrackBack->setToolTip(i18n("Track Backward (1 Frame / Step)"));
+    m_btnTrackBack->setToolTip(i18n("Track Backward (1 Step)"));
+    m_btnTrackBack->setAutoRaise(true);
     connect(m_btnTrackBack, &QToolButton::clicked, this, &MagicMaskWidget::slotLaunchTrackingBackward);
 
     m_btnTrackStop = new QToolButton(trackGroup);
     m_btnTrackStop->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-stop")));
-    m_btnTrackStop->setToolTip(i18n("Stop / Abort Tracking"));
+    m_btnTrackStop->setToolTip(i18n("Stop Tracking"));
+    m_btnTrackStop->setAutoRaise(true);
     connect(m_btnTrackStop, &QToolButton::clicked, this, &MagicMaskWidget::slotStopTracking);
 
     m_btnTrackBidi = new QToolButton(trackGroup);
-    m_btnTrackBidi->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
-    m_btnTrackBidi->setText(QStringLiteral("⇄"));
-    m_btnTrackBidi->setToolTip(i18n("Track Bidirectional (Both Ways)"));
+    m_btnTrackBidi->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh")));
+    m_btnTrackBidi->setToolTip(i18n("Track Bidirectional (Both Directions)"));
+    m_btnTrackBidi->setAutoRaise(true);
     connect(m_btnTrackBidi, &QToolButton::clicked, this, &MagicMaskWidget::slotLaunchTrackingBidirectional);
 
     m_btnTrackFwd = new QToolButton(trackGroup);
     m_btnTrackFwd->setIcon(QIcon::fromTheme(QStringLiteral("media-seek-forward")));
-    m_btnTrackFwd->setToolTip(i18n("Track Forward (1 Frame / Step)"));
+    m_btnTrackFwd->setToolTip(i18n("Track Forward (1 Step)"));
+    m_btnTrackFwd->setAutoRaise(true);
     connect(m_btnTrackFwd, &QToolButton::clicked, this, &MagicMaskWidget::slotLaunchTrackingForward);
 
     m_btnTrackEnd = new QToolButton(trackGroup);
     m_btnTrackEnd->setIcon(QIcon::fromTheme(QStringLiteral("media-skip-forward")));
     m_btnTrackEnd->setToolTip(i18n("Track Forward to End"));
+    m_btnTrackEnd->setAutoRaise(true);
     connect(m_btnTrackEnd, &QToolButton::clicked, this, &MagicMaskWidget::slotTrackToEnd);
 
     trackLay->addWidget(m_btnTrackStart);
@@ -230,191 +328,184 @@ QWidget *MagicMaskWidget::buildTrackingTab()
 
     // ── 2. Go To Frame ───────────────────────────────────────────────────────
     auto *gotoRow = new QHBoxLayout;
-    auto *gotoLabel = new QLabel(i18n("Go To Frame:"), content);
-    gotoLabel->setStyleSheet(QStringLiteral("color: #aaaaaa; font-weight: bold;"));
+    auto *gotoLabel = new QLabel(i18n("Go to:"), content);
     gotoRow->addWidget(gotoLabel);
 
     m_btnGoStart = new QToolButton(content);
-    m_btnGoStart->setText(QStringLiteral("|.. Start"));
-    m_btnGoStart->setToolTip(i18n("Go to Start Frame"));
+    m_btnGoStart->setIcon(QIcon::fromTheme(QStringLiteral("go-first")));
+    m_btnGoStart->setText(i18n("Start"));
+    m_btnGoStart->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_btnGoStart->setAutoRaise(true);
     connect(m_btnGoStart, &QToolButton::clicked, this, &MagicMaskWidget::slotGoToStart);
     gotoRow->addWidget(m_btnGoStart);
 
     m_btnGoRef = new QToolButton(content);
-    m_btnGoRef->setText(QStringLiteral("↓ Ref"));
-    m_btnGoRef->setToolTip(i18n("Go to Reference Frame"));
+    m_btnGoRef->setIcon(QIcon::fromTheme(QStringLiteral("go-jump")));
+    m_btnGoRef->setText(i18n("Reference"));
+    m_btnGoRef->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_btnGoRef->setAutoRaise(true);
     connect(m_btnGoRef, &QToolButton::clicked, this, &MagicMaskWidget::slotGoToReference);
     gotoRow->addWidget(m_btnGoRef);
 
     m_btnGoEnd = new QToolButton(content);
-    m_btnGoEnd->setText(QStringLiteral("..| End"));
-    m_btnGoEnd->setToolTip(i18n("Go to End Frame"));
+    m_btnGoEnd->setIcon(QIcon::fromTheme(QStringLiteral("go-last")));
+    m_btnGoEnd->setText(i18n("End"));
+    m_btnGoEnd->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_btnGoEnd->setAutoRaise(true);
     connect(m_btnGoEnd, &QToolButton::clicked, this, &MagicMaskWidget::slotGoToEnd);
     gotoRow->addWidget(m_btnGoEnd);
     gotoRow->addStretch();
     lay->addLayout(gotoRow);
 
-    // ── 3. Stroke Mode ───────────────────────────────────────────────────────
-    auto *strokeRow = new QHBoxLayout;
-    auto *strokeLabel = new QLabel(i18n("Stroke Mode:"), content);
-    strokeLabel->setStyleSheet(QStringLiteral("color: #aaaaaa; font-weight: bold;"));
-    strokeRow->addWidget(strokeLabel);
+    // ── 3. Stroke Controls ───────────────────────────────────────────────────
+    auto *strokeGroup = new QGroupBox(i18n("Strokes"), content);
+    auto *strokeLay = new QVBoxLayout(strokeGroup);
+    strokeLay->setContentsMargins(4, 6, 4, 6);
+    strokeLay->setSpacing(6);
 
-    m_strokeModeGroup = new QButtonGroup(content);
-    m_strokeAddBtn = new QPushButton(i18n("+ Add"), content);
+    auto *modeRow = new QHBoxLayout;
+    m_strokeModeGroup = new QButtonGroup(strokeGroup);
+
+    m_strokeAddBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("list-add")), i18n("Foreground"), strokeGroup);
     m_strokeAddBtn->setCheckable(true);
     m_strokeAddBtn->setChecked(true);
-    m_strokeAddBtn->setToolTip(i18n("Add foreground subject point / stroke (Green)"));
+    m_strokeAddBtn->setToolTip(i18n("Add foreground subject point or stroke"));
 
-    m_strokeSubBtn = new QPushButton(i18n("- Subtract"), content);
+    m_strokeSubBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("list-remove")), i18n("Background"), strokeGroup);
     m_strokeSubBtn->setCheckable(true);
-    m_strokeSubBtn->setToolTip(i18n("Subtract background point / stroke (Red)"));
+    m_strokeSubBtn->setToolTip(i18n("Add background exclusion point or stroke"));
 
-    m_strokeSelectBtn = new QPushButton(i18n("⬚ Box"), content);
+    m_strokeSelectBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("select-rectangular")), i18n("Box"), strokeGroup);
     m_strokeSelectBtn->setCheckable(true);
-    m_strokeSelectBtn->setToolTip(i18n("Select Bounding Box for subject"));
+    m_strokeSelectBtn->setToolTip(i18n("Select bounding box for subject"));
 
-    m_strokeDeleteBtn = new QPushButton(i18n("🗑"), content);
-    m_strokeDeleteBtn->setToolTip(i18n("Clear selected stroke"));
+    m_strokeDeleteBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-delete")), i18n("Delete"), strokeGroup);
+    m_strokeDeleteBtn->setToolTip(i18n("Delete active stroke"));
     connect(m_strokeDeleteBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotClearCurrentStrokes);
 
     m_strokeModeGroup->addButton(m_strokeAddBtn);
     m_strokeModeGroup->addButton(m_strokeSubBtn);
     m_strokeModeGroup->addButton(m_strokeSelectBtn);
 
-    strokeRow->addWidget(m_strokeAddBtn);
-    strokeRow->addWidget(m_strokeSubBtn);
-    strokeRow->addWidget(m_strokeSelectBtn);
-    strokeRow->addWidget(m_strokeDeleteBtn);
-    lay->addLayout(strokeRow);
+    modeRow->addWidget(m_strokeAddBtn);
+    modeRow->addWidget(m_strokeSubBtn);
+    modeRow->addWidget(m_strokeSelectBtn);
+    modeRow->addWidget(m_strokeDeleteBtn);
+    strokeLay->addLayout(modeRow);
 
-    // ── 4. Clear Strokes ─────────────────────────────────────────────────────
     auto *clearRow = new QHBoxLayout;
-    auto *clearLabel = new QLabel(i18n("Clear Strokes:"), content);
-    clearLabel->setStyleSheet(QStringLiteral("color: #aaaaaa; font-weight: bold;"));
+    auto *clearLabel = new QLabel(i18n("Clear:"), strokeGroup);
     clearRow->addWidget(clearLabel);
 
-    m_clearCurrentBtn = new QPushButton(i18n("Current"), content);
+    m_clearCurrentBtn = new QPushButton(i18n("Current"), strokeGroup);
     connect(m_clearCurrentBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotClearCurrentStrokes);
-    m_clearRangeBtn = new QPushButton(i18n("Range"), content);
+    m_clearRangeBtn = new QPushButton(i18n("Range"), strokeGroup);
     connect(m_clearRangeBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotClearRangeStrokes);
-    m_clearAllBtn = new QPushButton(i18n("All"), content);
+    m_clearAllBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-clear-all")), i18n("All"), strokeGroup);
     connect(m_clearAllBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotClearAllStrokes);
 
     clearRow->addWidget(m_clearCurrentBtn);
     clearRow->addWidget(m_clearRangeBtn);
     clearRow->addWidget(m_clearAllBtn);
-    lay->addLayout(clearRow);
+    strokeLay->addLayout(clearRow);
 
-    // ── 5. Disk Cache ────────────────────────────────────────────────────────
-    auto *cacheRow = new QHBoxLayout;
-    auto *cacheLabel = new QLabel(i18n("Disk Cache:"), content);
-    cacheLabel->setStyleSheet(QStringLiteral("color: #aaaaaa; font-weight: bold;"));
-    cacheRow->addWidget(cacheLabel);
+    lay->addWidget(strokeGroup);
 
-    m_regenCacheBtn = new QPushButton(i18n("Regenerate All"), content);
-    connect(m_regenCacheBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotRegenerateCache);
-    m_clearCacheBtn = new QPushButton(i18n("Clear Cache"), content);
-    connect(m_clearCacheBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotClearCache);
+    // ── 4. Range & Reference ─────────────────────────────────────────────────
+    auto *rangeGroup = new QGroupBox(i18n("Range & Reference"), content);
+    auto *rangeForm = new QFormLayout(rangeGroup);
+    rangeForm->setContentsMargins(4, 6, 4, 6);
+    rangeForm->setSpacing(6);
 
-    cacheRow->addWidget(m_regenCacheBtn);
-    cacheRow->addWidget(m_clearCacheBtn);
-    lay->addLayout(cacheRow);
-
-    // ── 6. Reference Time ────────────────────────────────────────────────────
     auto *refRow = new QHBoxLayout;
-    auto *refLabel = new QLabel(i18n("Reference Time:"), content);
-    refLabel->setStyleSheet(QStringLiteral("color: #aaaaaa; font-weight: bold;"));
-    refRow->addWidget(refLabel);
-
-    m_refTimeSlider = new QSlider(Qt::Horizontal, content);
+    m_refTimeSlider = new QSlider(Qt::Horizontal, rangeGroup);
     m_refTimeSlider->setRange(0, 100);
     m_refTimeSlider->setValue(0);
-    refRow->addWidget(m_refTimeSlider, 1);
-
-    m_refTimeLabel = new QLabel(QStringLiteral("0.0s"), content);
+    m_refTimeLabel = new QLabel(QStringLiteral("0.0s"), rangeGroup);
     m_refTimeLabel->setFixedWidth(45);
     m_refTimeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    refRow->addWidget(m_refTimeSlider, 1);
     refRow->addWidget(m_refTimeLabel);
-
     connect(m_refTimeSlider, &QSlider::valueChanged, this, [this](int val) {
         double seconds = val / pCore->getCurrentFps();
         m_refTimeLabel->setText(QStringLiteral("%1s").arg(seconds, 0, 'f', 1));
     });
-    lay->addLayout(refRow);
+    rangeForm->addRow(i18n("Reference Time:"), refRow);
 
-    // ── 7. Processed Frames ──────────────────────────────────────────────────
     auto *procRow = new QHBoxLayout;
-    auto *procLabel = new QLabel(i18n("Processed Frames:"), content);
-    procLabel->setStyleSheet(QStringLiteral("color: #aaaaaa; font-weight: bold;"));
-    procRow->addWidget(procLabel);
-
-    m_rangeStartSpin = new QDoubleSpinBox(content);
+    m_rangeStartSpin = new QDoubleSpinBox(rangeGroup);
     m_rangeStartSpin->setRange(0.0, 9999.0);
     m_rangeStartSpin->setValue(0.0);
     m_rangeStartSpin->setSuffix(QStringLiteral(" s"));
     procRow->addWidget(m_rangeStartSpin);
-
-    auto *toLabel = new QLabel(i18n("to"), content);
+    auto *toLabel = new QLabel(i18n("to"), rangeGroup);
     procRow->addWidget(toLabel);
-
-    m_rangeEndSpin = new QDoubleSpinBox(content);
+    m_rangeEndSpin = new QDoubleSpinBox(rangeGroup);
     m_rangeEndSpin->setRange(0.0, 9999.0);
     m_rangeEndSpin->setValue(0.0);
     m_rangeEndSpin->setSuffix(QStringLiteral(" s"));
     procRow->addWidget(m_rangeEndSpin);
-    lay->addLayout(procRow);
+    rangeForm->addRow(i18n("Processed Frames:"), procRow);
 
-    // ── 8. Mode (Quality) ────────────────────────────────────────────────────
-    auto *modeRow = new QHBoxLayout;
-    auto *modeLabel = new QLabel(i18n("Mode:"), content);
-    modeLabel->setStyleSheet(QStringLiteral("color: #aaaaaa; font-weight: bold;"));
-    modeRow->addWidget(modeLabel);
-
-    m_qualityGroup = new QButtonGroup(content);
-    m_modeFasterBtn = new QPushButton(i18n("Faster"), content);
+    auto *qualityRow = new QHBoxLayout;
+    m_qualityGroup = new QButtonGroup(rangeGroup);
+    m_modeFasterBtn = new QPushButton(i18n("Faster"), rangeGroup);
     m_modeFasterBtn->setCheckable(true);
     m_modeFasterBtn->setChecked(true);
-    m_modeBetterBtn = new QPushButton(i18n("Better"), content);
+    m_modeBetterBtn = new QPushButton(i18n("Better"), rangeGroup);
     m_modeBetterBtn->setCheckable(true);
-
     m_qualityGroup->addButton(m_modeFasterBtn);
     m_qualityGroup->addButton(m_modeBetterBtn);
+    qualityRow->addWidget(m_modeFasterBtn);
+    qualityRow->addWidget(m_modeBetterBtn);
+    rangeForm->addRow(i18n("Quality:"), qualityRow);
 
-    modeRow->addWidget(m_modeFasterBtn);
-    modeRow->addWidget(m_modeBetterBtn);
-    lay->addLayout(modeRow);
+    lay->addWidget(rangeGroup);
 
-    // ── 9. Options ───────────────────────────────────────────────────────────
-    m_postMultiplyCheck = new QCheckBox(i18n("Post Multiply Image (Alpha Cutout)"), content);
+    // ── 5. Actions & Processing ──────────────────────────────────────────────
+    auto *actionGroup = new QGroupBox(i18n("Actions"), content);
+    auto *actionLay = new QVBoxLayout(actionGroup);
+    actionLay->setContentsMargins(4, 6, 4, 6);
+    actionLay->setSpacing(6);
+
+    m_postMultiplyCheck = new QCheckBox(i18n("Post-multiply alpha"), actionGroup);
     m_postMultiplyCheck->setChecked(true);
-    lay->addWidget(m_postMultiplyCheck);
+    actionLay->addWidget(m_postMultiplyCheck);
 
-    m_autoApplyCheck = new QCheckBox(i18n("Auto Apply Mask to Selected Clip"), content);
+    m_autoApplyCheck = new QCheckBox(i18n("Auto-apply to clip"), actionGroup);
     m_autoApplyCheck->setChecked(true);
-    lay->addWidget(m_autoApplyCheck);
+    actionLay->addWidget(m_autoApplyCheck);
 
-    // ── 10. Generate / Progress ──────────────────────────────────────────────
-    auto *rvmHumanBtn = new QPushButton(i18n("⚡ 1-Click Human Background Removal (RVM)"), content);
-    rvmHumanBtn->setToolTip(i18n("Instant automatic background removal for human subjects using pre-trained RobustVideoMatting without needing manual strokes."));
-    rvmHumanBtn->setStyleSheet(QStringLiteral("QPushButton { background-color: #27ae60; color: white; font-weight: bold; padding: 8px; border-radius: 4px; font-size: 11px; } QPushButton:hover { background-color: #2ecc71; }"));
-    connect(rvmHumanBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotRunRvmHumanMatting);
-    lay->addWidget(rvmHumanBtn);
+    m_rvmHumanBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("tools-wizard")), i18n("Human Matting"), actionGroup);
+    m_rvmHumanBtn->setToolTip(i18n("Automatic human background matting (RVM)"));
+    connect(m_rvmHumanBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotRunRvmHumanMatting);
+    actionLay->addWidget(m_rvmHumanBtn);
 
-    m_generateBtn = new QPushButton(i18n("🎯 Generate / Apply SAM2 Mask (Custom Strokes)"), content);
-    m_generateBtn->setStyleSheet(QStringLiteral("QPushButton { background-color: #e54242; color: white; font-weight: bold; padding: 7px; border-radius: 4px; } QPushButton:hover { background-color: #ff5252; }"));
+    m_generateBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("draw-polygon")), i18n("Subject Masking"), actionGroup);
+    m_generateBtn->setToolTip(i18n("Track and segment subject with SAM 2 strokes"));
     connect(m_generateBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotApplyMask);
-    lay->addWidget(m_generateBtn);
+    actionLay->addWidget(m_generateBtn);
 
-    m_progressBar = new QProgressBar(content);
+    auto *cacheRow = new QHBoxLayout;
+    m_regenCacheBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Regenerate Cache"), actionGroup);
+    connect(m_regenCacheBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotRegenerateCache);
+    m_clearCacheBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-clear")), i18n("Clear Cache"), actionGroup);
+    connect(m_clearCacheBtn, &QPushButton::clicked, this, &MagicMaskWidget::slotClearCache);
+    cacheRow->addWidget(m_regenCacheBtn);
+    cacheRow->addWidget(m_clearCacheBtn);
+    actionLay->addLayout(cacheRow);
+
+    m_progressBar = new QProgressBar(actionGroup);
     m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
     m_progressBar->setVisible(false);
-    lay->addWidget(m_progressBar);
+    actionLay->addWidget(m_progressBar);
 
-    m_statusMsgLabel = new QLabel(i18n("Ready"), content);
-    m_statusMsgLabel->setStyleSheet(QStringLiteral("color: #888888; font-size: 10px;"));
-    lay->addWidget(m_statusMsgLabel);
+    m_statusMsgLabel = new QLabel(i18n("Ready"), actionGroup);
+    m_statusMsgLabel->setWordWrap(true);
+    actionLay->addWidget(m_statusMsgLabel);
+
+    lay->addWidget(actionGroup);
 
     lay->addStretch();
     scroll->setWidget(content);
@@ -432,7 +523,7 @@ QWidget *MagicMaskWidget::buildMatteTab()
     lay->setContentsMargins(6, 6, 6, 6);
     lay->setSpacing(8);
 
-    m_invertMaskCheck = new QCheckBox(i18n("Invert Mask (Swap Foreground / Background)"), content);
+    m_invertMaskCheck = new QCheckBox(i18n("Invert Mask"), content);
     lay->addWidget(m_invertMaskCheck);
 
     auto *form = new QFormLayout;
@@ -451,7 +542,7 @@ QWidget *MagicMaskWidget::buildMatteTab()
     connect(m_radiusSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), m_radiusSlider, &QSlider::setValue);
     radiusLay->addWidget(m_radiusSlider);
     radiusLay->addWidget(m_radiusSpin);
-    form->addRow(i18n("Radius (Erode/Dilate):"), radiusLay);
+    form->addRow(i18n("Radius:"), radiusLay);
 
     // Softness / Feather
     auto *featherLay = new QHBoxLayout;
@@ -465,7 +556,7 @@ QWidget *MagicMaskWidget::buildMatteTab()
     connect(m_featherSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), m_featherSlider, &QSlider::setValue);
     featherLay->addWidget(m_featherSlider);
     featherLay->addWidget(m_featherSpin);
-    form->addRow(i18n("Softness / Feather:"), featherLay);
+    form->addRow(i18n("Feather:"), featherLay);
 
     // Clean Black
     auto *blackLay = new QHBoxLayout;
@@ -509,7 +600,7 @@ QWidget *MagicMaskWidget::buildMatteTab()
     connect(m_blurSpin, static_cast<void (QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged), this, [this](double val) { m_blurSlider->setValue(int(val)); });
     blurLay->addWidget(m_blurSlider);
     blurLay->addWidget(m_blurSpin);
-    form->addRow(i18n("Blur / Defocus:"), blurLay);
+    form->addRow(i18n("Blur:"), blurLay);
 
     // Despill / Fringe
     auto *despillLay = new QHBoxLayout;
@@ -524,14 +615,14 @@ QWidget *MagicMaskWidget::buildMatteTab()
     connect(m_despillSpin, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), m_despillSlider, &QSlider::setValue);
     despillLay->addWidget(m_despillSlider);
     despillLay->addWidget(m_despillSpin);
-    form->addRow(i18n("Despill / Edge Color:"), despillLay);
+    form->addRow(i18n("Despill:"), despillLay);
 
     // Preview Mode
     m_previewModeCombo = new QComboBox(content);
-    m_previewModeCombo->addItem(i18n("Color Tint Overlay (Red)"), QStringLiteral("overlay"));
-    m_previewModeCombo->addItem(i18n("Black & White Mask"), QStringLiteral("bw"));
-    m_previewModeCombo->addItem(i18n("Transparent Cutout (Checkerboard)"), QStringLiteral("cutout"));
-    form->addRow(i18n("Matte Preview:"), m_previewModeCombo);
+    m_previewModeCombo->addItem(i18n("Overlay"), QStringLiteral("overlay"));
+    m_previewModeCombo->addItem(i18n("Black & White"), QStringLiteral("bw"));
+    m_previewModeCombo->addItem(i18n("Cutout"), QStringLiteral("cutout"));
+    form->addRow(i18n("Preview:"), m_previewModeCombo);
 
     lay->addLayout(form);
     lay->addStretch();
@@ -556,26 +647,25 @@ QWidget *MagicMaskWidget::buildSettingsTab()
 
     // Model selection
     m_modelCombo = new QComboBox(content);
-    m_modelCombo->addItem(i18n("Robust Video Matting (RVM - 1-Click Human Only)"), QStringLiteral("rvm_human_matting"));
-    m_modelCombo->addItem(i18n("SAM2 Hiera Tiny (Fastest, Low VRAM)"), QStringLiteral("sam2_hiera_tiny"));
-    m_modelCombo->addItem(i18n("SAM2 Hiera Small (Balanced)"), QStringLiteral("sam2_hiera_small"));
-    m_modelCombo->addItem(i18n("SAM2 Hiera Base+ (High Quality)"), QStringLiteral("sam2_hiera_base_plus"));
-    m_modelCombo->addItem(i18n("SAM2 Hiera Large (Maximum Precision)"), QStringLiteral("sam2_hiera_large"));
-    form->addRow(i18n("AI Mask Model:"), m_modelCombo);
+    m_modelCombo->addItem(i18n("RVM (Human Only)"), QStringLiteral("rvm_human_matting"));
+    m_modelCombo->addItem(i18n("SAM 2 Tiny (Fast)"), QStringLiteral("sam2_hiera_tiny"));
+    m_modelCombo->addItem(i18n("SAM 2 Small (Balanced)"), QStringLiteral("sam2_hiera_small"));
+    m_modelCombo->addItem(i18n("SAM 2 Base+ (High Quality)"), QStringLiteral("sam2_hiera_base_plus"));
+    m_modelCombo->addItem(i18n("SAM 2 Large (Maximum Quality)"), QStringLiteral("sam2_hiera_large"));
+    form->addRow(i18n("Model:"), m_modelCombo);
 
     // Device acceleration
     m_deviceCombo = new QComboBox(content);
     m_deviceCombo->addItem(i18n("Auto GPU (CUDA / ROCm / MPS)"), QStringLiteral("auto"));
     m_deviceCombo->addItem(i18n("CPU Only"), QStringLiteral("cpu"));
-    form->addRow(i18n("Compute Device:"), m_deviceCombo);
+    form->addRow(i18n("Compute:"), m_deviceCombo);
 
     // Cache info
     m_cacheDirLabel = new QLabel(content);
-    m_cacheDirLabel->setText(i18n("Cache: %1", KdenliveSettings::currenttmpfolder()));
-    m_cacheDirLabel->setStyleSheet(QStringLiteral("color: #888888; font-size: 10px;"));
-    form->addRow(i18n("Storage:"), m_cacheDirLabel);
+    m_cacheDirLabel->setText(KdenliveSettings::currenttmpfolder());
+    form->addRow(i18n("Cache:"), m_cacheDirLabel);
 
-    m_openCacheBtn = new QPushButton(i18n("Open Cache Directory"), content);
+    m_openCacheBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("document-open-folder")), i18n("Open Folder"), content);
     connect(m_openCacheBtn, &QPushButton::clicked, this, [this]() {
         bool ok;
         QDir cacheDir = pCore->currentDoc() ? pCore->currentDoc()->getCacheDir(CacheMask, &ok) : QDir(KdenliveSettings::currenttmpfolder());
@@ -587,7 +677,7 @@ QWidget *MagicMaskWidget::buildSettingsTab()
     m_backendStatusLabel = new QLabel(content);
     form->addRow(i18n("Status:"), m_backendStatusLabel);
 
-    m_configBackendBtn = new QPushButton(i18n("Configure SAM2 AI Plugin…"), content);
+    m_configBackendBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("configure")), i18n("Configure…"), content);
     connect(m_configBackendBtn, &QPushButton::clicked, this, []() {
         pCore->window()->slotShowPreferencePage(Kdenlive::PageSpeech, 1);
     });
@@ -599,37 +689,13 @@ QWidget *MagicMaskWidget::buildSettingsTab()
     return scroll;
 }
 
-void MagicMaskWidget::setupStyle()
-{
-    setStyleSheet(QStringLiteral(
-        "QWidget#inspectorHeader { background: #18181c; border-bottom: 1px solid #2d2d35; border-radius: 4px; padding: 4px; }"
-        "QTabWidget::pane { border: 1px solid #2d2d35; background: #1a1a1e; }"
-        "QTabBar::tab { background: #141416; color: #888888; padding: 6px 14px; font-weight: bold; border-top-left-radius: 4px; border-top-right-radius: 4px; border: 1px solid #26262a; }"
-        "QTabBar::tab:selected { background: #1e1e24; color: #ffffff; border-bottom: 2px solid #e54242; }"
-        "QGroupBox { font-weight: bold; color: #aaaaaa; border: 1px solid #2d2d35; border-radius: 4px; margin-top: 10px; padding-top: 10px; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
-        "QPushButton { background: #2a2a32; border: 1px solid #3c3c46; border-radius: 3px; color: #dddddd; padding: 4px 8px; font-size: 11px; }"
-        "QPushButton:hover { background: #363640; border-color: #555566; color: #ffffff; }"
-        "QPushButton:checked { background: #e54242; border-color: #ff5252; color: #ffffff; font-weight: bold; }"
-        "QToolButton { background: #2a2a32; border: 1px solid #3c3c46; border-radius: 3px; color: #dddddd; padding: 3px; }"
-        "QToolButton:hover { background: #363640; border-color: #555566; color: #ffffff; }"
-        "QToolButton:checked { background: #e54242; color: #ffffff; }"
-        "QSlider::groove:horizontal { height: 4px; background: #26262e; border-radius: 2px; }"
-        "QSlider::sub-page:horizontal { background: #e54242; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #ffffff; width: 12px; margin-top: -4px; margin-bottom: -4px; border-radius: 6px; }"
-    ));
-}
-
 void MagicMaskWidget::slotCheckModelStatus()
 {
-    // Check if python venv & SAM2 are available
     QString reqFile = QStringLiteral("scripts/automask/requirements-sam.txt");
     QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, reqFile);
     bool ready = !scriptPath.isEmpty();
     if (m_backendStatusLabel) {
-        m_backendStatusLabel->setText(ready
-            ? QStringLiteral("<span style='color: #2ecc71; font-weight: bold;'>● SAM2 AI Engine Active</span>")
-            : QStringLiteral("<span style='color: #e67e22; font-weight: bold;'>● Configuration Recommended</span>"));
+        m_backendStatusLabel->setText(ready ? i18n("Ready") : i18n("Not configured"));
     }
 }
 
@@ -735,6 +801,11 @@ void MagicMaskWidget::slotClearCache()
 
 void MagicMaskWidget::slotApplyMask()
 {
+    std::shared_ptr<ProjectClip> clip = getOwnerClip();
+    if (!clip) {
+        pCore->displayMessage(i18n("No clip selected for AI background removal"), ErrorMessage, 500);
+        return;
+    }
     if (m_modelCombo && m_modelCombo->currentData().toString() == QStringLiteral("rvm_human_matting")) {
         slotRunRvmHumanMatting();
         return;
@@ -742,24 +813,96 @@ void MagicMaskWidget::slotApplyMask()
     if (m_maskManager) {
         m_maskManager->launchSimpleSam();
     } else {
-        pCore->window()->slotRemoveBackground();
+        pCore->window()->slotRemoveBackground(m_owner.itemId);
     }
-    updateStatus(true, i18n("Generating and applying AI subject mask…"));
+    updateStatus(true, i18n("Generating and applying AI subject mask for '%1'…", clip->clipName()));
     Q_EMIT maskApplied(m_owner);
+}
+
+void MagicMaskWidget::applyRvmMaskToClip()
+{
+    std::shared_ptr<ProjectClip> clip = getOwnerClip();
+    if (!clip || m_owner.type != KdenliveObjectType::TimelineClip) {
+        return;
+    }
+    bool ok = false;
+    QDir maskOutFolder = pCore->currentDoc() ? pCore->currentDoc()->getCacheDir(CacheMask, &ok) : QDir();
+    QStringList maskFiles = maskOutFolder.entryList({QStringLiteral("*.png"), QStringLiteral("*.jpg")}, QDir::Files, QDir::Name);
+    if (maskFiles.isEmpty()) {
+        return;
+    }
+    QString firstMask = maskOutFolder.absoluteFilePath(maskFiles.first());
+    auto timeline = pCore->window()->getCurrentTimeline();
+    int in = 0;
+    int duration = 0;
+    if (timeline && timeline->model() && timeline->model()->isClip(m_owner.itemId)) {
+        in = timeline->model()->getClipIn(m_owner.itemId);
+        duration = timeline->model()->getClipPlaytime(m_owner.itemId);
+    }
+    int out = in + duration - 1;
+
+    QMap<QString, QString> params;
+    params.insert(QStringLiteral("resource"), firstMask);
+    params.insert(QStringLiteral("in"), QString::number(in));
+    params.insert(QStringLiteral("out"), QString::number(out));
+    params.insert(QStringLiteral("softness"), QString::number(0.2));
+    params.insert(QStringLiteral("mix"), QStringLiteral("100"));
+
+    if (m_owner.uuid.isNull() && pCore->currentDoc()) {
+        m_owner.uuid = pCore->currentTimelineId();
+    }
+    std::shared_ptr<EffectStackModel> stack = pCore->getItemEffectStack(m_owner.uuid, int(m_owner.type), m_owner.itemId);
+    if (stack) {
+        stack->appendEffect(QStringLiteral("shape"), true, params);
+        pCore->displayMessage(i18n("Applied AI background removal mask to clip '%1'", clip->clipName()), InformationMessage, 500);
+        pCore->refreshProjectMonitorOnce(true);
+    }
 }
 
 void MagicMaskWidget::slotRunRvmHumanMatting()
 {
-    updateStatus(true, i18n("Starting 1-Click Human Background Removal (RVM)…"));
+    std::shared_ptr<ProjectClip> clip = getOwnerClip();
+    if (!clip) {
+        updateStatus(false, i18n("No clip selected for background removal"));
+        pCore->displayMessage(i18n("No clip selected for AI background removal"), ErrorMessage, 500);
+        return;
+    }
+
+    updateStatus(true, i18n("Starting 1-Click Human Background Removal (RVM) for '%1'…", clip->clipName()));
     slotUpdateProgress(10);
 
     bool ok = false;
     QDir maskSrcFolder = pCore->currentDoc() ? pCore->currentDoc()->getCacheDir(CacheMaskSource, &ok) : QDir();
     QDir maskOutFolder = pCore->currentDoc() ? pCore->currentDoc()->getCacheDir(CacheMask, &ok) : QDir();
 
+    maskSrcFolder.mkpath(QStringLiteral("."));
+    maskOutFolder.mkpath(QStringLiteral("."));
+
+    // Extract frames if CacheMaskSource is empty
+    if (maskSrcFolder.entryList({QStringLiteral("*.jpg"), QStringLiteral("*.png"), QStringLiteral("*.jpeg")}, QDir::Files).isEmpty()) {
+        QString clipFile = clip->clipUrl();
+        if (QFile::exists(clipFile)) {
+            int in = pCore->getItemIn(m_owner);
+            int duration = pCore->getItemDuration(m_owner);
+            double inSec = qMax(0.0, in / pCore->getCurrentFps());
+            double durSec = qMax(0.1, duration / pCore->getCurrentFps());
+            updateStatus(true, i18n("Extracting clip frames for Human Matting…"));
+            QProcess ffmpeg;
+            QStringList ffArgs;
+            ffArgs << QStringLiteral("-ss") << QString::number(inSec, 'f', 3)
+                   << QStringLiteral("-t") << QString::number(durSec, 'f', 3)
+                   << QStringLiteral("-i") << clipFile
+                   << QStringLiteral("-q:v") << QStringLiteral("2")
+                   << maskSrcFolder.filePath(QStringLiteral("%05d.jpg"));
+            ffmpeg.start(QStringLiteral("ffmpeg"), ffArgs);
+            ffmpeg.waitForFinished(60000);
+        }
+    }
+
     QString pythonExe;
     QStringList venvCandidates = {
         QDir::home().filePath(QStringLiteral(".local/share/kdenlive/venv-sam/bin/python3")),
+        QDir::home().filePath(QStringLiteral(".local/share/kdenlive/venv/bin/python3")),
         QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kdenlive/venv-sam/bin/python3")),
         QStandardPaths::findExecutable(QStringLiteral("python3")),
         QStringLiteral("python3")
@@ -777,12 +920,12 @@ void MagicMaskWidget::slotRunRvmHumanMatting()
     QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/automask/rvm_human_matting.py"));
     if (scriptPath.isEmpty() || !QFile::exists(scriptPath)) {
         QStringList scriptCandidates = {
+            QDir::home().filePath(QStringLiteral(".local/share/kdenlive/scripts/automask/rvm_human_matting.py")),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/automask/rvm_human_matting.py"),
             QCoreApplication::applicationDirPath() + QStringLiteral("/data/scripts/automask/rvm_human_matting.py"),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/automask/rvm_human_matting.py"),
             QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/automask/rvm_human_matting.py")),
-            QDir::current().filePath(QStringLiteral("data/scripts/automask/rvm_human_matting.py")),
-            QDir::home().filePath(QStringLiteral(".local/share/kdenlive/scripts/automask/rvm_human_matting.py"))
+            QDir::current().filePath(QStringLiteral("data/scripts/automask/rvm_human_matting.py"))
         };
         for (const QString &cand : scriptCandidates) {
             if (QFile::exists(cand)) {
@@ -795,12 +938,13 @@ void MagicMaskWidget::slotRunRvmHumanMatting()
     QString modelPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("models/rvm_mobilenetv3_fp32.onnx"));
     if (modelPath.isEmpty() || !QFile::exists(modelPath)) {
         QStringList modelCandidates = {
+            QStringLiteral("/home/lincoln/vidmate.ai-mate/RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
+            QDir::home().filePath(QStringLiteral(".local/share/kdenlive/models/rvm_mobilenetv3_fp32.onnx")),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/models/rvm_mobilenetv3_fp32.onnx"),
             QDir::current().filePath(QStringLiteral("RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx")),
-            QDir::current().filePath(QStringLiteral("../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx")),
-            QDir::home().filePath(QStringLiteral(".local/share/kdenlive/models/rvm_mobilenetv3_fp32.onnx"))
+            QDir::current().filePath(QStringLiteral("../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"))
         };
         for (const QString &cand : modelCandidates) {
             if (QFile::exists(cand)) {
@@ -829,18 +973,29 @@ void MagicMaskWidget::slotRunRvmHumanMatting()
         }
     });
 
-    connect(proc, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), this, [this, proc](int exitCode, QProcess::ExitStatus) {
-        if (exitCode == 0) {
+    connect(proc, &QProcess::readyReadStandardError, this, [this, proc]() {
+        QString err = QString::fromUtf8(proc->readAllStandardError());
+        qWarning() << "[RVM STDERR]:" << err;
+    });
+
+    connect(proc, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), this, [this, proc, clip](int exitCode, QProcess::ExitStatus exitStatus) {
+        if (exitCode == 0 && exitStatus == QProcess::NormalExit) {
             slotUpdateProgress(100);
-            updateStatus(true, i18n("1-Click Human Background Removal complete!"));
+            updateStatus(true, i18n("1-Click Human Background Removal complete for '%1'!", clip ? clip->clipName() : QString()));
+            applyRvmMaskToClip();
             Q_EMIT maskApplied(m_owner);
         } else {
-            updateStatus(false, i18n("RVM Human Matting finished with warnings"));
+            QString err = QString::fromUtf8(proc->readAllStandardError());
+            qWarning() << "RVM failed with exit code" << exitCode << "error:" << err;
+            if (m_progressBar) {
+                m_progressBar->setVisible(false);
+            }
+            updateStatus(false, i18n("RVM Human Matting finished with warnings. Check logs for details."));
         }
         proc->deleteLater();
     });
 
-    slotUpdateProgress(30);
+    slotUpdateProgress(20);
     proc->start(pythonExe, args);
 }
 

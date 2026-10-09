@@ -378,3 +378,245 @@ bool GLSLShaderRenderer::renderToVideoFile(const QString &outputPath, int width,
 
     return QFile::exists(outputPath);
 }
+
+bool GLSLShaderRenderer::processVideoWithShader(const QString &inputVideoPath,
+                                                const QString &outputPath,
+                                                int width,
+                                                int height,
+                                                double fps,
+                                                const QString &secondInputVideoPath,
+                                                bool enableTemporalBuffer,
+                                                const UniformState &baseUniforms,
+                                                QString *outError)
+{
+    if (!isValid()) {
+        if (outError) *outError = QStringLiteral("Shader is not compiled or linked.");
+        return false;
+    }
+    if (!QFile::exists(inputVideoPath)) {
+        if (outError) *outError = QStringLiteral("Input video file does not exist: %1").arg(inputVideoPath);
+        return false;
+    }
+
+    // Auto-detect resolution and frame rate if not specified
+    if (width <= 0 || height <= 0 || fps <= 0.0) {
+        QProcess probe;
+        probe.start(QStringLiteral("ffprobe"), {
+            QStringLiteral("-v"), QStringLiteral("error"),
+            QStringLiteral("-select_streams"), QStringLiteral("v:0"),
+            QStringLiteral("-show_entries"), QStringLiteral("stream=width,height,r_frame_rate"),
+            QStringLiteral("-of"), QStringLiteral("default=noprint_wrappers=1:nokey=1"),
+            inputVideoPath
+        });
+        if (probe.waitForFinished(3000)) {
+            QStringList lines = QString::fromUtf8(probe.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            if (lines.size() >= 3) {
+                if (width <= 0) width = lines[0].trimmed().toInt();
+                if (height <= 0) height = lines[1].trimmed().toInt();
+                if (fps <= 0.0) {
+                    QString rFps = lines[2].trimmed();
+                    if (rFps.contains(QLatin1Char('/'))) {
+                        auto parts = rFps.split(QLatin1Char('/'));
+                        if (parts.size() == 2 && parts[1].toDouble() > 0) {
+                            fps = parts[0].toDouble() / parts[1].toDouble();
+                        }
+                    } else {
+                        fps = rFps.toDouble();
+                    }
+                }
+            }
+        }
+    }
+
+    if (width <= 0) width = 1920;
+    if (height <= 0) height = 1080;
+    if (fps <= 0.0) fps = 30.0;
+
+    // Launch decoder process for source video
+    QProcess decFfmpeg;
+    decFfmpeg.start(QStringLiteral("ffmpeg"), {
+        QStringLiteral("-i"), inputVideoPath,
+        QStringLiteral("-f"), QStringLiteral("rawvideo"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("rgba"),
+        QStringLiteral("-s"), QStringLiteral("%1x%2").arg(width).arg(height),
+        QStringLiteral("-")
+    });
+    if (!decFfmpeg.waitForStarted(5000)) {
+        if (outError) *outError = QStringLiteral("Failed to launch ffmpeg decoder for: %1").arg(inputVideoPath);
+        return false;
+    }
+
+    // Optional second video decoder for multi-texture / displacement
+    QProcess dec2Ffmpeg;
+    bool hasSecond = !secondInputVideoPath.isEmpty() && QFile::exists(secondInputVideoPath);
+    if (hasSecond) {
+        dec2Ffmpeg.start(QStringLiteral("ffmpeg"), {
+            QStringLiteral("-i"), secondInputVideoPath,
+            QStringLiteral("-f"), QStringLiteral("rawvideo"),
+            QStringLiteral("-pix_fmt"), QStringLiteral("rgba"),
+            QStringLiteral("-s"), QStringLiteral("%1x%2").arg(width).arg(height),
+            QStringLiteral("-")
+        });
+        dec2Ffmpeg.waitForStarted(5000);
+    }
+
+    // Launch encoder process for output video (copy original audio if present)
+    QProcess encFfmpeg;
+    QStringList encArgs = {
+        QStringLiteral("-y"),
+        QStringLiteral("-f"), QStringLiteral("rawvideo"),
+        QStringLiteral("-vcodec"), QStringLiteral("rawvideo"),
+        QStringLiteral("-s"), QStringLiteral("%1x%2").arg(width).arg(height),
+        QStringLiteral("-pix_fmt"), QStringLiteral("rgba"),
+        QStringLiteral("-r"), QString::number(fps, 'f', 2),
+        QStringLiteral("-i"), QStringLiteral("-"),
+        QStringLiteral("-i"), inputVideoPath,
+        QStringLiteral("-map"), QStringLiteral("0:v:0"),
+        QStringLiteral("-map"), QStringLiteral("1:a:0?"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-preset"), QStringLiteral("veryfast"),
+        QStringLiteral("-crf"), QStringLiteral("18"),
+        QStringLiteral("-c:a"), QStringLiteral("copy"),
+        outputPath
+    };
+    encFfmpeg.start(QStringLiteral("ffmpeg"), encArgs);
+    if (!encFfmpeg.waitForStarted(5000)) {
+        decFfmpeg.kill();
+        if (hasSecond) dec2Ffmpeg.kill();
+        if (outError) *outError = QStringLiteral("Failed to launch ffmpeg encoder for output: %1").arg(outputPath);
+        return false;
+    }
+
+    if (!ShaderValidationEngine::instance()->makeCurrent()) {
+        decFfmpeg.kill();
+        if (hasSecond) dec2Ffmpeg.kill();
+        encFfmpeg.kill();
+        if (outError) *outError = QStringLiteral("Failed to activate OpenGL context.");
+        return false;
+    }
+
+    GLuint inputTex0 = 0;
+    GLuint inputTex1 = 0;
+    GLuint prevTex = 0;
+
+    glGenTextures(1, &inputTex0);
+    glBindTexture(GL_TEXTURE_2D, inputTex0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    if (hasSecond) {
+        glGenTextures(1, &inputTex1);
+        glBindTexture(GL_TEXTURE_2D, inputTex1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    }
+
+    if (enableTemporalBuffer) {
+        glGenTextures(1, &prevTex);
+        glBindTexture(GL_TEXTURE_2D, prevTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    }
+
+    ShaderValidationEngine::instance()->doneCurrent();
+
+    const qint64 frameBytes = qint64(width) * height * 4;
+    QByteArray frameBuf;
+    QByteArray frame2Buf;
+    int frameIndex = 0;
+
+    UniformState uState = baseUniforms;
+    uState.timeDelta = float(1.0 / fps);
+    uState.channelTextures[0] = inputTex0;
+    uState.channelTextures[1] = inputTex1;
+    uState.channelTextures[2] = prevTex;
+
+    while (decFfmpeg.state() == QProcess::Running || decFfmpeg.bytesAvailable() > 0) {
+        while (frameBuf.size() < frameBytes && (decFfmpeg.bytesAvailable() > 0 || decFfmpeg.waitForReadyRead(500))) {
+            frameBuf.append(decFfmpeg.read(frameBytes - frameBuf.size()));
+        }
+        if (frameBuf.size() < frameBytes) break;
+
+        if (ShaderValidationEngine::instance()->makeCurrent()) {
+            glBindTexture(GL_TEXTURE_2D, inputTex0);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, frameBuf.constData());
+            frameBuf.remove(0, frameBytes);
+
+            if (hasSecond && dec2Ffmpeg.state() == QProcess::Running) {
+                while (frame2Buf.size() < frameBytes && (dec2Ffmpeg.bytesAvailable() > 0 || dec2Ffmpeg.waitForReadyRead(100))) {
+                    frame2Buf.append(dec2Ffmpeg.read(frameBytes - frame2Buf.size()));
+                }
+                if (frame2Buf.size() >= frameBytes) {
+                    glBindTexture(GL_TEXTURE_2D, inputTex1);
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, frame2Buf.constData());
+                    frame2Buf.remove(0, frameBytes);
+                }
+            }
+            ShaderValidationEngine::instance()->doneCurrent();
+        }
+
+        float t = float(frameIndex) / float(fps);
+        uState.time = t;
+        uState.frame = frameIndex;
+
+        QImage outImg = renderToImage(width, height, uState);
+        if (!outImg.isNull()) {
+            if (outImg.format() != QImage::Format_RGBA8888) {
+                outImg = outImg.convertToFormat(QImage::Format_RGBA8888);
+            }
+            encFfmpeg.write(reinterpret_cast<const char*>(outImg.constBits()), outImg.sizeInBytes());
+
+            if (enableTemporalBuffer && prevTex > 0 && ShaderValidationEngine::instance()->makeCurrent()) {
+                glBindTexture(GL_TEXTURE_2D, prevTex);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, outImg.constBits());
+                ShaderValidationEngine::instance()->doneCurrent();
+            }
+        }
+
+        frameIndex++;
+        if (frameIndex % 30 == 0) {
+            encFfmpeg.waitForBytesWritten(200);
+        }
+    }
+
+    encFfmpeg.closeWriteChannel();
+    decFfmpeg.waitForFinished(10000);
+    if (hasSecond) dec2Ffmpeg.waitForFinished(10000);
+
+    if (!encFfmpeg.waitForFinished(60000)) {
+        encFfmpeg.kill();
+        if (outError) *outError = QStringLiteral("Encoding timed out for %1").arg(outputPath);
+    }
+
+    if (ShaderValidationEngine::instance()->makeCurrent()) {
+        if (inputTex0) glDeleteTextures(1, &inputTex0);
+        if (inputTex1) glDeleteTextures(1, &inputTex1);
+        if (prevTex) glDeleteTextures(1, &prevTex);
+        ShaderValidationEngine::instance()->doneCurrent();
+    }
+
+    return QFile::exists(outputPath);
+}
+
+bool GLSLShaderRenderer::processVideoWithShader(const QString &inputVideoPath,
+                                                const QString &outputPath,
+                                                int width,
+                                                int height,
+                                                double fps,
+                                                const QString &secondInputVideoPath,
+                                                bool enableTemporalBuffer,
+                                                QString *outError)
+{
+    UniformState defaultState;
+    return processVideoWithShader(inputVideoPath, outputPath, width, height, fps, secondInputVideoPath, enableTemporalBuffer, defaultState, outError);
+}

@@ -63,6 +63,7 @@ class Monitor : public AbstractMonitor
 public:
     friend class MonitorManager;
     friend class MaskManager;
+    friend class AutomaskHelper;
 
     Monitor(Kdenlive::MonitorId id, MonitorManager *manager, QWidget *parent = nullptr);
     ~Monitor() override;

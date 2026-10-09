@@ -29,6 +29,7 @@ class ProfileWidget;
 class GuideCategories;
 class PluginsSettings;
 class KJob;
+class PreferencesBackend;
 
 class KdenliveSettingsDialog : public KConfigDialog
 {
@@ -90,6 +91,7 @@ private Q_SLOTS:
     void useRecordDefault();
 
 private:
+    KPageWidgetItem *m_pageAppearance{nullptr};
     KPageWidgetItem *m_pageMisc;
     KPageWidgetItem *m_pageEnv;
     KPageWidgetItem *m_pageTimeline;
@@ -114,6 +116,7 @@ private:
     Ui::ConfigProject_UI m_configProject;
     Ui::ConfigProxy_UI m_configProxy;
     PluginsSettings *m_pluginsPage;
+    PreferencesBackend *m_prefBackend{nullptr};
     GuideCategories *m_guidesCategories;
     ProfileWidget *m_pw;
     KProcess m_readProcess;
@@ -138,6 +141,8 @@ private:
     static bool getBlackMagicOutputDeviceList(QComboBox *devicelist, bool force = false);
     /** @brief Init QtMultimedia audio record settings */
     bool initAudioRecDevice();
+    void initAppearancePage();
+    void applyModernTheme();
     void initMiscPage();
     void initProjectPage();
     void initProxyPage();

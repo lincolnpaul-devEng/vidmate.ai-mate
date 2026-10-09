@@ -167,6 +167,13 @@
         </widget>
        </item>
        <item row="3" column="0" colspan="3">
+        <widget class="QPushButton" name="buttonGenerate">
+         <property name="text">
+          <string>Track Subject (Generate Mask)</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0" colspan="3">
         <widget class="QPushButton" name="buttonStop">
          <property name="text">
           <string>Abort Mask</string>

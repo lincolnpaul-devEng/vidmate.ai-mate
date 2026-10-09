@@ -60,6 +60,7 @@ public:
     bool hasRunningTask() const;
     /** @brief Start mask creation mode */
     bool launchObjectMask();
+    MaskManager *maskManager() const { return m_maskManager; }
 
 public Q_SLOTS:
     /** @brief Clear panel if displaying itemId */

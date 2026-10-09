@@ -85,7 +85,11 @@ const QString SamInterface::getVenvPath()
 
 const QString SamInterface::configForModel()
 {
-    KConfig conf(QStringLiteral("sammodelsinfo.rc"), KConfig::CascadeConfig, QStandardPaths::AppDataLocation);
+    QString rcPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("sammodelsinfo.rc"));
+    if (rcPath.isEmpty()) {
+        rcPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/automask/sammodelsinfo.rc"));
+    }
+    KConfig conf(rcPath.isEmpty() ? QStringLiteral("sammodelsinfo.rc") : rcPath, rcPath.isEmpty() ? KConfig::CascadeConfig : KConfig::SimpleConfig);
     KConfigGroup group(&conf, QStringLiteral("models"));
     QMap<QString, QString> values = group.entryMap();
     QMapIterator<QString, QString> i(values);

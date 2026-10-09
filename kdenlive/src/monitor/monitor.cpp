@@ -2280,7 +2280,11 @@ bool Monitor::slotOpenClip(const std::shared_ptr<ProjectClip> &controller, int i
                 m_glMonitor->getControllerProxy()->resetTimeZoom();
             }
             pCore->guidesList()->setClipMarkerModel(m_controller);
-            loadQmlScene(SceneType::MonitorSceneDefault);
+            if (getControllerProxy()->maskMode() != MaskModeType::MaskNone) {
+                loadQmlScene(SceneType::MonitorSceneAutoMask);
+            } else {
+                loadQmlScene(SceneType::MonitorSceneDefault);
+            }
             updateMarkers();
             connect(m_glMonitor->getControllerProxy(), &MonitorProxy::addSnap, this, &Monitor::addSnapPoint, Qt::DirectConnection);
             connect(m_glMonitor->getControllerProxy(), &MonitorProxy::removeSnap, this, &Monitor::removeSnapPoint, Qt::DirectConnection);

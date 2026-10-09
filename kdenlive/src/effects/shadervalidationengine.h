@@ -71,6 +71,17 @@ public:
     static QString standardShaderToyTemplate();
 
     /**
+     * @brief Returns GLSL source for built-in shader presets covering:
+     * 1. Coordinate-Based Spatial Transformations: lens_distortion, chromatic_aberration, fisheye, wave_glitch, water_ripple, vortex_twist, split_screen_grid
+     * 2. Multi-Pass & Temporal Buffers: temporal_echo, motion_blur, light_trails, bloom_glow
+     * 3. Multi-Texture Sampling & Blending: displacement_mapping, luminosity_blend
+     * 4. High-Performance Color Grading & LUTs: cinematic_teal_orange, filmic_aces_tonemap, chroma_keyer
+     * 5. Kernel Convolution Filtering: sobel_edge_sketch, laplacian_edge, sharpen_unsharp_mask, emboss
+     */
+    static QString getPresetGlsl(const QString &presetName);
+    static QStringList availablePresetNames();
+
+    /**
      * @brief Makes the offscreen OpenGL context current for shader operations.
      */
     bool makeCurrent();

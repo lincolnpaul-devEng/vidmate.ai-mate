@@ -955,7 +955,7 @@ void TimelineController::duplicateClip()
     }
 }
 
-void TimelineController::removeBackground(int clipId)
+bool TimelineController::removeBackground(int clipId)
 {
     if (clipId == -1) {
         clipId = getMainSelectedClip();
@@ -968,15 +968,16 @@ void TimelineController::removeBackground(int clipId)
     }
     if (clipId == -1 || !m_model->isClip(clipId)) {
         pCore->displayMessage(i18n("No clip selected for AI background removal"), ErrorMessage, 500);
-        return;
+        return false;
     }
     int trackId = m_model->getItemTrackId(clipId);
     if (trackId > -1 && m_model->isAudioTrack(trackId)) {
         pCore->displayMessage(i18n("Cannot remove background from an audio track"), ErrorMessage, 500);
-        return;
+        return false;
     }
+    m_model->requestSetSelection({clipId});
     showAsset(clipId);
-    pCore->window()->slotRemoveBackground();
+    return pCore->window()->slotRemoveBackground(clipId);
 }
 
 std::pair<int, QString> TimelineController::getCopyItemData()

@@ -42,6 +42,7 @@ public:
     void loadData(const QString points, const QString labels, const QString boxes, int in, const QDir &previewFolder);
     bool pythonReady();
     /** @brief Return false if the venv python exec is missing*/
+    bool hasPointsOrBoxes() const { return !m_includePoints.isEmpty() || !m_boxes.isEmpty(); }
 
 public Q_SLOTS:
     bool generateMask(const QString &binId, const QString &maskName, const QString &maskFile, const QPoint &zone);

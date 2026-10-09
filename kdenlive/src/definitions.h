@@ -25,7 +25,8 @@ namespace Kdenlive {
 
 enum MonitorId { NoMonitor = 0x01, ClipMonitor = 0x02, ProjectMonitor = 0x04, RecordMonitor = 0x08, StopMotionMonitor = 0x10, RenderMonitor = 0x20 };
 enum ConfigPage {
-    PageMisc = 0,
+    PageAppearance = 0,
+    PageMisc,
     PageEnv,
     PageTimeline,
     PageTools,

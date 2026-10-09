@@ -87,6 +87,7 @@ private:
     void handleAddTrackEffect(const QJsonObject &params);
     void handleDetectScenes(const QJsonObject &params);
     void handleGenerateGlslShader(const QJsonObject &params);
+    void handleApplyGlslVideoEffect(const QJsonObject &params);
     void handleWriteMemory(const QJsonObject &params);
     void handleReadMemory(const QJsonObject &params);
     void handleListMemoryKeys(const QJsonObject &params);

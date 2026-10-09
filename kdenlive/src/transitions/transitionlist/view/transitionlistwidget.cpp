@@ -192,7 +192,8 @@ void TransitionListWidget::generatePreviews()
     QString scriptPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/generate_transition_previews.py"));
 
     // If not found, try fallback locations
-    if (scriptPath.isEmpty()) {
+    if (scriptPath.isEmpty() || !QFile::exists(scriptPath)) {
+        scriptPath.clear();
         // Try development environment location
         QString devPath = QString::fromLocal8Bit(qgetenv("KDENLIVE_SOURCE_DIR"));
         if (!devPath.isEmpty()) {
@@ -204,9 +205,19 @@ void TransitionListWidget::generatePreviews()
 
         // If still not found, try relative to application directory
         if (scriptPath.isEmpty()) {
-            scriptPath = QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/generate_transition_previews.py");
-            if (!QFile::exists(scriptPath)) {
-                scriptPath = QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/generate_transition_previews.py");
+            const QString appDir = QCoreApplication::applicationDirPath();
+            const QStringList candidatePaths = {
+                appDir + QStringLiteral("/scripts/generate_transition_previews.py"),
+                appDir + QStringLiteral("/../share/kdenlive/scripts/generate_transition_previews.py"),
+                QDir::cleanPath(appDir + QStringLiteral("/../../data/scripts/generate_transition_previews.py")),
+                QDir::cleanPath(appDir + QStringLiteral("/../data/scripts/generate_transition_previews.py")),
+                QDir::homePath() + QStringLiteral("/.local/share/kdenlive/scripts/generate_transition_previews.py")
+            };
+            for (const auto &cand : candidatePaths) {
+                if (QFile::exists(cand)) {
+                    scriptPath = cand;
+                    break;
+                }
             }
         }
     }
@@ -266,7 +277,11 @@ void TransitionListWidget::generatePreviews()
 #else
     const QString pythonName = QStringLiteral("python3");
 #endif
-    const QString pythonExe = QStandardPaths::findExecutable(pythonName);
+    QString pythonExe = QStandardPaths::findExecutable(pythonName);
+    const QString venvPython = QDir::homePath() + QStringLiteral("/.local/share/kdenlive/venv/bin/python3");
+    if (QFile::exists(venvPython)) {
+        pythonExe = venvPython;
+    }
     if (!pythonExe.isEmpty()) {
         args.prepend(scriptPath);
         m_generatePreviewAction->setEnabled(false);

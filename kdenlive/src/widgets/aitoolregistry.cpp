@@ -749,11 +749,17 @@ void AIToolRegistry::registerAllTools()
     {
         QJsonObject props;
         props[QStringLiteral("preset")] = enumParam(
-            QStringLiteral("Pre-validated visual animation style preset (e.g. 'neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix', 'custom')."),
+            QStringLiteral("Visual style preset: Procedural ('neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix') or Video FX ('lens_distortion', 'chromatic_aberration', 'fisheye', 'wave_glitch', 'water_ripple', 'vortex_twist', 'split_screen_grid', 'temporal_echo', 'motion_blur', 'light_trails', 'bloom_glow', 'cinematic_teal_orange', 'filmic_aces_tonemap', 'chroma_keyer', 'sobel_edge_sketch', 'laplacian_edge', 'sharpen_unsharp_mask', 'emboss', 'custom')."),
             {QStringLiteral("neon_grid"), QStringLiteral("plasma_energy"), QStringLiteral("gradient_flow"),
-             QStringLiteral("starfield_warp"), QStringLiteral("cyber_matrix"), QStringLiteral("custom")});
+             QStringLiteral("starfield_warp"), QStringLiteral("cyber_matrix"), QStringLiteral("lens_distortion"),
+             QStringLiteral("chromatic_aberration"), QStringLiteral("fisheye"), QStringLiteral("wave_glitch"),
+             QStringLiteral("water_ripple"), QStringLiteral("vortex_twist"), QStringLiteral("split_screen_grid"),
+             QStringLiteral("temporal_echo"), QStringLiteral("motion_blur"), QStringLiteral("light_trails"),
+             QStringLiteral("bloom_glow"), QStringLiteral("cinematic_teal_orange"), QStringLiteral("filmic_aces_tonemap"),
+             QStringLiteral("chroma_keyer"), QStringLiteral("sobel_edge_sketch"), QStringLiteral("laplacian_edge"),
+             QStringLiteral("sharpen_unsharp_mask"), QStringLiteral("emboss"), QStringLiteral("custom")});
         props[QStringLiteral("glsl_code")] = stringParam(QStringLiteral(
-            "Custom GLSL fragment shader code adhering to ShaderToy standard: void mainImage(out vec4 fragColor, in vec2 fragCoord). Built-in uniforms provided automatically: iResolution (vec3), iTime (float), iTimeDelta (float), iFrame (int), iAudioLevels (float). Do NOT redeclare uniforms or void main()."));
+            "Custom GLSL fragment shader code adhering to ShaderToy standard: void mainImage(out vec4 fragColor, in vec2 fragCoord). Built-in uniforms provided automatically: iResolution (vec3), iTime (float), iTimeDelta (float), iFrame (int), iAudioLevels (float), iChannel0..3 (sampler2D), iCustomParam1..8 (float)."));
         props[QStringLiteral("shader_format")] = enumParam(
             QStringLiteral("Shader template format."),
             {QStringLiteral("shadertoy"), QStringLiteral("raymarch_sdf"), QStringLiteral("raw_fragment")});
@@ -768,7 +774,36 @@ void AIToolRegistry::registerAllTools()
         props[QStringLiteral("audio_reactive")] = boolParam(QStringLiteral(
             "If true, binds the shader's iAudioLevels uniform to the timeline audio master track FFT spectrum."));
         addTool(QStringLiteral("generate_glsl_shader"),
-                QStringLiteral("Compile, validate on GPU offscreen, render, and automatically insert high-performance procedural GLSL/ShaderToy animations (neon grid, plasma, gradient flow, starfield warp, cyber matrix) as b-roll / video clips on the timeline."),
+                QStringLiteral("Compile, validate on GPU offscreen, render, and automatically insert high-performance procedural GLSL/ShaderToy animations or visual shaders as b-roll / video clips on the timeline."),
+                makeParams(props, {}));
+    }
+
+    // 32. apply_glsl_video_effect — GPU-accelerated video shader processing
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral(
+            "Timeline clip ID to apply the GLSL shader effect onto (-1 = currently selected clip)."));
+        props[QStringLiteral("preset")] = enumParam(
+            QStringLiteral("Built-in GPU shader capability preset across 5 core categories: Spatial ('lens_distortion', 'chromatic_aberration', 'fisheye', 'wave_glitch', 'water_ripple', 'vortex_twist', 'split_screen_grid'), Temporal ('temporal_echo', 'motion_blur', 'light_trails', 'bloom_glow'), Multi-Texture ('displacement_mapping', 'luminosity_blend'), Color/LUT ('cinematic_teal_orange', 'filmic_aces_tonemap', 'chroma_keyer'), Convolution ('sobel_edge_sketch', 'laplacian_edge', 'sharpen_unsharp_mask', 'emboss'), or 'custom'."),
+            {QStringLiteral("lens_distortion"), QStringLiteral("chromatic_aberration"), QStringLiteral("fisheye"),
+             QStringLiteral("wave_glitch"), QStringLiteral("water_ripple"), QStringLiteral("vortex_twist"),
+             QStringLiteral("split_screen_grid"), QStringLiteral("temporal_echo"), QStringLiteral("motion_blur"),
+             QStringLiteral("light_trails"), QStringLiteral("bloom_glow"), QStringLiteral("displacement_mapping"),
+             QStringLiteral("luminosity_blend"), QStringLiteral("cinematic_teal_orange"), QStringLiteral("filmic_aces_tonemap"),
+             QStringLiteral("chroma_keyer"), QStringLiteral("sobel_edge_sketch"), QStringLiteral("laplacian_edge"),
+             QStringLiteral("sharpen_unsharp_mask"), QStringLiteral("emboss"), QStringLiteral("custom")});
+        props[QStringLiteral("glsl_code")] = stringParam(QStringLiteral(
+            "Optional custom ShaderToy GLSL code: void mainImage(out vec4 fragColor, in vec2 fragCoord). Use texture(iChannel0, uv) for source video, iChannel1 for secondary video/map, and iChannel2 for temporal previous frame."));
+        props[QStringLiteral("intensity")] = numberParam(QStringLiteral(
+            "Primary effect intensity / distortion / radius coefficient (maps to iCustomParam1, e.g. 0.0 to 2.0)."));
+        props[QStringLiteral("custom_param2")] = numberParam(QStringLiteral(
+            "Secondary parameter (maps to iCustomParam2, e.g. speed, threshold, smoothness)."));
+        props[QStringLiteral("second_clip_id")] = intParam(QStringLiteral(
+            "Optional secondary timeline clip ID for displacement mapping or dual-layer blending (fed into iChannel1)."));
+        props[QStringLiteral("replace_clip")] = boolParam(QStringLiteral(
+            "If true, replaces the original timeline clip with the shader-rendered result; if false (default), places as a synchronized overlay on the track above."));
+        addTool(QStringLiteral("apply_glsl_video_effect"),
+                QStringLiteral("Applies hardware-accelerated GLSL shader processing to an existing timeline video clip: spatial transforms (lens distortion, chromatic aberration, fisheye, glitch, ripples, vortex), multi-pass temporal buffers (echo, motion blur, light trails, bloom), multi-texture displacement mapping, cinematic color grading / ACES / chroma keying, or kernel convolution (Sobel edge sketch, sharpening, emboss)."),
                 makeParams(props, {}));
     }
 

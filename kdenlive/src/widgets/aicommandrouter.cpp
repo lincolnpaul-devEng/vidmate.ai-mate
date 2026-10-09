@@ -21,6 +21,7 @@
 #include "monitor/monitor.h"
 #include "monitor/monitorproxy.h"
 #include "mainwindow.h"
+#include "magicmaskwidget.h"
 #include "natronworkspacewidget.h"
 #include "natronscriptgenerator.h"
 #include "bin/bin.h"
@@ -247,6 +248,9 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
     else if (action == QStringLiteral("generate_glsl_shader") || action == QStringLiteral("compile_glsl_shader") ||
              action == QStringLiteral("create_shader") || action == QStringLiteral("render_shader"))
         handleGenerateGlslShader(params);
+    else if (action == QStringLiteral("apply_glsl_video_effect") || action == QStringLiteral("apply_glsl_filter") ||
+             action == QStringLiteral("apply_glsl_shader") || action == QStringLiteral("apply_video_shader"))
+        handleApplyGlslVideoEffect(params);
     else if (action == QStringLiteral("write_memory"))
         handleWriteMemory(params);
     else if (action == QStringLiteral("read_memory"))
@@ -479,7 +483,7 @@ static QString normalizeEffectId(const QString &rawId)
         id == QStringLiteral("color_correct")) {
         return QStringLiteral("lift_gamma_gain");
     }
-    if (id == QStringLiteral("glow")) {
+    if (id == QStringLiteral("glow") || id == QStringLiteral("bloom")) {
         return QStringLiteral("frei0r.glow");
     }
     if (id == QStringLiteral("crop")) {
@@ -490,6 +494,52 @@ static QString normalizeEffectId(const QString &rawId)
     }
     if (id == QStringLiteral("fadeout") || id == QStringLiteral("fade_out")) {
         return QStringLiteral("fadeout");
+    }
+    // Spatial transformations
+    if (id == QStringLiteral("lens_distortion") || id == QStringLiteral("lens_correction") || id == QStringLiteral("lens")) {
+        return QStringLiteral("frei0r.lenscorrection");
+    }
+    if (id == QStringLiteral("fisheye") || id == QStringLiteral("defish")) {
+        return QStringLiteral("frei0r.defish0r");
+    }
+    if (id == QStringLiteral("distort") || id == QStringLiteral("distortion")) {
+        return QStringLiteral("frei0r.distort0r");
+    }
+    if (id == QStringLiteral("chromatic_aberration") || id == QStringLiteral("rgb_split") || id == QStringLiteral("rgbsplit")) {
+        return QStringLiteral("frei0r.rgbsplit0r");
+    }
+    if (id == QStringLiteral("wave_glitch") || id == QStringLiteral("glitch")) {
+        return QStringLiteral("frei0r.glitch0r");
+    }
+    if (id == QStringLiteral("water_ripple") || id == QStringLiteral("water")) {
+        return QStringLiteral("frei0r.water");
+    }
+    if (id == QStringLiteral("vortex_twist") || id == QStringLiteral("vertigo")) {
+        return QStringLiteral("frei0r.vertigo");
+    }
+    // Temporal effects
+    if (id == QStringLiteral("temporal_echo") || id == QStringLiteral("echo") || id == QStringLiteral("delay") || id == QStringLiteral("ghosting")) {
+        return QStringLiteral("frei0r.delay0r");
+    }
+    // Color grading & LUTs
+    if (id == QStringLiteral("lut") || id == QStringLiteral("lut3d") || id == QStringLiteral("3d_lut")) {
+        return QStringLiteral("avfilter.lut3d");
+    }
+    if (id == QStringLiteral("chroma_key") || id == QStringLiteral("green_screen") || id == QStringLiteral("bluescreen")) {
+        return QStringLiteral("frei0r.bluescreen0r");
+    }
+    if (id == QStringLiteral("curves") || id == QStringLiteral("teal_orange")) {
+        return QStringLiteral("frei0r.curves");
+    }
+    // Kernel convolution filtering
+    if (id == QStringLiteral("sobel") || id == QStringLiteral("edge_detect") || id == QStringLiteral("sketch")) {
+        return QStringLiteral("frei0r.sobel");
+    }
+    if (id == QStringLiteral("sharpen") || id == QStringLiteral("sharpness") || id == QStringLiteral("unsharp_mask")) {
+        return QStringLiteral("frei0r.sharpness");
+    }
+    if (id == QStringLiteral("emboss")) {
+        return QStringLiteral("frei0r.emboss");
     }
     return rawId.trimmed();
 }
@@ -1099,7 +1149,8 @@ void AICommandRouter::handleRemoveEffect(const QJsonObject &params)
 void AICommandRouter::handleRemoveBackground(const QJsonObject &params)
 {
     auto *tc = getTimelineController();
-    if (!tc) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
+    auto tm = getTimelineModel();
+    if (!tc || !tm) { Q_EMIT executionFinished(i18n("No active timeline."), false); return; }
 
     int clipId = params[QStringLiteral("clip_id")].toInt(-1);
     if (clipId < 0) {
@@ -1111,13 +1162,41 @@ void AICommandRouter::handleRemoveBackground(const QJsonObject &params)
             clipId = sel.first();
         }
     }
-    if (clipId < 0) {
-        Q_EMIT executionFinished(i18n("No clip selected for background removal."), false);
+    if (clipId < 0 || !tm->isClip(clipId)) {
+        Q_EMIT executionFinished(i18n("No valid clip selected for background removal. Please specify 'clip_id' or select a clip in the timeline."), false);
         return;
     }
 
-    tc->removeBackground(clipId);
-    Q_EMIT executionFinished(i18n("Initiated AI background removal for clip %1.", clipId), true);
+    int trackId = tm->getItemTrackId(clipId);
+    if (trackId > -1 && tm->isAudioTrack(trackId)) {
+        Q_EMIT executionFinished(i18n("Cannot remove background from an audio track (clip %1). Please select a video or image clip.", clipId), false);
+        return;
+    }
+
+    QString clipName = tm->getClipName(clipId);
+    bool ok = tc->removeBackground(clipId);
+    if (!ok) {
+        Q_EMIT executionFinished(i18n("Failed to initiate background removal for clip '%1' (ID %2).", clipName, clipId), false);
+        return;
+    }
+
+    QString method = params[QStringLiteral("method")].toString().toLower();
+    if (method == QStringLiteral("rvm") || method == QStringLiteral("auto") || method == QStringLiteral("1-click")) {
+        auto *mw = static_cast<MainWindow *>(pCore->window());
+        if (mw && mw->magicMaskWidget()) {
+            mw->magicMaskWidget()->slotRunRvmHumanMatting();
+            Q_EMIT executionFinished(i18n("Started 1-click AI human background removal (RVM) on clip '%1' (ID %2).", clipName, clipId), true);
+            return;
+        }
+    } else if (method == QStringLiteral("chroma") || method == QStringLiteral("chromakey")) {
+        QJsonObject effectParams;
+        effectParams[QStringLiteral("clip_id")] = clipId;
+        effectParams[QStringLiteral("effect_id")] = QStringLiteral("chroma");
+        handleAddEffect(effectParams);
+        return;
+    }
+
+    Q_EMIT executionFinished(i18n("Selected target clip '%1' (ID %2) and opened Inspector — Magic Mask. Ready for subject tracking or 1-click human matting.", clipName, clipId), true);
 }
 
 void AICommandRouter::handleInsertNatronTool(const QJsonObject &params)
@@ -3090,7 +3169,11 @@ void AICommandRouter::handleGenerateGlslShader(const QJsonObject &params)
 
     // If custom GLSL code is not provided, load requested preset; otherwise enforce strict validation without fallbacks
     if (glslCode.isEmpty()) {
-        if (preset == QStringLiteral("neon_grid") || preset == QStringLiteral("synthwave") || preset.contains(QStringLiteral("grid"))) {
+        QString libCode = ShaderValidationEngine::getPresetGlsl(preset);
+        if (!libCode.isEmpty()) {
+            glslCode = libCode;
+            if (name.isEmpty()) name = preset;
+        } else if (preset == QStringLiteral("neon_grid") || preset == QStringLiteral("synthwave") || preset.contains(QStringLiteral("grid"))) {
             if (name.isEmpty()) name = QStringLiteral("Neon_Synthwave_Grid");
             glslCode = QStringLiteral(
                 "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
@@ -3335,6 +3418,168 @@ void AICommandRouter::handleGenerateGlslShader(const QJsonObject &params)
     Q_EMIT executionFinished(
         i18n("Procedural GLSL Shader '%1' validated on GPU (Uniforms: %2).",
              name, result.detectedUniforms.join(QStringLiteral(", "))),
+        true);
+}
+
+void AICommandRouter::handleApplyGlslVideoEffect(const QJsonObject &params)
+{
+    auto tm = getTimelineModel();
+    auto *tc = getTimelineController();
+    if (!tm || !tc) {
+        Q_EMIT executionFinished(i18n("No active timeline."), false);
+        return;
+    }
+
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    if (clipId < 0) {
+        clipId = tc->getMainSelectedClip();
+        if (clipId < 0 && !tc->selection().isEmpty()) {
+            clipId = tc->selection().first();
+        }
+    }
+
+    if (clipId < 0 || !tm->isClip(clipId)) {
+        Q_EMIT executionFinished(i18n("Target clip ID not found or not selected. Please specify 'clip_id'."), false);
+        return;
+    }
+
+    QString binId = tm->getClipBinId(clipId);
+    QString sourceVideoPath;
+    if (pCore && pCore->projectItemModel()) {
+        auto pClip = pCore->projectItemModel()->getClipByBinID(binId);
+        if (pClip) {
+            sourceVideoPath = pClip->url();
+        }
+    }
+
+    if (sourceVideoPath.isEmpty() || !QFile::exists(sourceVideoPath)) {
+        Q_EMIT executionFinished(i18n("Could not locate source video file for clip %1 (binId=%2).", clipId, binId), false);
+        return;
+    }
+
+    int secondClipId = params[QStringLiteral("second_clip_id")].toInt(-1);
+    QString secondVideoPath;
+    if (secondClipId >= 0 && tm->isClip(secondClipId) && pCore && pCore->projectItemModel()) {
+        QString binId2 = tm->getClipBinId(secondClipId);
+        auto pClip2 = pCore->projectItemModel()->getClipByBinID(binId2);
+        if (pClip2) {
+            secondVideoPath = pClip2->url();
+        }
+    }
+
+    QString preset = params[QStringLiteral("preset")].toString().trimmed().toLower();
+    QString glslCode = params[QStringLiteral("glsl_code")].toString().trimmed();
+    if (glslCode.isEmpty() && !preset.isEmpty()) {
+        glslCode = ShaderValidationEngine::getPresetGlsl(preset);
+    }
+    if (glslCode.isEmpty()) {
+        preset = QStringLiteral("lens_distortion");
+        glslCode = ShaderValidationEngine::getPresetGlsl(preset);
+    }
+
+    // Step 1: Validate & Compile shader offscreen on GPU
+    auto *validator = ShaderValidationEngine::instance();
+    auto result = validator->validateShader(glslCode, ShaderValidationEngine::ShaderToy);
+    if (!result.success) {
+        QJsonObject errData;
+        errData[QStringLiteral("success")] = false;
+        errData[QStringLiteral("error_line")] = result.errorLine;
+        errData[QStringLiteral("error_log")] = result.errorLog;
+        Q_EMIT dataOutput(QStringLiteral("apply_glsl_video_effect"), errData);
+        Q_EMIT executionFinished(i18n("GLSL GPU Compilation Error (Line %1):\n%2", result.errorLine, result.errorLog), false);
+        return;
+    }
+
+    GLSLShaderRenderer renderer;
+    QString loadErr;
+    if (!renderer.loadShader(result.finalGlslCode, &loadErr)) {
+        Q_EMIT executionFinished(i18n("Failed to load compiled GLSL shader: %1", loadErr), false);
+        return;
+    }
+
+    // Configure uniforms
+    GLSLShaderRenderer::UniformState baseUniforms;
+    if (params.contains(QStringLiteral("intensity"))) {
+        baseUniforms.customParams[1] = float(params[QStringLiteral("intensity")].toDouble());
+    } else if (params.contains(QStringLiteral("custom_param1"))) {
+        baseUniforms.customParams[1] = float(params[QStringLiteral("custom_param1")].toDouble());
+    }
+    if (params.contains(QStringLiteral("custom_param2"))) {
+        baseUniforms.customParams[2] = float(params[QStringLiteral("custom_param2")].toDouble());
+    }
+
+    bool isTemporal = (preset == QStringLiteral("temporal_echo") || preset == QStringLiteral("motion_blur") ||
+                       preset == QStringLiteral("light_trails") || preset == QStringLiteral("echo"));
+
+    QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/shaders");
+    QDir().mkpath(cacheDir);
+    QString outVideo = QStringLiteral("%1/glsl_fx_%2_%3.mp4")
+                           .arg(cacheDir, preset.isEmpty() ? QStringLiteral("custom") : preset)
+                           .arg(QDateTime::currentMSecsSinceEpoch());
+
+    int width = 0, height = 0;
+    double fps = 0.0;
+    if (pCore) {
+        QSize fs = pCore->getCurrentFrameSize();
+        width = fs.width();
+        height = fs.height();
+        fps = pCore->getCurrentFps();
+    }
+
+    QString procErr;
+    bool ok = renderer.processVideoWithShader(sourceVideoPath, outVideo, width, height, fps, secondVideoPath, isTemporal, baseUniforms, &procErr);
+    if (!ok || !QFile::exists(outVideo)) {
+        Q_EMIT executionFinished(i18n("Shader video processing failed: %1", procErr), false);
+        return;
+    }
+
+    // Step 2: Auto-import processed video into Project Bin
+    QString newBinId;
+    int targetTrackId = tm->getClipTrackId(clipId);
+    int clipStartPos = tm->getClipPosition(clipId);
+    bool replaceClip = params[QStringLiteral("replace_clip")].toBool(false);
+
+    if (pCore && pCore->bin() && pCore->projectItemModel()) {
+        Fun undo;
+        Fun redo;
+        auto insertCallback = [tc, tm, targetTrackId, clipStartPos, replaceClip, clipId](const QString &insertedBinId) {
+            if (tc && tm && !insertedBinId.isEmpty()) {
+                if (replaceClip) {
+                    tm->requestSetSelection({clipId});
+                    tc->deleteSelectedClips();
+                    tc->insertClips(targetTrackId, clipStartPos, {insertedBinId}, true, true);
+                } else {
+                    const auto vTracks = tm->getTracksIds(false);
+                    int overlayTrackId = targetTrackId;
+                    for (int i = 0; i < vTracks.size() - 1; ++i) {
+                        if (vTracks[i] == targetTrackId) {
+                            overlayTrackId = vTracks[i + 1];
+                            break;
+                        }
+                    }
+                    tc->insertClips(overlayTrackId, clipStartPos, {insertedBinId}, true, true);
+                }
+            }
+        };
+        newBinId = ClipCreator::createClipFromFile(outVideo, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo, insertCallback);
+        if (newBinId != QStringLiteral("-1")) {
+            pCore->pushUndo(undo, redo, i18nc("@action", "Apply GLSL video shader effect"));
+        }
+    }
+
+    QJsonObject successData;
+    successData[QStringLiteral("success")] = true;
+    successData[QStringLiteral("original_clip_id")] = clipId;
+    successData[QStringLiteral("preset")] = preset;
+    successData[QStringLiteral("output_video_path")] = outVideo;
+    successData[QStringLiteral("bin_id")] = newBinId;
+    successData[QStringLiteral("is_temporal")] = isTemporal;
+    successData[QStringLiteral("replaced_original")] = replaceClip;
+
+    Q_EMIT dataOutput(QStringLiteral("apply_glsl_video_effect"), successData);
+    Q_EMIT executionFinished(
+        i18n("Applied GLSL Shader effect '%1' to Clip %2.\n- Processed File: %3\n- Imported to Bin ID: %4\n- Mode: %5",
+             preset, clipId, outVideo, newBinId, replaceClip ? QStringLiteral("Replaced Clip") : QStringLiteral("Overlay Track")),
         true);
 }
 

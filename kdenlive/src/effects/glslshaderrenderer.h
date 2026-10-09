@@ -73,6 +73,40 @@ public:
      */
     bool renderToVideoFile(const QString &outputPath, int width, int height, double fps, int totalFrames, bool audioReactive = false, QString *outError = nullptr);
 
+    /**
+     * @brief Processes an existing video file through the GLSL shader pipeline,
+     *        supporting spatial transforms, multi-pass temporal buffering,
+     *        multi-texture compositing, color grading, and convolution filtering.
+     * @param inputVideoPath Path to source video file (fed into iChannel0).
+     * @param outputPath Path for processed output video (.mp4).
+     * @param width Output width (0 to inherit from source video).
+     * @param height Output height (0 to inherit from source video).
+     * @param fps Frame rate (0.0 to inherit from source video).
+     * @param secondInputVideoPath Optional secondary video/texture (fed into iChannel1 for displacement or blending).
+     * @param enableTemporalBuffer If true, feeds previous rendered frame into iChannel2 for temporal echo/trails.
+     * @param baseUniforms Uniform settings, custom parameters, tints.
+     * @param outError Optional error description output.
+     * @return True if processing completed and output file was written.
+     */
+    bool processVideoWithShader(const QString &inputVideoPath,
+                                const QString &outputPath,
+                                int width,
+                                int height,
+                                double fps,
+                                const QString &secondInputVideoPath,
+                                bool enableTemporalBuffer,
+                                const UniformState &baseUniforms,
+                                QString *outError = nullptr);
+
+    bool processVideoWithShader(const QString &inputVideoPath,
+                                const QString &outputPath,
+                                int width = 0,
+                                int height = 0,
+                                double fps = 0.0,
+                                const QString &secondInputVideoPath = QString(),
+                                bool enableTemporalBuffer = false,
+                                QString *outError = nullptr);
+
     bool isValid() const { return m_program && m_program->isLinked(); }
 
 private:

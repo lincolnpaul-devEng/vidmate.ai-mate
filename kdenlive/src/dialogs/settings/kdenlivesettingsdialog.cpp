@@ -35,6 +35,11 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <KService>
 #include <KUrlRequesterDialog>
 #include <kddockwidgets/Config.h>
+#include "dialogs/preferencesdialog.h"
+
+#include <QQuickWidget>
+#include <QListView>
+#include <QAbstractItemView>
 
 #include <QAction>
 #include <QAudioDevice>
@@ -68,7 +73,11 @@ KdenliveSettingsDialog::KdenliveSettingsDialog(QMap<QString, QString> mappable_a
     , m_mappable_actions(std::move(mappable_actions))
 {
     setWindowModality(Qt::ApplicationModal);
+    setWindowTitle(i18n("Settings"));
+    setFaceType(KPageDialog::FlatList);
 
+    m_prefBackend = new PreferencesBackend(this);
+    initAppearancePage();
     initMiscPage();
     initProjectPage();
     initProxyPage();
@@ -144,6 +153,9 @@ KdenliveSettingsDialog::KdenliveSettingsDialog(QMap<QString, QString> mappable_a
     } else {
         optimalSize = settingsGroup.readEntry("dialogSize", QVariant(size())).toSize();
     }
+    applyModernTheme();
+    connect(m_prefBackend, &PreferencesBackend::accentColorChanged, this, &KdenliveSettingsDialog::applyModernTheme);
+
     resize(optimalSize);
 }
 
@@ -194,6 +206,266 @@ bool KdenliveSettingsDialog::initAudioRecDevice()
         updateButtons();
     });
     return true;
+}
+
+void KdenliveSettingsDialog::initAppearancePage()
+{
+    auto *pageWidget = new QWidget(this);
+    auto *lay = new QVBoxLayout(pageWidget);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
+
+    auto *quickWidget = PreferencesDialog::createQuickWidget(pageWidget, m_prefBackend, false);
+    lay->addWidget(quickWidget);
+
+    m_pageAppearance = addPage(pageWidget, i18n("Appearance"), QStringLiteral("preferences-desktop-theme"));
+}
+
+void KdenliveSettingsDialog::applyModernTheme()
+{
+    const auto views = findChildren<QAbstractItemView *>();
+    for (auto *view : views) {
+        view->setIconSize(QSize(20, 20));
+        view->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+        if (auto *lv = qobject_cast<QListView *>(view)) {
+            lv->setSpacing(3);
+            lv->setWordWrap(false);
+            lv->setUniformItemSizes(true);
+            lv->setMinimumWidth(210);
+        }
+    }
+
+    const QString accentHex = m_prefBackend ? m_prefBackend->accentColor() : QStringLiteral("#f59e0b");
+
+    const QString qss = QStringLiteral(R"(
+        /* Modern Obsidian Theme for Kdenlive Settings */
+        QDialog#settings, KdenliveSettingsDialog {
+            background-color: #0e1015;
+            color: #f4f4f5;
+        }
+
+        /* Left Navigation Sidebar */
+        QAbstractItemView {
+            background-color: #12141a;
+            border: none;
+            border-right: 1px solid #212433;
+            padding: 10px 4px;
+            outline: none;
+            color: #9ca3af;
+        }
+
+        QAbstractItemView::item {
+            color: #9ca3af;
+            background-color: transparent;
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin: 2px 6px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        QAbstractItemView::item:hover {
+            background-color: #1c1f29;
+            color: #f4f4f5;
+        }
+
+        QAbstractItemView::item:selected {
+            background-color: %1;
+            color: #09090b;
+            font-weight: bold;
+        }
+
+        /* Right Content Area */
+        QStackedWidget {
+            background-color: #0e1015;
+            padding: 8px;
+        }
+
+        /* Card Group Boxes */
+        QGroupBox {
+            background-color: #171922;
+            border: 1px solid #262938;
+            border-radius: 10px;
+            margin-top: 24px;
+            padding: 18px 14px 14px 14px;
+            font-weight: 600;
+            color: #f4f4f5;
+        }
+
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 14px;
+            padding: 0 6px;
+            background-color: transparent;
+            color: #f4f4f5;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        /* Tabs */
+        QTabWidget::pane {
+            border: 1px solid #262938;
+            background-color: #171922;
+            border-radius: 8px;
+            padding: 8px;
+        }
+
+        QTabBar::tab {
+            background-color: #12141a;
+            color: #9ca3af;
+            padding: 7px 14px;
+            border-radius: 6px;
+            margin: 2px 3px;
+            font-size: 12px;
+            border: 1px solid transparent;
+        }
+
+        QTabBar::tab:hover {
+            background-color: #1c1f29;
+            color: #f4f4f5;
+        }
+
+        QTabBar::tab:selected {
+            background-color: #262938;
+            color: #f4f4f5;
+            font-weight: 600;
+            border: 1px solid #3b3f54;
+        }
+
+        /* Input Controls */
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+            background-color: #14161f;
+            border: 1px solid #262938;
+            border-radius: 6px;
+            padding: 5px 9px;
+            color: #f4f4f5;
+            font-size: 12px;
+            selection-background-color: %1;
+            selection-color: #09090b;
+        }
+
+        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+            border: 1px solid %1;
+        }
+
+        QComboBox::drop-down {
+            border: none;
+            width: 20px;
+        }
+
+        QComboBox QAbstractItemView {
+            background-color: #171922;
+            border: 1px solid #262938;
+            border-radius: 6px;
+            selection-background-color: %1;
+            selection-color: #09090b;
+            color: #f4f4f5;
+            padding: 4px;
+        }
+
+        /* Push Buttons */
+        QPushButton {
+            background-color: #1e212d;
+            border: 1px solid #262938;
+            border-radius: 6px;
+            padding: 6px 14px;
+            color: #f4f4f5;
+            font-size: 12px;
+            font-weight: 500;
+            min-height: 22px;
+        }
+
+        QPushButton:hover {
+            background-color: #272a38;
+            border-color: #3b3f54;
+        }
+
+        QPushButton:pressed {
+            background-color: #151720;
+        }
+
+        QPushButton:disabled {
+            background-color: #14161f;
+            border-color: #1e202b;
+            color: #52525b;
+        }
+
+        /* Sliders */
+        QSlider::groove:horizontal {
+            height: 4px;
+            background: #252736;
+            border-radius: 2px;
+        }
+
+        QSlider::sub-page:horizontal {
+            background: %1;
+            border-radius: 2px;
+        }
+
+        QSlider::handle:horizontal {
+            background: #ffffff;
+            border: 1px solid %1;
+            width: 14px;
+            height: 14px;
+            margin: -5px 0;
+            border-radius: 7px;
+        }
+
+        /* Checkboxes & Radios */
+        QCheckBox, QRadioButton {
+            color: #f4f4f5;
+            spacing: 8px;
+            font-size: 12px;
+        }
+
+        QCheckBox::indicator, QRadioButton::indicator {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #3b3f54;
+            background-color: #14161f;
+            border-radius: 4px;
+        }
+
+        QRadioButton::indicator {
+            border-radius: 8px;
+        }
+
+        QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+            background-color: %1;
+            border-color: %1;
+        }
+
+        /* Scrollbars */
+        QScrollBar:vertical {
+            width: 8px;
+            background: transparent;
+            margin: 0;
+        }
+
+        QScrollBar::handle:vertical {
+            background: #2a2d3d;
+            border-radius: 4px;
+            min-height: 24px;
+        }
+
+        QScrollBar::handle:vertical:hover {
+            background: #3f435c;
+        }
+
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0;
+        }
+
+        /* Bottom Button Box */
+        QDialogButtonBox {
+            background-color: #12141a;
+            border-top: 1px solid #212433;
+            padding: 10px 16px;
+        }
+    )").arg(accentHex);
+
+    setStyleSheet(qss);
 }
 
 void KdenliveSettingsDialog::initMiscPage()
@@ -962,6 +1234,9 @@ void KdenliveSettingsDialog::slotReadAudioDevices()
 void KdenliveSettingsDialog::showPage(Kdenlive::ConfigPage page, int option)
 {
     switch (page) {
+    case Kdenlive::PageAppearance:
+        setCurrentPage(m_pageAppearance);
+        break;
     case Kdenlive::PageMisc:
         setCurrentPage(m_pageMisc);
         break;
