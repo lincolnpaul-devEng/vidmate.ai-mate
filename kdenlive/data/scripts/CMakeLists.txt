@@ -6,6 +6,7 @@ add_subdirectory(vosk)
 add_subdirectory(whisper)
 add_subdirectory(scenedetect)
 add_subdirectory(audio)
+add_subdirectory(vfx)
 
 INSTALL(FILES 
     checkpackages.py

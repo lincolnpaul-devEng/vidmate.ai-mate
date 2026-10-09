@@ -448,22 +448,24 @@ void AIToolRegistry::registerAllTools()
     // 17. natron_vfx — run headless Natron compositing pipeline
     {
         QJsonObject props;
-        props[QStringLiteral("pipeline")] = enumParam(
-            QStringLiteral("Pre-built VFX pipeline template."),
-            {QStringLiteral("chroma_key"), QStringLiteral("rotoscope"), QStringLiteral("planar_track"),
-             QStringLiteral("particle_system"), QStringLiteral("light_wrap"), QStringLiteral("glitch_composite"),
-             QStringLiteral("text_behind_subject"), QStringLiteral("color_grade"), QStringLiteral("custom")});
+        props[QStringLiteral("pipeline")] = stringParam(
+            QStringLiteral("VFX pipeline or animation type (e.g., 'chroma_key', 'rotoscope', 'planar_track', 'motion_graphic', 'particle_system', 'color_grade', 'glitch_composite', 'text_behind_subject', or any custom VFX/animation name)."));
         props[QStringLiteral("input_clip")] = stringParam(QStringLiteral(
-            "Path to the input media file for VFX processing."));
+            "Path to the input media file for VFX processing (optional for standalone procedural animations/graphics)."));
         props[QStringLiteral("output_path")] = stringParam(QStringLiteral(
-            "Output path for rendered VFX result."));
+            "Output path for rendered VFX result. If omitted, automatically written to a temporary project asset file."));
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral(
+            "Target timeline video track ID to place the rendered clip onto (default: top active video track or track 1)."));
+        props[QStringLiteral("playhead_frame")] = intParam(QStringLiteral(
+            "Timeline frame position to insert the clip at. Defaults to current timeline playhead position if -1 or omitted."));
         props[QStringLiteral("vfx_script")] = stringParam(QStringLiteral(
-            "Custom Python/Natron script for the 'custom' pipeline type."));
+            "Custom Python/Natron script for custom node graph generation."));
         props[QStringLiteral("params")] = stringParam(QStringLiteral(
-            "JSON string of pipeline-specific parameters (e.g., key color for chroma_key)."));
+            "JSON string of pipeline-specific parameters (e.g. key color, text, font, colors, tracking data, transform coordinates)."));
         addTool(QStringLiteral("natron_vfx"),
-                QStringLiteral("Execute a headless Natron VFX compositing pipeline. Supports pre-built templates "
-                               "(chroma key, rotoscope, tracking, particles) or custom Python scripts."),
+                QStringLiteral("Execute a Natron VFX compositing / animation pipeline. Supports any VFX template, motion graphic, "
+                               "or custom Python node graph. Renders the animation/VFX, imports it into the Project Bin, places it onto "
+                               "the timeline, and triggers live monitor preview synchronization."),
                 makeParams(props, {QStringLiteral("pipeline")}),
                 QStringLiteral("natron"));
     }

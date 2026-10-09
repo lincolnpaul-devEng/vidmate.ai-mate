@@ -110,8 +110,6 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
     if (env.contains(QStringLiteral("VITE_SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("VITE_SUPABASE_ANON_KEY"));
     else if (env.contains(QStringLiteral("SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("SUPABASE_ANON_KEY"));
 
-    if (env.contains(QStringLiteral("SUPABASE_SERVICE_ROLE_KEY"))) m_supabaseServiceKey = env.value(QStringLiteral("SUPABASE_SERVICE_ROLE_KEY"));
-
     // 2. Search candidate .env and .env.local files in priority order
     QStringList searchPaths;
     if (!customPath.isEmpty()) searchPaths << customPath;
@@ -172,8 +170,6 @@ void AIDispatcher::loadEnvConfig(const QString &customPath)
                     m_supabaseUrl = val;
                 } else if ((key == QStringLiteral("VITE_SUPABASE_ANON_KEY") || key == QStringLiteral("SUPABASE_ANON_KEY")) && m_supabaseAnonKey.isEmpty()) {
                     m_supabaseAnonKey = val;
-                } else if (key == QStringLiteral("SUPABASE_SERVICE_ROLE_KEY") && m_supabaseServiceKey.isEmpty()) {
-                    m_supabaseServiceKey = val;
                 }
             }
             if (!m_supabaseUrl.isEmpty() && !m_supabaseAnonKey.isEmpty()) {
@@ -279,7 +275,12 @@ void AIDispatcher::fetchAvailableModels(std::function<void(const QJsonArray &mod
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     req.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
-    req.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
+    if (AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {
+        req.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(AuthManager::instance()->accessToken()).toUtf8());
+        req.setRawHeader("x-user-jwt", AuthManager::instance()->accessToken().toUtf8());
+    } else {
+        req.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
+    }
     if (!m_openRouterKey.isEmpty()) {
         req.setRawHeader("x-openrouter-key", m_openRouterKey.toUtf8());
     } else if (!m_apiKey.isEmpty()) {
@@ -741,13 +742,13 @@ void AIDispatcher::sendCurrentMessages()
             return;
         }
         request.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
-        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
-
-        // Pass authenticated user metadata as custom headers for audit/session context
         if (AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {
+            request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(AuthManager::instance()->accessToken()).toUtf8());
             request.setRawHeader("x-user-jwt", AuthManager::instance()->accessToken().toUtf8());
             request.setRawHeader("x-user-id", AuthManager::instance()->userId().toUtf8());
             request.setRawHeader("x-user-email", AuthManager::instance()->userEmail().toUtf8());
+        } else {
+            request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
         }
 
         // Provider-specific API key injection (Velo pattern):

@@ -359,8 +359,6 @@ void VeloAssetWidget::loadEnvCredentials()
     if (env.contains(QStringLiteral("VITE_SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("VITE_SUPABASE_ANON_KEY"));
     else if (env.contains(QStringLiteral("SUPABASE_ANON_KEY"))) m_supabaseAnonKey = env.value(QStringLiteral("SUPABASE_ANON_KEY"));
 
-    if (env.contains(QStringLiteral("SUPABASE_SERVICE_ROLE_KEY"))) m_supabaseServiceKey = env.value(QStringLiteral("SUPABASE_SERVICE_ROLE_KEY"));
-
     // 2. Search candidate .env and .env.local files in priority order
     QStringList searchPaths;
 
@@ -417,8 +415,6 @@ void VeloAssetWidget::loadEnvCredentials()
                     m_supabaseUrl = val;
                 } else if ((key == QStringLiteral("VITE_SUPABASE_ANON_KEY") || key == QStringLiteral("SUPABASE_ANON_KEY")) && m_supabaseAnonKey.isEmpty()) {
                     m_supabaseAnonKey = val;
-                } else if (key == QStringLiteral("SUPABASE_SERVICE_ROLE_KEY") && m_supabaseServiceKey.isEmpty()) {
-                    m_supabaseServiceKey = val;
                 }
             }
             if (!m_supabaseUrl.isEmpty() && !m_supabaseAnonKey.isEmpty()) {
@@ -436,13 +432,27 @@ void VeloAssetWidget::loadEnvCredentials()
 
 QNetworkRequest VeloAssetWidget::createSupabaseRequest(const QString &functionPath) const
 {
-    QString urlStr = QStringLiteral("%1/functions/v1/%2").arg(m_supabaseUrl, functionPath);
+    QString supabaseUrl = m_supabaseUrl;
+    QString supabaseAnonKey = m_supabaseAnonKey;
+    if ((supabaseUrl.isEmpty() || supabaseAnonKey.isEmpty()) && AuthManager::instance()) {
+        if (supabaseUrl.isEmpty()) supabaseUrl = AuthManager::instance()->supabaseUrl();
+        if (supabaseAnonKey.isEmpty()) supabaseAnonKey = AuthManager::instance()->supabaseAnonKey();
+    }
+
+    QString urlStr = QStringLiteral("%1/functions/v1/%2").arg(supabaseUrl, functionPath);
     QUrl targetUrl(urlStr);
     QNetworkRequest request(targetUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    if (!m_supabaseAnonKey.isEmpty()) {
-        request.setRawHeader("apikey", m_supabaseAnonKey.toUtf8());
-        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_supabaseAnonKey).toUtf8());
+    if (!supabaseAnonKey.isEmpty()) {
+        request.setRawHeader("apikey", supabaseAnonKey.toUtf8());
+        if (AuthManager::instance() && AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {
+            request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(AuthManager::instance()->accessToken()).toUtf8());
+            request.setRawHeader("x-user-jwt", AuthManager::instance()->accessToken().toUtf8());
+            request.setRawHeader("x-user-id", AuthManager::instance()->userId().toUtf8());
+            request.setRawHeader("x-user-email", AuthManager::instance()->userEmail().toUtf8());
+        } else {
+            request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(supabaseAnonKey).toUtf8());
+        }
     }
     return request;
 }
@@ -1162,11 +1172,18 @@ void VeloAssetWidget::slotGenerateAiSfxClicked()
 
     // 1. Locate python venv or system python
     QString pythonExec;
-    QString venvPy = QStringLiteral("/home/lincoln/.local/share/kdenlive/venv/bin/python");
-    if (QFile::exists(venvPy)) {
-        pythonExec = venvPy;
-    } else {
-        pythonExec = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    QStringList venvCandidates = {
+        QDir::home().filePath(QStringLiteral(".local/share/kdenlive/venv/bin/python")),
+        QDir::home().filePath(QStringLiteral(".local/share/kdenlive/venv-sam/bin/python3")),
+        QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kdenlive/venv/bin/python")),
+        QStandardPaths::findExecutable(QStringLiteral("python3")),
+        QStringLiteral("python3")
+    };
+    for (const QString &cand : venvCandidates) {
+        if (!cand.isEmpty() && (QFile::exists(cand) || !cand.contains(QLatin1Char('/')))) {
+            pythonExec = cand;
+            break;
+        }
     }
 
     if (pythonExec.isEmpty()) {
@@ -1177,10 +1194,12 @@ void VeloAssetWidget::slotGenerateAiSfxClicked()
     // 2. Locate sfx_generator.py
     QString scriptPath;
     QStringList candidates = {
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/audio/sfx_generator.py")),
         QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/audio/sfx_generator.py"),
         QCoreApplication::applicationDirPath() + QStringLiteral("/data/scripts/audio/sfx_generator.py"),
-        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/audio/sfx_generator.py"),
-        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/audio/sfx_generator.py"))
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/audio/sfx_generator.py"),
+        QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/audio/sfx_generator.py")),
+        QDir::current().filePath(QStringLiteral("data/scripts/audio/sfx_generator.py"))
     };
     for (const QString &c : candidates) {
         if (!c.isEmpty() && QFile::exists(c)) {

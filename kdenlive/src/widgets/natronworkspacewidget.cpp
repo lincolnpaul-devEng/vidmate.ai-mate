@@ -13,11 +13,19 @@
 #include "natronscriptgenerator.h"
 #include "core.h"
 #include "mainwindow.h"
+#include "timeline2/view/timelinewidget.h"
+#include "timeline2/view/timelinecontroller.h"
+#include "timeline2/model/timelinemodel.hpp"
+#include "bin/bin.h"
+#include "bin/projectitemmodel.h"
+#include "bin/clipcreator.hpp"
 
 #include <KLocalizedString>
 #include <QIcon>
 #include <QMenu>
 #include <QCursor>
+#include <QStandardPaths>
+#include <QDateTime>
 
 NatronWorkspaceWidget::NatronWorkspaceWidget(QWidget *parent)
     : QWidget(parent)
@@ -39,11 +47,46 @@ void NatronWorkspaceWidget::setupUi()
     m_natronHostWidget = new NatronGuiHostWidget(this);
     mainLayout->addWidget(m_natronHostWidget, 1);
 
-    // Connect frame sync
+    // Connect frame sync and live preview
     connect(m_natronHostWidget, &NatronGuiHostWidget::frameChangedInNatron, this, &NatronWorkspaceWidget::syncPlayheadFrame);
     connect(m_natronHostWidget, &NatronGuiHostWidget::renderFinished, this, [this](const QString &outputPath) {
         m_statusLabel->setText(i18n("Natron Render complete: %1", outputPath));
         if (m_progressBar) m_progressBar->setVisible(false);
+
+        // Auto-import into Project Bin and place onto Timeline for live preview
+        if (pCore && pCore->bin() && pCore->projectItemModel() && QFile::exists(outputPath)) {
+            auto *tlWidget = pCore->window() ? static_cast<MainWindow *>(pCore->window())->getCurrentTimeline() : nullptr;
+            auto *tc = tlWidget ? tlWidget->controller() : nullptr;
+            auto tm = tlWidget ? tlWidget->model() : nullptr;
+            int targetTrack = -1;
+            int pos = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
+            if (tc && tm) {
+                int active = tc->activeTrack();
+                if (active >= 0 && !tm->isAudioTrack(active)) {
+                    targetTrack = active;
+                } else {
+                    const auto vTracks = tm->getTracksIds(false);
+                    if (!vTracks.isEmpty()) targetTrack = vTracks.last();
+                }
+            }
+
+            Fun undo;
+            Fun redo;
+            auto insertCallback = [tc, targetTrack, pos](const QString &insertedBinId) {
+                if (tc && targetTrack >= 0 && !insertedBinId.isEmpty()) {
+                    tc->insertClips(targetTrack, pos, {insertedBinId}, true, true);
+                }
+            };
+            QString binId = ClipCreator::createClipFromFile(outputPath, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo, insertCallback);
+            if (binId != QStringLiteral("-1")) {
+                pCore->pushUndo(undo, redo, i18nc("@action", "Add Natron VFX clip"));
+            }
+        }
+
+        // Live monitor preview refresh
+        if (pCore) {
+            pCore->refreshProjectMonitorOnce(true);
+        }
     });
     connect(m_natronHostWidget, &NatronGuiHostWidget::statusMessageChanged, this, [this](const QString &msg) {
         m_statusLabel->setText(msg);
@@ -198,7 +241,11 @@ void NatronWorkspaceWidget::slotRenderVfxTriggered()
         m_progressBar->setValue(0);
     }
     if (m_natronHostWidget) {
-        m_natronHostWidget->renderVfxSequence(QStringLiteral("output.mov"));
+        QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        QString outPath = QStringLiteral("%1/natron_render_%2.mov")
+            .arg(tmpDir)
+            .arg(QDateTime::currentMSecsSinceEpoch());
+        m_natronHostWidget->renderVfxSequence(outPath);
     }
 }
 

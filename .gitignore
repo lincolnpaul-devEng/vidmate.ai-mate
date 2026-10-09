@@ -30,9 +30,12 @@ venv-*/
 __pycache__/
 *.pyc
 
-# Local secrets & env (template in .env.example)
-.env.local
+# Local secrets & env (never commit secrets, credentials, or service keys)
 .env
+.env.*
+.env*.local
+*.env
+!.env.example
 
 # CI / Test artefacts
 kde-ci-reports/

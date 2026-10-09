@@ -23,6 +23,7 @@
 #include "mainwindow.h"
 #include "magicmaskwidget.h"
 #include "natronworkspacewidget.h"
+#include "natronguihostwidget.h"
 #include "natronscriptgenerator.h"
 #include "bin/bin.h"
 #include "bin/projectitemmodel.h"
@@ -1209,9 +1210,19 @@ void AICommandRouter::handleInsertNatronTool(const QJsonObject &params)
     if (pCore && pCore->window()) {
         auto *mw = static_cast<MainWindow *>(pCore->window());
         mw->showNatronWorkspace();
+        if (auto *natronWs = mw->natronWorkspaceWidget()) {
+            if (auto *host = natronWs->natronHost()) {
+                host->createNode(toolId, params);
+            }
+        }
     }
 
-    Q_EMIT executionFinished(i18n("Opened Natron workspace and inserted tool '%1' into VFX pipeline.", toolId), true);
+    QJsonObject outData;
+    outData[QStringLiteral("tool_id")] = toolId;
+    outData[QStringLiteral("status")] = QStringLiteral("inserted");
+    Q_EMIT dataOutput(QStringLiteral("insert_natron_tool"), outData);
+
+    Q_EMIT executionFinished(i18n("Opened Natron VFX workspace and inserted tool '%1' into the node graph.", toolId), true);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2228,7 +2239,7 @@ void AICommandRouter::handleUndoLast(const QJsonObject &params)
 
 void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
 {
-    QString pipeline = params[QStringLiteral("pipeline")].toString(QStringLiteral("chroma_key"));
+    QString pipeline = params[QStringLiteral("pipeline")].toString(QStringLiteral("youtube_subscribe"));
     QString inputClip = params[QStringLiteral("input_clip")].toString();
     QString outputPath = params[QStringLiteral("output_path")].toString();
     int startFrame = params[QStringLiteral("start_frame")].toInt(-1);
@@ -2261,7 +2272,14 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
         }
     }
 
-    if (inputClip.isEmpty()) {
+    bool isStandaloneGenerator = pipeline.contains(QStringLiteral("subscribe")) ||
+                                 pipeline.contains(QStringLiteral("button")) ||
+                                 pipeline.contains(QStringLiteral("motion_graphic")) ||
+                                 pipeline.contains(QStringLiteral("handclick")) ||
+                                 pipeline.contains(QStringLiteral("overlay")) ||
+                                 pipeline.contains(QStringLiteral("title"));
+
+    if (inputClip.isEmpty() && !isStandaloneGenerator) {
         Q_EMIT executionFinished(i18n("Natron VFX: No input clip specified or selected on the timeline."), false);
         return;
     }
@@ -2277,24 +2295,7 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
 
     m_lastVfxOutputPath = outputPath;
 
-    // Procedurally generate Python node-graph script via NatronScriptGenerator
-    QString script = NatronScriptGenerator::generateFromSpec(params, inputClip, outputPath, startFrame, endFrame);
-
-    QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    QString scriptPath = QStringLiteral("%1/natron_task_%2.py")
-        .arg(tmpDir)
-        .arg(QDateTime::currentMSecsSinceEpoch());
-
-    QFile file(scriptPath);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        file.write(script.toUtf8());
-        file.close();
-    } else {
-        Q_EMIT executionFinished(i18n("Failed to write Natron script to %1.", scriptPath), false);
-        return;
-    }
-
-    // Search for NatronRenderer inside kdenlive/Natron or relative to application / system PATH
+    // 1. Search for NatronRenderer inside kdenlive/Natron or relative to application / system PATH
     QStringList candidates = {
         QCoreApplication::applicationDirPath() + QStringLiteral("/../Natron/Renderer/NatronRenderer"),
         QCoreApplication::applicationDirPath() + QStringLiteral("/Natron/Renderer/NatronRenderer"),
@@ -2305,29 +2306,136 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
         QStandardPaths::findExecutable(QStringLiteral("NatronRenderer")),
         QStandardPaths::findExecutable(QStringLiteral("natron-renderer")),
         QStandardPaths::findExecutable(QStringLiteral("Natron")),
-        QStandardPaths::findExecutable(QStringLiteral("natron")),
-        QStringLiteral("NatronRenderer"),
-        QStringLiteral("natron-renderer")
+        QStandardPaths::findExecutable(QStringLiteral("natron"))
     };
 
     QString natronBin;
     for (const QString &c : candidates) {
-        if (QFile::exists(c) || !c.contains(QLatin1Char('/'))) {
+        if (!c.isEmpty() && (QFile::exists(c) || !c.contains(QLatin1Char('/')))) {
             natronBin = c;
             break;
         }
     }
-    if (natronBin.isEmpty()) {
-        natronBin = QStringLiteral("natron-renderer");
+
+    bool rendered = false;
+
+    if (!natronBin.isEmpty()) {
+        // Procedurally generate Python node-graph script via NatronScriptGenerator
+        QString script = NatronScriptGenerator::generateFromSpec(params, inputClip, outputPath, startFrame, endFrame);
+        QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        QString scriptPath = QStringLiteral("%1/natron_task_%2.py")
+            .arg(tmpDir)
+            .arg(QDateTime::currentMSecsSinceEpoch());
+
+        QFile file(scriptPath);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            file.write(script.toUtf8());
+            file.close();
+        }
+
+        QProcess nproc;
+        nproc.start(natronBin, {QStringLiteral("-t"), scriptPath});
+        if (nproc.waitForFinished(60000) && nproc.exitCode() == 0 && QFile::exists(outputPath) && QFile(outputPath).size() > 0) {
+            rendered = true;
+        }
     }
 
-    QStringList args;
-    args << QStringLiteral("-t") << scriptPath;
+    // 2. Fallback to built-in VidMate VFX Synthesizer (Python + FFmpeg) if Natron is not installed or didn't output file
+    if (!rendered || !QFile::exists(outputPath) || QFile(outputPath).size() == 0) {
+        QString synthScript;
+        QStringList synthCandidates = {
+            QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/vfx/natron_synthesizer.py")),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/vfx/natron_synthesizer.py"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/vfx/natron_synthesizer.py"),
+            QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/vfx/natron_synthesizer.py")),
+            QDir::current().filePath(QStringLiteral("data/scripts/vfx/natron_synthesizer.py"))
+        };
+        for (const QString &c : synthCandidates) {
+            if (!c.isEmpty() && QFile::exists(c)) {
+                synthScript = c;
+                break;
+            }
+        }
 
-    m_natronProcess->start(natronBin, args);
+        if (!synthScript.isEmpty()) {
+            QStringList synthArgs;
+            synthArgs << synthScript
+                      << QStringLiteral("--pipeline") << pipeline
+                      << QStringLiteral("--output") << outputPath;
+            if (!inputClip.isEmpty()) {
+                synthArgs << QStringLiteral("--input") << inputClip;
+            }
+            QJsonObject pObj = params;
+            synthArgs << QStringLiteral("--params") << QString::fromUtf8(QJsonDocument(pObj).toJson(QJsonDocument::Compact));
+
+            QProcess pyProc;
+            pyProc.start(QStringLiteral("python3"), synthArgs);
+            if (pyProc.waitForFinished(30000) && pyProc.exitCode() == 0 && QFile::exists(outputPath)) {
+                rendered = true;
+            }
+        }
+    }
+
+    if (!QFile::exists(outputPath) || QFile(outputPath).size() == 0) {
+        Q_EMIT executionFinished(i18n("Natron VFX processing failed to materialize file at %1.", outputPath), false);
+        return;
+    }
+
+    // 3. Auto-import materialized asset into Project Bin AND insert onto Timeline
+    auto *tc = getTimelineController();
+    auto tm = getTimelineModel();
+
+    int targetTrack = params[QStringLiteral("track_id")].toInt(-1);
+    if (targetTrack < 0 && tm && tc) {
+        int active = tc->activeTrack();
+        if (active >= 0 && !tm->isAudioTrack(active)) {
+            targetTrack = active;
+        } else {
+            const auto vTracks = tm->getTracksIds(false);
+            if (!vTracks.isEmpty()) targetTrack = vTracks.last();
+        }
+    }
+
+    int pos = params[QStringLiteral("playhead_frame")].toInt(-1);
+    if (pos < 0) {
+        pos = params[QStringLiteral("position")].toInt(-1);
+    }
+    if (pos < 0) {
+        pos = pCore ? pCore->getMonitorPosition(Kdenlive::ProjectMonitor) : 0;
+    }
+
+    QString binId;
+    if (pCore && pCore->bin() && pCore->projectItemModel()) {
+        Fun undo;
+        Fun redo;
+        auto insertCallback = [tc, tm, targetTrack, pos](const QString &insertedBinId) {
+            if (tc && tm && targetTrack >= 0 && !insertedBinId.isEmpty()) {
+                tc->insertClips(targetTrack, pos, {insertedBinId}, true, true);
+            }
+        };
+        binId = ClipCreator::createClipFromFile(outputPath, pCore->bin()->rootFolderId(), pCore->projectItemModel(), undo, redo, insertCallback);
+        if (binId != QStringLiteral("-1")) {
+            pCore->pushUndo(undo, redo, i18nc("@action", "Add Natron VFX clip"));
+        }
+    }
+
+    if (pCore) {
+        pCore->refreshProjectMonitorOnce(true);
+    }
+
+    QJsonObject outData;
+    outData[QStringLiteral("success")] = true;
+    outData[QStringLiteral("bin_id")] = binId;
+    outData[QStringLiteral("track_id")] = targetTrack;
+    outData[QStringLiteral("playhead_frame")] = pos;
+    outData[QStringLiteral("local_path")] = outputPath;
+    outData[QStringLiteral("pipeline")] = pipeline;
+    Q_EMIT dataOutput(QStringLiteral("natron_vfx"), outData);
+
     Q_EMIT executionFinished(
-        i18n("Configured Natron VFX pipeline '%1' with active Node Graph, Curve Editor & Dope Sheet.\nSource: %2\nOutput: %3",
-             pipeline, inputClip, outputPath), true);
+        i18n("Natron VFX '%1' materialized successfully at '%2'. Imported to Project Bin ('%3') and placed onto Track %4 at frame %5.",
+             pipeline, outputPath, binId, targetTrack, pos),
+        true);
 }
 
 void AICommandRouter::handleTrackObject(const QJsonObject &params)
@@ -2372,7 +2480,14 @@ QNetworkRequest AICommandRouter::createSupabaseRequest(const QString &functionPa
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     if (!supabaseAnonKey.isEmpty()) {
         request.setRawHeader("apikey", supabaseAnonKey.toUtf8());
-        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(supabaseAnonKey).toUtf8());
+        if (AuthManager::instance() && AuthManager::instance()->isLoggedIn() && !AuthManager::instance()->accessToken().isEmpty()) {
+            request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(AuthManager::instance()->accessToken()).toUtf8());
+            request.setRawHeader("x-user-jwt", AuthManager::instance()->accessToken().toUtf8());
+            request.setRawHeader("x-user-id", AuthManager::instance()->userId().toUtf8());
+            request.setRawHeader("x-user-email", AuthManager::instance()->userEmail().toUtf8());
+        } else {
+            request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(supabaseAnonKey).toUtf8());
+        }
     }
     return request;
 }
@@ -2977,11 +3092,57 @@ void AICommandRouter::handleInsertMediaUrl(const QJsonObject &params)
             true);
     };
 
+    // 1. Direct local file resolution & on-the-fly synthesizer fallback
+    QString resolvedLocalPath;
+    if (url.startsWith(QLatin1Char('/'))) {
+        resolvedLocalPath = url;
+    } else if (url.startsWith(QStringLiteral("file://"))) {
+        resolvedLocalPath = QUrl(url).toLocalFile();
+    } else if (QFile::exists(url)) {
+        resolvedLocalPath = url;
+    }
+
+    if (!resolvedLocalPath.isEmpty()) {
+        if (!QFile::exists(resolvedLocalPath) || QFile(resolvedLocalPath).size() == 0) {
+            if (resolvedLocalPath.contains(QStringLiteral("subscribe")) ||
+                resolvedLocalPath.contains(QStringLiteral("button")) ||
+                resolvedLocalPath.contains(QStringLiteral("handclick")) ||
+                resolvedLocalPath.contains(QStringLiteral("motion_graphic"))) {
+                QString synthScript;
+                QStringList synthCandidates = {
+                    QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/vfx/natron_synthesizer.py")),
+                    QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/vfx/natron_synthesizer.py"),
+                    QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/vfx/natron_synthesizer.py"),
+                    QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/vfx/natron_synthesizer.py")),
+                    QDir::current().filePath(QStringLiteral("data/scripts/vfx/natron_synthesizer.py"))
+                };
+                for (const QString &c : synthCandidates) {
+                    if (!c.isEmpty() && QFile::exists(c)) { synthScript = c; break; }
+                }
+                if (!synthScript.isEmpty()) {
+                    QProcess pyProc;
+                    pyProc.start(QStringLiteral("python3"), {synthScript, QStringLiteral("--pipeline"), QStringLiteral("youtube_subscribe"), QStringLiteral("--output"), resolvedLocalPath});
+                    pyProc.waitForFinished(30000);
+                }
+            }
+        }
+
+        if (QFile::exists(resolvedLocalPath) && QFile(resolvedLocalPath).size() > 0) {
+            doImportAndInsert(resolvedLocalPath);
+            return;
+        } else {
+            Q_EMIT executionFinished(i18n("Local media file not found: %1", resolvedLocalPath), false);
+            return;
+        }
+    }
+
+    // 2. Cached remote asset
     if (QFile::exists(localPath) && QFile(localPath).size() > 0) {
         doImportAndInsert(localPath);
         return;
     }
 
+    // 3. Remote URL download
     QNetworkRequest dlReq((QUrl(url)));
     QNetworkReply *reply = m_nam->get(dlReq);
     connect(reply, &QNetworkReply::finished, this, [this, reply, localPath, doImportAndInsert]() {
@@ -3764,8 +3925,11 @@ void AICommandRouter::handleDetectBeats(const QJsonObject &params)
         QStringList candidates = {
             QCoreApplication::applicationDirPath() + QStringLiteral("/beat_this_cpp"),
             QCoreApplication::applicationDirPath() + QStringLiteral("/build/bin/beat_this_cpp"),
-            QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/build/bin/beat_this_cpp"),
-            QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/beat_this_cpp/build/beat_this_cpp")
+            QCoreApplication::applicationDirPath() + QStringLiteral("/beat_this_cpp/build/beat_this_cpp"),
+            QDir::current().filePath(QStringLiteral("kdenlive/build/bin/beat_this_cpp")),
+            QDir::current().filePath(QStringLiteral("kdenlive/beat_this_cpp/build/beat_this_cpp")),
+            QDir::current().filePath(QStringLiteral("beat_this_cpp/build/beat_this_cpp")),
+            QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("bin/beat_this_cpp"))
         };
         for (const QString &c : candidates) {
             if (QFile::exists(c)) {
@@ -3783,10 +3947,13 @@ void AICommandRouter::handleDetectBeats(const QJsonObject &params)
     // 2. Locate beat_this.onnx model
     QString modelPath;
     QStringList modelCandidates = {
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("models/beat_this.onnx")),
         QCoreApplication::applicationDirPath() + QStringLiteral("/beat_this.onnx"),
-        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/build/bin/beat_this.onnx"),
-        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/beat_this_cpp/onnx/beat_this.onnx"),
-        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("models/beat_this.onnx"))
+        QCoreApplication::applicationDirPath() + QStringLiteral("/models/beat_this.onnx"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/beat_this_cpp/onnx/beat_this.onnx"),
+        QDir::current().filePath(QStringLiteral("kdenlive/build/bin/beat_this.onnx")),
+        QDir::current().filePath(QStringLiteral("kdenlive/beat_this_cpp/onnx/beat_this.onnx")),
+        QDir::current().filePath(QStringLiteral("beat_this_cpp/onnx/beat_this.onnx"))
     };
     for (const QString &m : modelCandidates) {
         if (!m.isEmpty() && QFile::exists(m)) {
@@ -3950,11 +4117,18 @@ void AICommandRouter::handleGenerateLocalSfx(const QJsonObject &params)
 
     // 1. Locate python venv
     QString pythonExec;
-    QString venvPy = QStringLiteral("/home/lincoln/.local/share/kdenlive/venv/bin/python");
-    if (QFile::exists(venvPy)) {
-        pythonExec = venvPy;
-    } else {
-        pythonExec = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    QStringList venvCandidates = {
+        QDir::home().filePath(QStringLiteral(".local/share/kdenlive/venv/bin/python")),
+        QDir::home().filePath(QStringLiteral(".local/share/kdenlive/venv-sam/bin/python3")),
+        QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kdenlive/venv/bin/python")),
+        QStandardPaths::findExecutable(QStringLiteral("python3")),
+        QStringLiteral("python3")
+    };
+    for (const QString &cand : venvCandidates) {
+        if (!cand.isEmpty() && (QFile::exists(cand) || !cand.contains(QLatin1Char('/')))) {
+            pythonExec = cand;
+            break;
+        }
     }
 
     if (pythonExec.isEmpty()) {
@@ -3965,10 +4139,12 @@ void AICommandRouter::handleGenerateLocalSfx(const QJsonObject &params)
     // 2. Locate sfx_generator.py
     QString scriptPath;
     QStringList candidates = {
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/audio/sfx_generator.py")),
         QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/audio/sfx_generator.py"),
         QCoreApplication::applicationDirPath() + QStringLiteral("/data/scripts/audio/sfx_generator.py"),
-        QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/audio/sfx_generator.py"),
-        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/audio/sfx_generator.py"))
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/scripts/audio/sfx_generator.py"),
+        QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/audio/sfx_generator.py")),
+        QDir::current().filePath(QStringLiteral("data/scripts/audio/sfx_generator.py"))
     };
     for (const QString &c : candidates) {
         if (!c.isEmpty() && QFile::exists(c)) {

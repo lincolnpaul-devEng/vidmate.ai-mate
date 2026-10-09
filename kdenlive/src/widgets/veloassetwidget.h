@@ -161,7 +161,6 @@ private:
 
     QString m_supabaseUrl;
     QString m_supabaseAnonKey;
-    QString m_supabaseServiceKey;
 
     QList<StockAssetItem> m_currentAssets;
     QMap<QString, QString> m_voiceMap; // Name -> ID

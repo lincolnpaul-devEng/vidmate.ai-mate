@@ -119,7 +119,6 @@ private:
     QString m_model{QStringLiteral("groq/openai/gpt-oss-120b")};
     QString m_supabaseUrl;
     QString m_supabaseAnonKey;
-    QString m_supabaseServiceKey;
     QString m_lastEngine;
     QString m_lastPrompt;
     QString m_currentGoal;

@@ -938,13 +938,13 @@ void MagicMaskWidget::slotRunRvmHumanMatting()
     QString modelPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("models/rvm_mobilenetv3_fp32.onnx"));
     if (modelPath.isEmpty() || !QFile::exists(modelPath)) {
         QStringList modelCandidates = {
-            QStringLiteral("/home/lincoln/vidmate.ai-mate/RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
             QDir::home().filePath(QStringLiteral(".local/share/kdenlive/models/rvm_mobilenetv3_fp32.onnx")),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"),
             QCoreApplication::applicationDirPath() + QStringLiteral("/../share/kdenlive/models/rvm_mobilenetv3_fp32.onnx"),
             QDir::current().filePath(QStringLiteral("RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx")),
-            QDir::current().filePath(QStringLiteral("../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"))
+            QDir::current().filePath(QStringLiteral("../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx")),
+            QDir::current().filePath(QStringLiteral("../../RVM-Inference/examples/hub/onnx/cv/rvm_mobilenetv3_fp32.onnx"))
         };
         for (const QString &cand : modelCandidates) {
             if (QFile::exists(cand)) {
