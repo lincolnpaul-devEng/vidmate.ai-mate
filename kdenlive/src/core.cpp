@@ -571,6 +571,14 @@ void Core::restoreLayout()
     QRect avail = screen ? screen->availableGeometry() : QRect(0, 0, 1280, 720);
 
     QString savedLayout = KdenliveSettings::kdockLayout();
+    if (savedLayout.contains(QStringLiteral("natron_workspace"))) {
+        // Purge legacy tab grouping where natron_workspace was docked as a tab on timeline
+        savedLayout.replace(QStringLiteral(",\\n\\s*\\\"natron_workspace\\\""), QString());
+        savedLayout.replace(QStringLiteral("\\\"natron_workspace\\\",\\n\\s*"), QString());
+        savedLayout.replace(QStringLiteral(", \"natron_workspace\""), QString());
+        savedLayout.replace(QStringLiteral("\"natron_workspace\", "), QString());
+        KdenliveSettings::setKdockLayout(savedLayout);
+    }
     if (savedLayout.isEmpty() || !savedLayout.contains(QStringLiteral("KdenliveKDDock")) ||
         savedLayout.contains(QStringLiteral("\"width\": 1651")) || savedLayout.contains(QStringLiteral("\"width\": 1649"))) {
         // Reset to clean default editing layout if saved layout is oversized or absent

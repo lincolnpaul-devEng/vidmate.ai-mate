@@ -164,6 +164,8 @@ public:
 
     /** @brief Returns a pointer to the embedded Natron workspace widget */
     NatronWorkspaceWidget *natronWorkspaceWidget() const { return m_natronWorkspaceWidget; }
+    KDDockWidgets::QtWidgets::DockWidget *natronWorkspaceDock() const { return m_natronWorkspaceDock; }
+    KDDockWidgets::QtWidgets::DockWidget *timelineDock() const { return m_timelineDock; }
     /** @brief Raise (show) the Natron compositing workspace dock */
     void showNatronWorkspace();
 
@@ -240,6 +242,7 @@ protected:
 
     /** @brief Stops the active monitor when the window gets hidden. */
     void hideEvent(QHideEvent *e) override;
+    void changeEvent(QEvent *e) override;
 
     /** @brief Saves the file and the window properties when saving the session. */
     void saveProperties(KConfigGroup &config) override;
@@ -256,6 +259,10 @@ private:
     void updateDockMenu();
     /** @brief Update the audio thumbnails action icon based on current zoom and toggle state */
     void updateAudioWaveformActionIcon();
+    /** @brief Sets up VS Code style top bar with app icon, menus, more (...) button, centered project title, and window controls */
+    void setupTopBar();
+    void updateMaximizeButton();
+    void stripMenuMnemonics();
 
     OtioExport *m_otioExport{nullptr};
     OtioImport *m_otioImport{nullptr};
@@ -369,6 +376,15 @@ private:
     int m_mousePosition;
 
     KHamburgerMenu *m_hamburgerMenu;
+    QLabel *m_projectTitleLabel{nullptr};
+    QToolButton *m_moreMenuButton{nullptr};
+    QToolButton *m_btnMinimize{nullptr};
+    QToolButton *m_btnMaximize{nullptr};
+    QToolButton *m_btnClose{nullptr};
+    QToolButton *m_btnUndo{nullptr};
+    QToolButton *m_btnRedo{nullptr};
+    bool m_dragTopBar{false};
+    QPoint m_dragClickPos;
 
     /** @brief initialize startup values, return true if first run. */
     bool readOptions();

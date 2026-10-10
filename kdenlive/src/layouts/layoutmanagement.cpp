@@ -272,6 +272,17 @@ bool LayoutManagement::slotLoadLayoutFromData(const QString &layoutData, bool on
         pCore->displayBinMessage(i18n("The layout from the project file could not be restored."), KMessageWidget::Warning);
         return false;
     }
+    // Ensure natron_workspace is never docked as a tab on timeline
+    if (pCore->window()) {
+        auto *natronDock = pCore->window()->natronWorkspaceDock();
+        if (natronDock) {
+            natronDock->close();
+        }
+        auto *timelineDock = pCore->window()->timelineDock();
+        if (timelineDock) {
+            timelineDock->raise();
+        }
+    }
     // Loaded a layout from Kdenlive settings or document
     m_currentLayoutId.clear();
     m_layoutSwitcher->setCurrentLayout(QString());

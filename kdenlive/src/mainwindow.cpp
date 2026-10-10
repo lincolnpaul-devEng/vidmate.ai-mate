@@ -116,6 +116,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QProxyStyle>
@@ -124,6 +125,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStyleFactory>
+#include <QToolButton>
 #include <QUndoGroup>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
@@ -144,6 +146,9 @@ MainWindow::MainWindow(QWidget *parent)
     , m_mousePosition(0)
     , m_effectBasket(nullptr)
 {
+    // Modern VS Code style: Hide OS titlebar and use unified custom top bar
+    setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+
     // Init all action categories that are used by other parts of the software
     // before we call MainWindow::init and therefore can't be initialized there
     KActionCategory *category = new KActionCategory(i18n("Monitor"), actionCollection());
@@ -379,10 +384,10 @@ void MainWindow::init()
     m_projectMonitorDock->setAsCurrentTab();
     connect(m_aiChatWidget, &AIChatWidget::openAssetStudioRequested, this, &MainWindow::slotOpenAssetStudio);
 
-    // Natron Node Graph & Compositor Workspace (tabbed with Timeline)
+    // Natron Node Graph & Compositor Workspace (independent dock, opened on demand via extra button or F10)
     m_natronWorkspaceWidget = new NatronWorkspaceWidget(this);
-    m_natronWorkspaceDock = addDock(i18n("Natron Node Graph & VFX"), QStringLiteral("natron_workspace"), m_natronWorkspaceWidget, KDDockWidgets::Location_None, m_timelineDock);
-    m_timelineDock->setAsCurrentTab();
+    m_natronWorkspaceDock = addDock(i18n("Natron Node Graph & VFX"), QStringLiteral("natron_workspace"), m_natronWorkspaceWidget, KDDockWidgets::Location_OnRight);
+    m_natronWorkspaceDock->close();
 
     // Velo Stock Media & AI Voiceover Studio Widget (tabbed with Project Bin)
     m_veloAssetWidget = new VeloAssetWidget(this);
@@ -687,7 +692,7 @@ void MainWindow::init()
     addAction(QStringLiteral("timeline_preview_button"), previewButtonAction);
 
     // Since not all widgets are added yet, don't use the Save flag now
-    setupGUI(KXmlGuiWindow::ToolBar | KXmlGuiWindow::StatusBar | KXmlGuiWindow::Create);
+    setupGUI(KXmlGuiWindow::StatusBar | KXmlGuiWindow::Create);
 
     // Remove secondary cut shortcut conflicting with extract action
     QAction *officialCut = actionCollection()->action(KStandardAction::name(KStandardAction::Cut));
@@ -955,12 +960,8 @@ void MainWindow::init()
     pCore->mediaBrowser()->detectShortcutConflicts();
 
     connect(toolBar(), &KToolBar::visibilityChanged, this, [&](bool visible) {
-        if (visible && !toolBar()->actions().contains(m_hamburgerMenu)) {
-            // hack to be able to insert the hamburger menu at the first position
-            QAction *const firstChild = toolBar()->actionAt(toolBar()->height() / 2, toolBar()->height() / 2);
-            QAction *const separator = toolBar()->insertSeparator(firstChild);
-            toolBar()->insertAction(separator, m_hamburgerMenu);
-            m_hamburgerMenu->hideActionsOf(toolBar());
+        if (visible) {
+            toolBar()->hide();
         }
     });
 
@@ -987,6 +988,10 @@ void MainWindow::init()
         // connect to a custom slot
         connect(tbAction, &QAction::triggered, this, &MainWindow::slotEditToolbars);
     }
+
+    setupTopBar();
+    // Hide default main toolbar; undo/redo and actions are in top unified bar
+    toolBar()->hide();
 }
 
 void MainWindow::finishUiSetup()
@@ -994,6 +999,9 @@ void MainWindow::finishUiSetup()
     pCore->restoreLayout();
     statusBar()->show();
     statusBar()->setVisible(true);
+    // Ensure default main toolbar stays hidden; undo/redo and actions are in top unified bar
+    toolBar()->hide();
+    stripMenuMnemonics();
     Q_EMIT pCore->closeSplash();
     setAutoSaveSettings();
     QObject::disconnect(pCore.get(), &Core::GUISetupDone, this, nullptr);
@@ -3183,7 +3191,6 @@ void MainWindow::showNatronWorkspace()
 {
     if (m_natronWorkspaceDock) {
         m_natronWorkspaceDock->open();
-        m_natronWorkspaceDock->setAsCurrentTab();
         m_natronWorkspaceDock->raise();
     }
 }
@@ -3198,14 +3205,14 @@ void MainWindow::slotSelectNatronTool()
 
 void MainWindow::slotToggleNatronTimeline()
 {
-    if (m_natronWorkspaceDock && m_timelineDock) {
-        if (m_natronWorkspaceDock->isVisible() && m_natronWorkspaceDock->asDockWidgetController()->isCurrentTab()) {
-            m_timelineDock->open();
-            m_timelineDock->setAsCurrentTab();
-            m_timelineDock->raise();
+    if (m_natronWorkspaceDock) {
+        if (m_natronWorkspaceDock->isVisible()) {
+            m_natronWorkspaceDock->close();
+            if (m_timelineDock) {
+                m_timelineDock->raise();
+            }
         } else {
             m_natronWorkspaceDock->open();
-            m_natronWorkspaceDock->setAsCurrentTab();
             m_natronWorkspaceDock->raise();
         }
     }
@@ -5541,10 +5548,101 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event)
         Q_EMIT pCore->updatePalette();
         break;
     }
+    case QEvent::MouseButtonPress: {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            // Check if clicking in an empty area of the top menu bar / title label to drag window
+            if (object == menuBar()) {
+                // If the user clicked on an actual menu item (File, Edit, etc.) or corner widget, DO NOT intercept!
+                if (menuBar()->actionAt(mouseEvent->pos())) {
+                    return false;
+                }
+                QWidget *child = menuBar()->childAt(mouseEvent->pos());
+                if (child && child != menuBar()) {
+                    return false;
+                }
+                m_dragTopBar = true;
+                m_dragClickPos = mouseEvent->globalPosition().toPoint() - frameGeometry().topLeft();
+                return true;
+            } else if (object == m_projectTitleLabel) {
+                m_dragTopBar = true;
+                m_dragClickPos = mouseEvent->globalPosition().toPoint() - frameGeometry().topLeft();
+                return true;
+            }
+        }
+        break;
+    }
+    case QEvent::MouseMove: {
+        if (m_dragTopBar) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->buttons() & Qt::LeftButton) {
+                // If maximized, restore when dragged down
+                if (isMaximized()) {
+                    showNormal();
+                    m_dragClickPos = QPoint(width() / 2, 16);
+                }
+                move(mouseEvent->globalPosition().toPoint() - m_dragClickPos);
+                return true;
+            }
+        }
+        break;
+    }
+    case QEvent::MouseButtonRelease: {
+        m_dragTopBar = false;
+        break;
+    }
+    case QEvent::MouseButtonDblClick: {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            if (object == menuBar()) {
+                if (menuBar()->actionAt(mouseEvent->pos())) {
+                    return false;
+                }
+                QWidget *child = menuBar()->childAt(mouseEvent->pos());
+                if (child && child != menuBar()) {
+                    return false;
+                }
+                if (isMaximized()) {
+                    showNormal();
+                } else {
+                    showMaximized();
+                }
+                return true;
+            } else if (object == m_projectTitleLabel) {
+                if (isMaximized()) {
+                    showNormal();
+                } else {
+                    showMaximized();
+                }
+                return true;
+            }
+        }
+        break;
+    }
     default:
         break;
     }
     return QObject::eventFilter(object, event);
+}
+
+void MainWindow::changeEvent(QEvent *e)
+{
+    KXmlGuiWindow::changeEvent(e);
+    if (e->type() == QEvent::WindowStateChange) {
+        updateMaximizeButton();
+    }
+}
+
+void MainWindow::updateMaximizeButton()
+{
+    if (!m_btnMaximize) return;
+    if (isMaximized()) {
+        m_btnMaximize->setText(QString::fromUtf8("🗗"));
+        m_btnMaximize->setToolTip(i18n("Restore"));
+    } else {
+        m_btnMaximize->setText(QString::fromUtf8("🗖"));
+        m_btnMaximize->setToolTip(i18n("Maximize"));
+    }
 }
 
 void MainWindow::slotRemoveBinDock(const QString &name)
@@ -6225,5 +6323,287 @@ void MainWindow::slotEditToolbars()
     // to the standard XML file immediately.
     if (restorationHappened) {
         actionCollection()->writeSettings();
+    }
+}
+
+class NoMnemonicStyle : public QProxyStyle {
+public:
+    using QProxyStyle::QProxyStyle;
+    int styleHint(StyleHint hint, const QStyleOption *option = nullptr, const QWidget *widget = nullptr, QStyleHintReturn *returnData = nullptr) const override {
+        if (hint == SH_UnderlineShortcut) {
+            return 0;
+        }
+        return QProxyStyle::styleHint(hint, option, widget, returnData);
+    }
+};
+
+void MainWindow::setupTopBar()
+{
+    // Make menuBar track mouse drag events for window movement and double-click maximize
+    menuBar()->installEventFilter(this);
+
+    // Disable mnemonic underlines globally on the menu bar
+    menuBar()->setStyle(new NoMnemonicStyle(menuBar()->style()));
+
+    // 1. App Icon Corner Widget (Top Left) - increased size for prominence and alignment
+    auto *iconLabel = new QLabel(this);
+    iconLabel->setPixmap(windowIcon().pixmap(24, 24));
+    iconLabel->setFixedSize(32, 30);
+    iconLabel->setAlignment(Qt::AlignCenter);
+    iconLabel->setStyleSheet(QStringLiteral("QLabel { margin-left: 6px; margin-right: 6px; }"));
+    menuBar()->setCornerWidget(iconLabel, Qt::TopLeftCorner);
+
+    // 2. Identify top-level menu actions to move into "..." More Menu
+    QAction *markersAction = nullptr;
+    QAction *settingsAction = nullptr;
+    QAction *helpAction = nullptr;
+
+    const auto menuActions = menuBar()->actions();
+    for (QAction *action : menuActions) {
+        if (!action) continue;
+        const QString name = action->objectName();
+        const QString text = action->text();
+        if (name == QLatin1String("markers") || text.contains(QLatin1String("Markers"), Qt::CaseInsensitive)) {
+            markersAction = action;
+        } else if (name == QLatin1String("settings") || text.contains(QLatin1String("Settings"), Qt::CaseInsensitive)) {
+            settingsAction = action;
+        } else if (name == QLatin1String("help") || text.contains(QLatin1String("Help"), Qt::CaseInsensitive)) {
+            helpAction = action;
+        }
+    }
+
+    // 3. Create "..." More Menu and populate with Render, Markers, Settings, Help
+    auto *moreMenu = new QMenu(this);
+
+    // Add Render action first with its icon and shortcut
+    QAction *renderAction = actionCollection()->action(QStringLiteral("project_render"));
+    if (renderAction) {
+        moreMenu->addAction(renderAction);
+        moreMenu->addSeparator();
+    }
+
+    if (markersAction) {
+        if (markersAction->menu()) {
+            moreMenu->addMenu(markersAction->menu());
+        } else {
+            moreMenu->addAction(markersAction);
+        }
+        menuBar()->removeAction(markersAction);
+    }
+
+    if (settingsAction) {
+        if (settingsAction->menu()) {
+            moreMenu->addMenu(settingsAction->menu());
+        } else {
+            moreMenu->addAction(settingsAction);
+        }
+        menuBar()->removeAction(settingsAction);
+    }
+
+    if (helpAction) {
+        if (helpAction->menu()) {
+            moreMenu->addMenu(helpAction->menu());
+        } else {
+            moreMenu->addAction(helpAction);
+        }
+        menuBar()->removeAction(helpAction);
+    }
+
+    // Remove accelerator markers (the underlining under the first letter) from top-level menu titles
+    for (QAction *action : menuBar()->actions()) {
+        if (!action) continue;
+        QString text = action->text();
+        if (text.contains(QLatin1Char('&'))) {
+            text.remove(QLatin1Char('&'));
+            action->setText(text);
+        }
+    }
+
+    // Add the "..." action to menuBar
+    QAction *moreAction = new QAction(QStringLiteral("..."), this);
+    moreAction->setObjectName(QStringLiteral("more_overflow_menu"));
+    moreAction->setMenu(moreMenu);
+    menuBar()->addAction(moreAction);
+
+    // 4. VS Code style Project Title and Window Controls in Top Right Corner Widget
+    QWidget *cornerWidget = menuBar()->cornerWidget(Qt::TopRightCorner);
+    if (cornerWidget) {
+        auto *layout = qobject_cast<QBoxLayout *>(cornerWidget->layout());
+        if (layout) {
+            // 4a. VS Code style Undo / Redo navigation buttons (<- and ->)
+            const QString navBtnStyle = QStringLiteral(
+                "QToolButton { "
+                "  color: #d4d4d8; "
+                "  background: transparent; "
+                "  border: none; "
+                "  border-radius: 4px; "
+                "  font-size: 14px; "
+                "  font-weight: bold; "
+                "  padding: 2px 4px; "
+                "  min-width: 20px; "
+                "  min-height: 20px; "
+                "} "
+                "QToolButton:hover { "
+                "  background: #36363b; "
+                "  color: #ffffff; "
+                "} "
+                "QToolButton:disabled { "
+                "  color: #55555d; "
+                "} "
+                "QToolButton:pressed { "
+                "  background: #26262a; "
+                "}"
+            );
+
+            auto *navWidget = new QWidget(cornerWidget);
+            auto *navLayout = new QHBoxLayout(navWidget);
+            navLayout->setContentsMargins(4, 0, 4, 0);
+            navLayout->setSpacing(2);
+
+            QAction *undoAction = actionCollection()->action(KStandardAction::name(KStandardAction::Undo));
+            QAction *redoAction = actionCollection()->action(KStandardAction::name(KStandardAction::Redo));
+
+            m_btnUndo = new QToolButton(navWidget);
+            m_btnUndo->setAutoRaise(true);
+            m_btnUndo->setStyleSheet(navBtnStyle);
+            if (undoAction) {
+                m_btnUndo->setDefaultAction(undoAction);
+            } else {
+                m_btnUndo->setIcon(QIcon::fromTheme(QStringLiteral("edit-undo")));
+                m_btnUndo->setToolTip(i18n("Undo"));
+            }
+
+            m_btnRedo = new QToolButton(navWidget);
+            m_btnRedo->setAutoRaise(true);
+            m_btnRedo->setStyleSheet(navBtnStyle);
+            if (redoAction) {
+                m_btnRedo->setDefaultAction(redoAction);
+            } else {
+                m_btnRedo->setIcon(QIcon::fromTheme(QStringLiteral("edit-redo")));
+                m_btnRedo->setToolTip(i18n("Redo"));
+            }
+
+            navLayout->addWidget(m_btnUndo);
+            navLayout->addWidget(m_btnRedo);
+
+            layout->insertWidget(0, navWidget, 0);
+
+            // 5. VS Code style Project Title in the Top Right Corner Widget
+            m_projectTitleLabel = new QLabel(cornerWidget);
+            m_projectTitleLabel->setAlignment(Qt::AlignCenter);
+            m_projectTitleLabel->setText(windowTitle());
+            m_projectTitleLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+            m_projectTitleLabel->installEventFilter(this);
+            m_projectTitleLabel->setStyleSheet(QStringLiteral(
+                "QLabel { "
+                "  color: #a0a0a8; "
+                "  font-size: 11px; "
+                "  font-weight: 500; "
+                "  padding: 0 16px; "
+                "}"
+            ));
+
+            // Insert title label after nav buttons, before autosave and layout switcher
+            layout->insertWidget(1, m_projectTitleLabel, 1);
+
+            connect(this, &MainWindow::windowTitleChanged, this, [this](const QString &title) {
+                if (m_projectTitleLabel) {
+                    m_projectTitleLabel->setText(title);
+                }
+            });
+
+            // 5. Custom VS Code Window Controls: Minimize, Maximize/Restore, Close
+            auto *controlsWidget = new QWidget(cornerWidget);
+            auto *controlsLayout = new QHBoxLayout(controlsWidget);
+            controlsLayout->setContentsMargins(8, 0, 0, 0);
+            controlsLayout->setSpacing(2);
+
+            const QString btnStyle = QStringLiteral(
+                "QToolButton { "
+                "  color: #d4d4d8; "
+                "  background: transparent; "
+                "  border: none; "
+                "  border-radius: 4px; "
+                "  font-size: 13px; "
+                "  font-weight: bold; "
+                "  padding: 2px 6px; "
+                "  min-width: 24px; "
+                "  min-height: 20px; "
+                "} "
+                "QToolButton:hover { "
+                "  background: #36363b; "
+                "  color: #ffffff; "
+                "} "
+                "QToolButton:pressed { "
+                "  background: #26262a; "
+                "}"
+            );
+
+            const QString closeBtnStyle = QStringLiteral(
+                "QToolButton { "
+                "  color: #d4d4d8; "
+                "  background: transparent; "
+                "  border: none; "
+                "  border-radius: 4px; "
+                "  font-size: 14px; "
+                "  font-weight: bold; "
+                "  padding: 2px 6px; "
+                "  min-width: 24px; "
+                "  min-height: 20px; "
+                "} "
+                "QToolButton:hover { "
+                "  background: #e81123; "
+                "  color: #ffffff; "
+                "} "
+                "QToolButton:pressed { "
+                "  background: #bf0f1d; "
+                "}"
+            );
+
+            m_btnMinimize = new QToolButton(controlsWidget);
+            m_btnMinimize->setText(QString::fromUtf8("—"));
+            m_btnMinimize->setToolTip(i18n("Minimize"));
+            m_btnMinimize->setStyleSheet(btnStyle);
+            connect(m_btnMinimize, &QToolButton::clicked, this, &MainWindow::showMinimized);
+
+            m_btnMaximize = new QToolButton(controlsWidget);
+            m_btnMaximize->setText(isMaximized() ? QString::fromUtf8("🗗") : QString::fromUtf8("🗖"));
+            m_btnMaximize->setToolTip(isMaximized() ? i18n("Restore") : i18n("Maximize"));
+            m_btnMaximize->setStyleSheet(btnStyle);
+            connect(m_btnMaximize, &QToolButton::clicked, this, [this]() {
+                if (isMaximized()) {
+                    showNormal();
+                } else {
+                    showMaximized();
+                }
+            });
+
+            m_btnClose = new QToolButton(controlsWidget);
+            m_btnClose->setText(QString::fromUtf8("✕"));
+            m_btnClose->setToolTip(i18n("Close"));
+            m_btnClose->setStyleSheet(closeBtnStyle);
+            connect(m_btnClose, &QToolButton::clicked, this, &MainWindow::close);
+
+            controlsLayout->addWidget(m_btnMinimize);
+            controlsLayout->addWidget(m_btnMaximize);
+            controlsLayout->addWidget(m_btnClose);
+
+            layout->addWidget(controlsWidget);
+        }
+    }
+
+    stripMenuMnemonics();
+}
+
+void MainWindow::stripMenuMnemonics()
+{
+    // Remove accelerator markers (&) from top-level menu titles so no letters are underlined
+    for (QAction *action : menuBar()->actions()) {
+        if (!action) continue;
+        QString text = action->text();
+        if (text.contains(QLatin1Char('&'))) {
+            text.remove(QLatin1Char('&'));
+            action->setText(text);
+        }
     }
 }

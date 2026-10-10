@@ -382,9 +382,11 @@
     <Action name="toggle_natron_timeline"/>
     <Action name="natron_select_tool"/>
   </ToolBar>
-  <ToolBar name="extraToolBar">
+  <ToolBar name="mainToolBar" hidden="true">
+    <text>Main Toolbar</text>
+  </ToolBar>
+  <ToolBar name="extraToolBar" hidden="true">
     <text>Extra Toolbar</text>
-    <Action name="project_render_button"/>
   </ToolBar>
   <!-- keep this for compatibility with Kdenlive < 25.08.3 -->
   <Menu name="marker_menu" />

@@ -15,11 +15,11 @@ QMainWindow::separator { background: #1b1b1d; width: 3px; height: 3px; }
 QMainWindow::separator:hover { background: #3d8bfd; }
 
 /* Menus */
-QMenuBar { background: #1b1b1d; border: 0; padding: 2px 4px; }
-QMenuBar::item { background: transparent; padding: 5px 10px; border-radius: 4px; }
+QMenuBar { background: #1b1b1d; border: 0; padding: 2px 4px; font-size: 13px; }
+QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
 QMenuBar::item:selected { background: #2c2c30; }
-QMenu { background: #232326; border: 1px solid #303034; border-radius: 6px; padding: 4px; }
-QMenu::item { padding: 6px 28px 6px 24px; border-radius: 4px; }
+QMenu { background: #232326; border: 1px solid #303034; border-radius: 6px; padding: 4px; font-size: 12px; }
+QMenu::item { padding: 5px 24px 5px 20px; border-radius: 4px; font-size: 12px; }
 QMenu::item:selected { background: #3d8bfd; color: #fff; }
 QMenu::item:disabled { color: #5c5c64; }
 QMenu::separator { height: 1px; background: #303034; margin: 4px 8px; }
