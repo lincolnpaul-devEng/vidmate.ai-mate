@@ -61,6 +61,11 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QResource>
+#include <QDialog>
+#include <QLabel>
+#include <QToolButton>
+#include <QBoxLayout>
+#include <QMouseEvent>
 
 #include <QUndoGroup>
 #include <QUrl> //new
@@ -177,6 +182,122 @@ static void resetConfig()
         f.remove();
     }
 }
+
+class VidmateDialogDragFilter : public QObject
+{
+    QWidget *m_window;
+    QPoint m_dragPos;
+public:
+    explicit VidmateDialogDragFilter(QWidget *window, QObject *parent = nullptr)
+        : QObject(parent), m_window(window) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                m_dragPos = me->globalPosition().toPoint() - m_window->pos();
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseMove) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->buttons() & Qt::LeftButton) {
+                m_window->move(me->globalPosition().toPoint() - m_dragPos);
+                return true;
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
+
+class VidmateDialogPolishFilter : public QObject
+{
+public:
+    explicit VidmateDialogPolishFilter(QObject *parent = nullptr)
+        : QObject(parent) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Polish) {
+            auto *dialog = qobject_cast<QDialog *>(watched);
+            if (dialog && !dialog->property("vidmateFramelessApplied").toBool()) {
+                dialog->setProperty("vidmateFramelessApplied", true);
+                dialog->setWindowFlags(dialog->windowFlags() | Qt::FramelessWindowHint);
+
+                // Add DaVinci Resolve style custom titlebar header if dialog has a box layout
+                // and does not already have a custom header
+                if (dialog->findChild<QWidget *>(QStringLiteral("vidmateDialogHeader"), Qt::FindDirectChildrenOnly) == nullptr &&
+                    dialog->findChild<QWidget *>(QStringLiteral("settingsHeaderBar"), Qt::FindDirectChildrenOnly) == nullptr) {
+                    if (auto *boxLay = qobject_cast<QBoxLayout *>(dialog->layout())) {
+                        auto *header = new QWidget(dialog);
+                        header->setObjectName(QStringLiteral("vidmateDialogHeader"));
+                        header->setFixedHeight(36);
+                        header->setStyleSheet(QStringLiteral(
+                            "#vidmateDialogHeader { "
+                            "  background-color: #12141a; "
+                            "  border-bottom: 1px solid #212433; "
+                            "} "
+                            "#vidmateDialogHeader QLabel { "
+                            "  color: #e4e4e7; "
+                            "  font-size: 13px; "
+                            "  font-weight: 600; "
+                            "} "
+                            "#vidmateDialogHeader QToolButton { "
+                            "  background: transparent; "
+                            "  border: none; "
+                            "  color: #9ca3af; "
+                            "  font-size: 14px; "
+                            "  font-weight: bold; "
+                            "  border-radius: 4px; "
+                            "  min-width: 28px; "
+                            "  max-width: 28px; "
+                            "  min-height: 24px; "
+                            "  max-height: 24px; "
+                            "} "
+                            "#vidmateDialogHeader QToolButton:hover { "
+                            "  background-color: #e81123; "
+                            "  color: #ffffff; "
+                            "}"
+                        ));
+
+                        auto *hlay = new QHBoxLayout(header);
+                        hlay->setContentsMargins(14, 0, 8, 0);
+                        hlay->setSpacing(8);
+
+                        auto *iconLbl = new QLabel(header);
+                        QIcon winIcon = dialog->windowIcon();
+                        if (winIcon.isNull()) {
+                            winIcon = QIcon::fromTheme(QStringLiteral("dialog-information"));
+                        }
+                        iconLbl->setPixmap(winIcon.pixmap(16, 16));
+                        hlay->addWidget(iconLbl);
+
+                        QString titleStr = dialog->windowTitle();
+                        if (titleStr.isEmpty()) {
+                            titleStr = QStringLiteral("Dialog");
+                        }
+                        auto *titleLbl = new QLabel(titleStr, header);
+                        hlay->addWidget(titleLbl);
+
+                        hlay->addStretch();
+
+                        auto *closeBtn = new QToolButton(header);
+                        closeBtn->setText(QStringLiteral("✕"));
+                        closeBtn->setToolTip(i18n("Close"));
+                        QObject::connect(closeBtn, &QToolButton::clicked, dialog, &QDialog::reject);
+                        hlay->addWidget(closeBtn);
+
+                        header->installEventFilter(new VidmateDialogDragFilter(dialog, header));
+                        boxLay->insertWidget(0, header);
+                    }
+                }
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
 
 class Application : public QApplication
 {
@@ -334,10 +455,18 @@ int main(int argc, char *argv[])
 
     // VidMate flat dark theme (set VIDMATE_CLASSIC_UI=1 to keep the stock look)
     if (qEnvironmentVariableIsEmpty("VIDMATE_CLASSIC_UI")) {
+        // Apply uniform application font size (13px) matching the top bar menu items
+        QFont appFont = app.font();
+        appFont.setPixelSize(13);
+        app.setFont(appFont);
+
         QFile themeFile(QStringLiteral(":/theme/vidmate-theme.qss"));
         if (themeFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
             app.setStyleSheet(QString::fromUtf8(themeFile.readAll()));
         }
+
+        // Install frameless dialog filter with DaVinci Resolve style headers
+        app.installEventFilter(new VidmateDialogPolishFilter(&app));
     }
 
     // Create command line parser with options

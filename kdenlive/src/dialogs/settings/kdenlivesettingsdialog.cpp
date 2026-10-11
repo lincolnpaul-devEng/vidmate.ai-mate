@@ -75,6 +75,89 @@ KdenliveSettingsDialog::KdenliveSettingsDialog(QMap<QString, QString> mappable_a
     setWindowModality(Qt::ApplicationModal);
     setWindowTitle(i18n("Settings"));
     setFaceType(KPageDialog::FlatList);
+    setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+
+    // DaVinci Resolve style frameless header bar
+    auto *headerWidget = new QWidget(this);
+    headerWidget->setFixedHeight(36);
+    headerWidget->setObjectName(QStringLiteral("settingsHeaderBar"));
+    headerWidget->setStyleSheet(QStringLiteral(
+        "#settingsHeaderBar { "
+        "  background-color: #12141a; "
+        "  border-bottom: 1px solid #212433; "
+        "} "
+        "#settingsHeaderBar QLabel { "
+        "  color: #e4e4e7; "
+        "  font-size: 13px; "
+        "  font-weight: 600; "
+        "} "
+        "#settingsHeaderBar QToolButton { "
+        "  background: transparent; "
+        "  border: none; "
+        "  color: #9ca3af; "
+        "  font-size: 14px; "
+        "  font-weight: bold; "
+        "  border-radius: 4px; "
+        "  min-width: 28px; "
+        "  max-width: 28px; "
+        "  min-height: 24px; "
+        "  max-height: 24px; "
+        "} "
+        "#settingsHeaderBar QToolButton:hover { "
+        "  background-color: #e81123; "
+        "  color: #ffffff; "
+        "}"
+    ));
+
+    auto *headerLayout = new QHBoxLayout(headerWidget);
+    headerLayout->setContentsMargins(14, 0, 8, 0);
+    headerLayout->setSpacing(8);
+
+    auto *iconLabel = new QLabel(headerWidget);
+    iconLabel->setPixmap(QIcon::fromTheme(QStringLiteral("preferences-other")).pixmap(16, 16));
+    headerLayout->addWidget(iconLabel);
+
+    auto *titleLabel = new QLabel(i18n("Settings"), headerWidget);
+    headerLayout->addWidget(titleLabel);
+
+    headerLayout->addStretch();
+
+    auto *closeBtn = new QToolButton(headerWidget);
+    closeBtn->setText(QStringLiteral("✕"));
+    closeBtn->setToolTip(i18n("Close"));
+    connect(closeBtn, &QToolButton::clicked, this, &QDialog::reject);
+    headerLayout->addWidget(closeBtn);
+
+    // Drag-to-move support for header
+    class HeaderDragFilter : public QObject {
+        QWidget *m_window;
+        QPoint m_dragPos;
+    public:
+        HeaderDragFilter(QWidget *window, QObject *parent = nullptr)
+            : QObject(parent), m_window(window) {}
+    protected:
+        bool eventFilter(QObject *watched, QEvent *event) override {
+            if (event->type() == QEvent::MouseButtonPress) {
+                auto *me = static_cast<QMouseEvent *>(event);
+                if (me->button() == Qt::LeftButton) {
+                    m_dragPos = me->globalPosition().toPoint() - m_window->pos();
+                    return true;
+                }
+            } else if (event->type() == QEvent::MouseMove) {
+                auto *me = static_cast<QMouseEvent *>(event);
+                if (me->buttons() & Qt::LeftButton) {
+                    m_window->move(me->globalPosition().toPoint() - m_dragPos);
+                    return true;
+                }
+            }
+            return QObject::eventFilter(watched, event);
+        }
+    };
+    headerWidget->installEventFilter(new HeaderDragFilter(this, headerWidget));
+
+    if (auto *vbox = qobject_cast<QVBoxLayout *>(layout())) {
+        vbox->insertWidget(0, headerWidget);
+    }
 
     m_prefBackend = new PreferencesBackend(this);
     initAppearancePage();
@@ -242,6 +325,7 @@ void KdenliveSettingsDialog::applyModernTheme()
         QDialog#settings, KdenliveSettingsDialog {
             background-color: #0e1015;
             color: #f4f4f5;
+            border: 1px solid #262938;
         }
 
         /* Left Navigation Sidebar */

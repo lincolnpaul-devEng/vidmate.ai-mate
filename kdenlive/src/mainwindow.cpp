@@ -6497,7 +6497,7 @@ void MainWindow::setupTopBar()
             m_projectTitleLabel->setStyleSheet(QStringLiteral(
                 "QLabel { "
                 "  color: #a0a0a8; "
-                "  font-size: 11px; "
+                "  font-size: 13px; "
                 "  font-weight: 500; "
                 "  padding: 0 16px; "
                 "}"
