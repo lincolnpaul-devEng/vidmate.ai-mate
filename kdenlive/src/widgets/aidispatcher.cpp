@@ -559,11 +559,11 @@ QString AIDispatcher::buildSystemPrompt()
         "%3\n\n"
 
         "# Autonomous Agent Rules\n"
-        "- Explain your immediate creative intent concisely, then return the JSON tool action block.\n"
-        "- You can execute one tool at a time (or array of sequential tools) to accomplish the goal.\n"
-        "- When you have completed the user's overall goal, do NOT return any more tool calls; simply summarize the edits performed.\n"
+        "- Explain your immediate creative intent concisely, then return exactly ONE JSON tool action block.\n"
+        "- **CRITICAL: EXECUTE ONLY ONE ACTION PER TURN (ReAct Cognitive Loop)**: NEVER output an array of speculative actions. Output exactly ONE action, wait for the live timeline observation and tool result, then plan your next action based on the result.\n"
+        "- When you have completed the user's overall goal, do NOT return any more tool calls; output a clean, structured markdown summary of the edits performed.\n"
         "- After any destructive edit, use `get_timeline_state` to verify.\n"
-        "- **Visual Verification of Edits**: Whenever you apply an edit (such as background removal, rotoscoping, color grading, title placement, transition, or Natron VFX), call `verify_edit_visually` or `view_timeline_frames` on the modified frame(s). Check the returned metrics (luminance, black frames, alpha edge quality, overexposure) and visual data. If flaws or edge artifacts occur, autonomously adjust parameters and re-verify before finalizing.\n"
+        "- **Visual Verification & Critic**: Whenever you apply an edit (such as background removal, rotoscoping, color grading, title placement, transition, or Natron VFX), call `verify_edit_visually` or `view_timeline_frames` on the modified frame(s). Check the returned metrics (luminance, black frames, alpha edge quality, overexposure). If a warning or black frame occurs, YOU MUST NOT CONCLUDE; adjust parameters or seek position and re-verify.\n"
         "- For `generate_glsl_shader`: Always supply valid GLSL fragment code using ShaderToy signature `void mainImage(out vec4 fragColor, in vec2 fragCoord)` with uniforms `iResolution` (vec3) and `iTime` (float), or choose a preset ('neon_grid', 'plasma_energy', 'gradient_flow', 'starfield_warp', 'cyber_matrix'). Ensure proper GLSL type safety (e.g. float constants like 0.0 vs int 0, matching function signatures) and specify `track_id` and `playhead_frame` for B-roll placement.\n"
         "- For `apply_glsl_video_effect`: Hardware-accelerated GLSL shader processing on existing video clips across 5 core pillars:\n"
         "  1. Coordinate Spatial Transformations: 'lens_distortion', 'chromatic_aberration', 'fisheye', 'wave_glitch', 'water_ripple', 'vortex_twist', 'split_screen_grid'.\n"
@@ -573,12 +573,18 @@ QString AIDispatcher::buildSystemPrompt()
         "  5. Kernel Convolution Filtering: 'sobel_edge_sketch', 'laplacian_edge', 'sharpen_unsharp_mask', 'emboss'.\n"
         "  Specify `clip_id`, `preset` (or custom `glsl_code`), `intensity` (maps to iCustomParam1), and `replace_clip` (true to replace source clip, false for overlay track).\n\n"
 
+        "# Mandatory Two-Way Effect & Composition Control Rules\n"
+        "- **NEVER GUESS PARAMETER NAMES OR SLIDER RANGES**: When modifying or tweaking an effect (such as cartoon, glow, color, blur, or transform), or when modifying a composition, you MUST follow this two-way closed-loop workflow:\n"
+        "  1. Query `get_effect_parameters(clip_id=..., effect_id=\"...\")` (or with `composition_id`) to inspect the real slider names, min/max limits, defaults, and current values.\n"
+        "  2. On the next step, invoke `set_effect_parameter(clip_id=..., effect_id=\"...\", param_name=\"...\", value=\"...\")` or pass a parameter dictionary `parameters={...}` with valid values within the inspected range.\n"
+        "  3. Finally, verify the visual result using `verify_edit_visually(frame=...)`.\n\n"
+
         "# Effects & Compositions Quick-Reference (Kdenlive Native Controls)\n"
         "- **Transform / Position / Zoom / Motion**: `add_effect(clip_id, \"transform\")` or `set_effect_parameter(clip_id, \"transform\", \"rect\", \"x y w h opacity\")`.\n"
         "  - Controls: `rect` (format: \"x y width height opacity\", e.g. \"0 0 1920 1080 1.0\" or object `{\"x\":0,\"y\":0,\"width\":1920,\"height\":1080,\"opacity\":1.0}`), `rotation` (angle in 10ths of degree: 900 = 90°), `opacity` (0.0 to 1.0), `compositing` (blend mode).\n"
         "- **Color Grading**: `add_effect(clip_id, \"lift_gamma_gain\")`.\n"
         "  - Controls: `lift_r`, `lift_g`, `lift_b` (shadows), `gamma_r`, `gamma_g`, `gamma_b` (midtones), `gain_r`, `gain_g`, `gain_b` (highlights).\n"
-        "- **Blur & Glow**: `add_effect(clip_id, \"boxblur\")` (params: `boxblur_hori`, `boxblur_vert`), `frei0r.glow` (param: `blur`), `vignette` (`radius`, `smooth`).\n"
+        "- **Blur & Glow**: `add_effect(clip_id, \"boxblur\")` (params: `boxblur_hori`, `boxblur_vert`), `frei0r.glow` (param: `blur`), `vignette` (`radius`, `smooth`), `frei0r.cartoon` (params: `triplevel`, `diffspace`).\n"
         "- **Audio & Ducking**: `set_volume(clip_id, volume_db)`, `audio_ducking(speech_track, music_track, duck_level_db)`.\n"
         "- **Transitions & Compositions**: `add_transition(track_id, position, \"dissolve\"|\"wipe\"|\"slide\"|\"composite\", duration)` or `add_mix`.\n"
         "  - Tweak transitions via `set_effect_parameter(composition_id=..., param_name=\"...\", value=\"...\")`.\n"
@@ -597,14 +603,11 @@ QString AIDispatcher::buildSystemPrompt()
         "- **Real Bin Folders (`create_bin_folder`, `list_bin_folders`, `move_bin_clip_to_folder`)**: For production asset management, ALWAYS create and use real Project Bin folders in Kdenlive instead of writing memory placeholders. When asked to create folders (e.g. SFX, BGM, Voice, Footage, Titles, VFX, Exports), call `create_bin_folder` passing comma-separated names (or a JSON array of names) in one atomic tool call. Use `move_bin_clip_to_folder` to organize clips into their respective bins as assets are imported or generated. Inspect `<project_bin_folders>` in `<editor_state>` to observe current bins and clip allocations.\n\n"
 
         "# Output Format\n"
-        "Answer concisely with your creative reasoning, then return a JSON action block:\n"
+        "Answer concisely with your creative reasoning for this single step, then return exactly ONE JSON action block:\n"
         "```json\n"
         "{\"action\": \"<tool_name>\", \"target\": \"kdenlive\"|\"natron\", \"params\": {...}}\n"
         "```\n"
-        "For multiple sequential actions, return an array:\n"
-        "```json\n"
-        "[{\"action\": \"...\", ...}, {\"action\": \"...\", ...}]\n"
-        "```\n\n"
+        "Do NOT return multiple actions or JSON arrays. Execute one action at a time so you can observe the timeline state before proceeding.\n\n"
 
         "# Current Editor State\n"
         "%4"
@@ -1237,7 +1240,12 @@ void AIDispatcher::processSocketLine(const QByteArray &line)
         m_goalActive = false;
         qint64 latency = m_requestTimer.elapsed();
         Q_EMIT metricsUpdated(0, latency, m_model);
-        Q_EMIT goalFinished(i18n("Goal completed successfully."));
+        QString summary = msg[QStringLiteral("summary")].toString();
+        if (summary.isEmpty()) {
+            summary = i18n("Goal completed successfully.");
+        }
+        Q_EMIT goalFinished(summary);
+        Q_EMIT responseReceived(summary, QJsonObject());
         Q_EMIT requestFinished();
     } else if (type == QStringLiteral("run_error")) {
         m_goalActive = false;

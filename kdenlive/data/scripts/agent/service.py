@@ -97,8 +97,10 @@ class VidMateAgentService:
             })
 
             # Run agent with streaming tokens
+            full_text = ""
             async with agent.run_stream(user_content, deps=deps) as result:
                 async for text in result.stream_text(delta=True):
+                    full_text += text
                     await self._send_json(writer, {
                         "type": "stream_delta",
                         "req_id": req_id,
@@ -109,6 +111,7 @@ class VidMateAgentService:
                 "type": "run_complete",
                 "req_id": req_id,
                 "success": True,
+                "summary": full_text.strip() or "Goal completed successfully.",
             })
 
         except Exception as e:

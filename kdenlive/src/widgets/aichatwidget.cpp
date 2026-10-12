@@ -1857,6 +1857,24 @@ void AIChatWidget::slotExecutionFinished(const QString &resultMessage, bool succ
     // If autonomous multi-step goal is active, feed the observation back to the agent loop!
     if (m_dispatcher->isGoalActive()) {
         QString action = m_lastExecutedActionName.isEmpty() ? QStringLiteral("edit_timeline") : m_lastExecutedActionName;
+
+        // Hard Gatekeeper on Visual & Tool Failures:
+        // If the tool failed, or visual inspection reported WARNING / Black frame,
+        // do not let the model conclude. Enforce self-correction!
+        bool isWarningOrBlack = resultMessage.contains(QStringLiteral("WARNING"), Qt::CaseInsensitive) ||
+                                resultMessage.contains(QStringLiteral("Black frame detected"), Qt::CaseInsensitive) ||
+                                resultMessage.contains(QStringLiteral("empty/black"), Qt::CaseInsensitive);
+
+        if (!success || isWarningOrBlack) {
+            QString criticWarning = QStringLiteral(
+                "CRITIC WARNING: Step '%1' failed or has visual flaws: %2. "
+                "YOU CANNOT CONCLUDE. Self-correct your parameters, target a valid active clip timeframe, "
+                "or seek the playhead to a valid frame now."
+            ).arg(action, resultMessage);
+            m_dispatcher->feedObservationAndContinue(action, criticWarning, false);
+            return;
+        }
+
         m_dispatcher->feedObservationAndContinue(action, resultMessage, success);
     }
 }
@@ -1878,7 +1896,15 @@ void AIChatWidget::slotGoalStepFinished(int step, int maxSteps, const QString &a
 
 void AIChatWidget::slotGoalFinished(const QString &finalSummary)
 {
-    appendSystemMessage(i18n("Goal Completed: %1", finalSummary));
+    QString cleanedSummary = finalSummary.trimmed();
+    if (cleanedSummary.startsWith(QStringLiteral("Goal completed successfully."), Qt::CaseInsensitive)) {
+        cleanedSummary = cleanedSummary.mid(28).trimmed();
+    }
+    if (cleanedSummary.isEmpty()) {
+        appendSystemMessage(i18n("✓ All edits completed and verified on timeline."));
+    } else {
+        appendAssistantMessage(cleanedSummary);
+    }
     slotRequestFinished();
 }
 
