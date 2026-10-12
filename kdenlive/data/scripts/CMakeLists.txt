@@ -7,6 +7,7 @@ add_subdirectory(whisper)
 add_subdirectory(scenedetect)
 add_subdirectory(audio)
 add_subdirectory(vfx)
+add_subdirectory(agent)
 
 INSTALL(FILES 
     checkpackages.py

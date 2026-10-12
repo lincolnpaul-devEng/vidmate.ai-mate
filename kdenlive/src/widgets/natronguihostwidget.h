@@ -263,4 +263,5 @@ private:
     NatronTimeLineCanvas *m_timelineCanvas{nullptr};
     QWidget *m_propertiesBinWidget{nullptr};
     QWidget *m_viewerWidget{nullptr};
+    QString m_currentPipeline{QStringLiteral("motion_graphic")};
 };

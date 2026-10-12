@@ -24,7 +24,6 @@
 #include "magicmaskwidget.h"
 #include "natronworkspacewidget.h"
 #include "natronguihostwidget.h"
-#include "natronscriptgenerator.h"
 #include "bin/bin.h"
 #include "bin/projectitemmodel.h"
 #include "bin/projectclip.h"
@@ -496,6 +495,20 @@ static QString normalizeEffectId(const QString &rawId)
     if (id == QStringLiteral("fadeout") || id == QStringLiteral("fade_out")) {
         return QStringLiteral("fadeout");
     }
+    // 3D Perspective & Spatial transformations (Natron Card3D / CornerPin / Perspective)
+    if (id == QStringLiteral("perspective") || id == QStringLiteral("3d_perspective") ||
+        id == QStringLiteral("corner_pin") || id == QStringLiteral("cornerpin") ||
+        id == QStringLiteral("card3d") || id == QStringLiteral("planar_transform")) {
+        return QStringLiteral("avfilter.perspective");
+    }
+    if (id == QStringLiteral("3d_movement") || id == QStringLiteral("3d_rotation") ||
+        id == QStringLiteral("3dflippo") || id == QStringLiteral("3d_space") ||
+        id == QStringLiteral("3d_flip")) {
+        return QStringLiteral("frei0r.3dflippo");
+    }
+    if (id == QStringLiteral("roto") || id == QStringLiteral("rotoscope") || id == QStringLiteral("matte")) {
+        return QStringLiteral("rotoscoping");
+    }
     // Spatial transformations
     if (id == QStringLiteral("lens_distortion") || id == QStringLiteral("lens_correction") || id == QStringLiteral("lens")) {
         return QStringLiteral("frei0r.lenscorrection");
@@ -625,6 +638,48 @@ void AICommandRouter::handleAddEffect(const QJsonObject &params)
                     }
                     if (params.contains(QStringLiteral("opacity"))) {
                         assetModel->setParameter(QStringLiteral("opacity"), QString::number(params[QStringLiteral("opacity")].toDouble()));
+                    }
+                    // 3D Perspective Corner Pin parameters (avfilter.perspective)
+                    if (effectId == QStringLiteral("avfilter.perspective")) {
+                        if (params.contains(QStringLiteral("x0"))) assetModel->setParameter(QStringLiteral("av.x0"), QString::number(params[QStringLiteral("x0")].toDouble()));
+                        if (params.contains(QStringLiteral("y0"))) assetModel->setParameter(QStringLiteral("av.y0"), QString::number(params[QStringLiteral("y0")].toDouble()));
+                        if (params.contains(QStringLiteral("x1"))) assetModel->setParameter(QStringLiteral("av.x1"), QString::number(params[QStringLiteral("x1")].toDouble()));
+                        if (params.contains(QStringLiteral("y1"))) assetModel->setParameter(QStringLiteral("av.y1"), QString::number(params[QStringLiteral("y1")].toDouble()));
+                        if (params.contains(QStringLiteral("x2"))) assetModel->setParameter(QStringLiteral("av.x2"), QString::number(params[QStringLiteral("x2")].toDouble()));
+                        if (params.contains(QStringLiteral("y2"))) assetModel->setParameter(QStringLiteral("av.y2"), QString::number(params[QStringLiteral("y2")].toDouble()));
+                        if (params.contains(QStringLiteral("x3"))) assetModel->setParameter(QStringLiteral("av.x3"), QString::number(params[QStringLiteral("x3")].toDouble()));
+                        if (params.contains(QStringLiteral("y3"))) assetModel->setParameter(QStringLiteral("av.y3"), QString::number(params[QStringLiteral("y3")].toDouble()));
+
+                        if (params.contains(QStringLiteral("tilt_x")) || params.contains(QStringLiteral("perspective_shift"))) {
+                            double shift = params.value(QStringLiteral("tilt_x")).toDouble(params.value(QStringLiteral("perspective_shift")).toDouble(180.0));
+                            assetModel->setParameter(QStringLiteral("av.x0"), QString::number(shift));
+                            assetModel->setParameter(QStringLiteral("av.y0"), QStringLiteral("40"));
+                            assetModel->setParameter(QStringLiteral("av.x1"), QString::number(1920.0 - shift));
+                            assetModel->setParameter(QStringLiteral("av.y1"), QStringLiteral("40"));
+                            assetModel->setParameter(QStringLiteral("av.x2"), QStringLiteral("0"));
+                            assetModel->setParameter(QStringLiteral("av.y2"), QStringLiteral("1080"));
+                            assetModel->setParameter(QStringLiteral("av.x3"), QStringLiteral("1920"));
+                            assetModel->setParameter(QStringLiteral("av.y3"), QStringLiteral("1080"));
+                        }
+                    }
+
+                    // 3D Space Rotation parameters (frei0r.3dflippo)
+                    if (effectId == QStringLiteral("frei0r.3dflippo")) {
+                        if (params.contains(QStringLiteral("rotate_x")) || params.contains(QStringLiteral("x_rotation"))) {
+                            double r = params.value(QStringLiteral("rotate_x")).toDouble(params.value(QStringLiteral("x_rotation")).toDouble(0.5));
+                            if (r > 1.0) r = r / 360.0;
+                            assetModel->setParameter(QStringLiteral("Xaxisrotation"), QString::number(r * 1000.0));
+                        }
+                        if (params.contains(QStringLiteral("rotate_y")) || params.contains(QStringLiteral("y_rotation"))) {
+                            double r = params.value(QStringLiteral("rotate_y")).toDouble(params.value(QStringLiteral("y_rotation")).toDouble(0.5));
+                            if (r > 1.0) r = r / 360.0;
+                            assetModel->setParameter(QStringLiteral("Yaxisrotation"), QString::number(r * 1000.0));
+                        }
+                        if (params.contains(QStringLiteral("rotate_z")) || params.contains(QStringLiteral("z_rotation"))) {
+                            double r = params.value(QStringLiteral("rotate_z")).toDouble(params.value(QStringLiteral("z_rotation")).toDouble(0.5));
+                            if (r > 1.0) r = r / 360.0;
+                            assetModel->setParameter(QStringLiteral("Zaxisrotation"), QString::number(r * 1000.0));
+                        }
                     }
                     if (params.contains(QStringLiteral("parameters")) && params[QStringLiteral("parameters")].isObject()) {
                         QJsonObject pMap = params[QStringLiteral("parameters")].toObject();
@@ -1204,7 +1259,7 @@ void AICommandRouter::handleInsertNatronTool(const QJsonObject &params)
 {
     QString toolId = params[QStringLiteral("tool_id")].toString();
     if (toolId.isEmpty()) {
-        toolId = QStringLiteral("MagicMask");
+        toolId = params[QStringLiteral("node_type")].toString(QStringLiteral("Transform"));
     }
 
     if (pCore && pCore->window()) {
@@ -1215,6 +1270,25 @@ void AICommandRouter::handleInsertNatronTool(const QJsonObject &params)
                 host->createNode(toolId, params);
             }
         }
+    }
+
+    // Auto-detect target clip on timeline to apply effect directly
+    auto tm = getTimelineModel();
+    auto *tc = getTimelineController();
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    if (clipId < 0 && tc) {
+        clipId = tc->getMainSelectedClip();
+        if (clipId < 0 && !tc->selection().isEmpty()) {
+            clipId = tc->selection().first();
+        }
+    }
+
+    if (tm && clipId >= 0 && tm->isClip(clipId)) {
+        QJsonObject effectParams = params;
+        effectParams[QStringLiteral("clip_id")] = clipId;
+        effectParams[QStringLiteral("effect_id")] = toolId;
+        handleAddEffect(effectParams);
+        return;
     }
 
     QJsonObject outData;
@@ -2239,11 +2313,12 @@ void AICommandRouter::handleUndoLast(const QJsonObject &params)
 
 void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
 {
-    QString pipeline = params[QStringLiteral("pipeline")].toString(QStringLiteral("youtube_subscribe"));
+    QString pipeline = params[QStringLiteral("pipeline")].toString();
+    if (pipeline.isEmpty()) {
+        pipeline = QStringLiteral("motion_graphic");
+    }
     QString inputClip = params[QStringLiteral("input_clip")].toString();
     QString outputPath = params[QStringLiteral("output_path")].toString();
-    int startFrame = params[QStringLiteral("start_frame")].toInt(-1);
-    int endFrame = params[QStringLiteral("end_frame")].toInt(-1);
 
     // Synchronize Natron VFX Workspace in Kdenlive UI (Node Graph, Curve Editor, Dope Sheet)
     if (pCore && pCore->window()) {
@@ -2253,35 +2328,48 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
         }
     }
 
-    // Auto-detect input clip from active selection if none was provided
-    if (inputClip.isEmpty()) {
-        auto tm = getTimelineModel();
-        auto *tc = getTimelineController();
-        if (tm && tc) {
-            int clipId = tc->getMainSelectedClip();
-            if (clipId < 0 && !tc->selection().isEmpty()) {
-                clipId = tc->selection().first();
-            }
-            if (clipId >= 0 && tm->isClip(clipId) && pCore && pCore->projectItemModel()) {
-                QString binId = tm->getClipBinId(clipId);
-                auto pClip = pCore->projectItemModel()->getClipByBinID(binId);
-                if (pClip) {
-                    inputClip = pClip->clipUrl();
-                }
-            }
+    // Check if this is an in-place timeline clip edit (e.g. 3D perspective movement, rotation, grade, roto, blur, etc.)
+    auto tm = getTimelineModel();
+    auto *tc = getTimelineController();
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    if (clipId < 0 && tc) {
+        clipId = tc->getMainSelectedClip();
+        if (clipId < 0 && !tc->selection().isEmpty()) {
+            clipId = tc->selection().first();
         }
     }
 
-    bool isStandaloneGenerator = pipeline.contains(QStringLiteral("subscribe")) ||
-                                 pipeline.contains(QStringLiteral("button")) ||
-                                 pipeline.contains(QStringLiteral("motion_graphic")) ||
-                                 pipeline.contains(QStringLiteral("handclick")) ||
-                                 pipeline.contains(QStringLiteral("overlay")) ||
-                                 pipeline.contains(QStringLiteral("title"));
+    bool isClipEdit = (clipId >= 0 && tm && tm->isClip(clipId)) &&
+                      (pipeline.contains(QStringLiteral("perspective")) ||
+                       pipeline.contains(QStringLiteral("corner")) ||
+                       pipeline.contains(QStringLiteral("3d")) ||
+                       pipeline.contains(QStringLiteral("roto")) ||
+                       pipeline.contains(QStringLiteral("grade")) ||
+                       pipeline.contains(QStringLiteral("color")) ||
+                       pipeline.contains(QStringLiteral("blur")) ||
+                       pipeline.contains(QStringLiteral("glow")) ||
+                       pipeline.contains(QStringLiteral("glitch")) ||
+                       pipeline.contains(QStringLiteral("transform")) ||
+                       params.value(QStringLiteral("target")).toString() == QStringLiteral("clip") ||
+                       params.contains(QStringLiteral("clip_id")));
 
-    if (inputClip.isEmpty() && !isStandaloneGenerator) {
-        Q_EMIT executionFinished(i18n("Natron VFX: No input clip specified or selected on the timeline."), false);
+    if (isClipEdit) {
+        // Forward directly to handleAddEffect so the 3D perspective / movement / VFX filter
+        // is added directly to the timeline clip, keyframed, and immediately reflected on the Project Preview monitor!
+        QJsonObject effectParams = params;
+        effectParams[QStringLiteral("clip_id")] = clipId;
+        effectParams[QStringLiteral("effect_id")] = pipeline;
+        handleAddEffect(effectParams);
         return;
+    }
+
+    // Auto-detect input clip from active selection if none was provided
+    if (inputClip.isEmpty() && clipId >= 0 && tm && tm->isClip(clipId) && pCore && pCore->projectItemModel()) {
+        QString binId = tm->getClipBinId(clipId);
+        auto pClip = pCore->projectItemModel()->getClipByBinID(binId);
+        if (pClip) {
+            inputClip = pClip->clipUrl();
+        }
     }
 
     // Auto-generate destination file if not specified
@@ -2295,95 +2383,46 @@ void AICommandRouter::executeNatronVfxJob(const QJsonObject &params)
 
     m_lastVfxOutputPath = outputPath;
 
-    // 1. Search for NatronRenderer inside kdenlive/Natron or relative to application / system PATH
-    QStringList candidates = {
-        QCoreApplication::applicationDirPath() + QStringLiteral("/../Natron/Renderer/NatronRenderer"),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/Natron/Renderer/NatronRenderer"),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/../Natron/App/Natron"),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/Natron/App/Natron"),
-        QDir::current().filePath(QStringLiteral("kdenlive/Natron/Renderer/NatronRenderer")),
-        QDir::current().filePath(QStringLiteral("Natron/Renderer/NatronRenderer")),
-        QStandardPaths::findExecutable(QStringLiteral("NatronRenderer")),
-        QStandardPaths::findExecutable(QStringLiteral("natron-renderer")),
-        QStandardPaths::findExecutable(QStringLiteral("Natron")),
-        QStandardPaths::findExecutable(QStringLiteral("natron"))
+    // Execute in-process VidMate Natron VFX & Motion Graphics Synthesizer (Python + FFmpeg)
+    QString synthScript;
+    QStringList synthCandidates = {
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/vfx/natron_synthesizer.py")),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/vfx/natron_synthesizer.py"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/vfx/natron_synthesizer.py"),
+        QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/vfx/natron_synthesizer.py")),
+        QDir::current().filePath(QStringLiteral("data/scripts/vfx/natron_synthesizer.py"))
     };
-
-    QString natronBin;
-    for (const QString &c : candidates) {
-        if (!c.isEmpty() && (QFile::exists(c) || !c.contains(QLatin1Char('/')))) {
-            natronBin = c;
+    for (const QString &c : synthCandidates) {
+        if (!c.isEmpty() && QFile::exists(c)) {
+            synthScript = c;
             break;
         }
     }
 
-    bool rendered = false;
-
-    if (!natronBin.isEmpty()) {
-        // Procedurally generate Python node-graph script via NatronScriptGenerator
-        QString script = NatronScriptGenerator::generateFromSpec(params, inputClip, outputPath, startFrame, endFrame);
-        QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-        QString scriptPath = QStringLiteral("%1/natron_task_%2.py")
-            .arg(tmpDir)
-            .arg(QDateTime::currentMSecsSinceEpoch());
-
-        QFile file(scriptPath);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            file.write(script.toUtf8());
-            file.close();
-        }
-
-        QProcess nproc;
-        nproc.start(natronBin, {QStringLiteral("-t"), scriptPath});
-        if (nproc.waitForFinished(60000) && nproc.exitCode() == 0 && QFile::exists(outputPath) && QFile(outputPath).size() > 0) {
-            rendered = true;
-        }
+    if (synthScript.isEmpty()) {
+        Q_EMIT executionFinished(i18n("Natron VFX Synthesizer script not found."), false);
+        return;
     }
 
-    // 2. Fallback to built-in VidMate VFX Synthesizer (Python + FFmpeg) if Natron is not installed or didn't output file
-    if (!rendered || !QFile::exists(outputPath) || QFile(outputPath).size() == 0) {
-        QString synthScript;
-        QStringList synthCandidates = {
-            QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/vfx/natron_synthesizer.py")),
-            QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/vfx/natron_synthesizer.py"),
-            QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/vfx/natron_synthesizer.py"),
-            QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/vfx/natron_synthesizer.py")),
-            QDir::current().filePath(QStringLiteral("data/scripts/vfx/natron_synthesizer.py"))
-        };
-        for (const QString &c : synthCandidates) {
-            if (!c.isEmpty() && QFile::exists(c)) {
-                synthScript = c;
-                break;
-            }
-        }
-
-        if (!synthScript.isEmpty()) {
-            QStringList synthArgs;
-            synthArgs << synthScript
-                      << QStringLiteral("--pipeline") << pipeline
-                      << QStringLiteral("--output") << outputPath;
-            if (!inputClip.isEmpty()) {
-                synthArgs << QStringLiteral("--input") << inputClip;
-            }
-            QJsonObject pObj = params;
-            synthArgs << QStringLiteral("--params") << QString::fromUtf8(QJsonDocument(pObj).toJson(QJsonDocument::Compact));
-
-            QProcess pyProc;
-            pyProc.start(QStringLiteral("python3"), synthArgs);
-            if (pyProc.waitForFinished(30000) && pyProc.exitCode() == 0 && QFile::exists(outputPath)) {
-                rendered = true;
-            }
-        }
+    QStringList synthArgs;
+    synthArgs << synthScript
+              << QStringLiteral("--pipeline") << pipeline
+              << QStringLiteral("--output") << outputPath;
+    if (!inputClip.isEmpty()) {
+        synthArgs << QStringLiteral("--input") << inputClip;
     }
+    synthArgs << QStringLiteral("--params") << QString::fromUtf8(QJsonDocument(params).toJson(QJsonDocument::Compact));
 
-    if (!QFile::exists(outputPath) || QFile(outputPath).size() == 0) {
+    QProcess pyProc;
+    pyProc.start(QStringLiteral("python3"), synthArgs);
+    if (!pyProc.waitForFinished(60000) || pyProc.exitCode() != 0 || !QFile::exists(outputPath) || QFile(outputPath).size() == 0) {
         Q_EMIT executionFinished(i18n("Natron VFX processing failed to materialize file at %1.", outputPath), false);
         return;
     }
 
     // 3. Auto-import materialized asset into Project Bin AND insert onto Timeline
-    auto *tc = getTimelineController();
-    auto tm = getTimelineModel();
+    if (!tc) tc = getTimelineController();
+    if (!tm) tm = getTimelineModel();
 
     int targetTrack = params[QStringLiteral("track_id")].toInt(-1);
     if (targetTrack < 0 && tm && tc) {
@@ -3107,6 +3146,8 @@ void AICommandRouter::handleInsertMediaUrl(const QJsonObject &params)
             if (resolvedLocalPath.contains(QStringLiteral("subscribe")) ||
                 resolvedLocalPath.contains(QStringLiteral("button")) ||
                 resolvedLocalPath.contains(QStringLiteral("handclick")) ||
+                resolvedLocalPath.contains(QStringLiteral("lower_third")) ||
+                resolvedLocalPath.contains(QStringLiteral("hud")) ||
                 resolvedLocalPath.contains(QStringLiteral("motion_graphic"))) {
                 QString synthScript;
                 QStringList synthCandidates = {
@@ -3120,9 +3161,13 @@ void AICommandRouter::handleInsertMediaUrl(const QJsonObject &params)
                     if (!c.isEmpty() && QFile::exists(c)) { synthScript = c; break; }
                 }
                 if (!synthScript.isEmpty()) {
+                    QString pipe = resolvedLocalPath.contains(QStringLiteral("motion_graphic")) ? QStringLiteral("kinetic_motion_graphic") :
+                                   resolvedLocalPath.contains(QStringLiteral("lower_third")) ? QStringLiteral("lower_third") :
+                                   resolvedLocalPath.contains(QStringLiteral("hud")) ? QStringLiteral("hud_circle") :
+                                   QStringLiteral("youtube_subscribe");
                     QProcess pyProc;
-                    pyProc.start(QStringLiteral("python3"), {synthScript, QStringLiteral("--pipeline"), QStringLiteral("youtube_subscribe"), QStringLiteral("--output"), resolvedLocalPath});
-                    pyProc.waitForFinished(30000);
+                    pyProc.start(QStringLiteral("python3"), {synthScript, QStringLiteral("--pipeline"), pipe, QStringLiteral("--output"), resolvedLocalPath});
+                    pyProc.waitForFinished(35000);
                 }
             }
         }

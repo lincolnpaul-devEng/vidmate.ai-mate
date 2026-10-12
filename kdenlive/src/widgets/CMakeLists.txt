@@ -21,7 +21,6 @@ set(kdenlive_SRCS
   widgets/aidispatcher.cpp
   widgets/aicommandrouter.cpp
   widgets/aitoolregistry.cpp
-  widgets/natronscriptgenerator.cpp
   widgets/natronguihostwidget.cpp
   widgets/natronworkspacewidget.cpp
   widgets/natronselecttooldialog.cpp

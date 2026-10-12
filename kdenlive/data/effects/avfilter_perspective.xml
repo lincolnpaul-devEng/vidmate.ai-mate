@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!DOCTYPE kpartgui>
+<effect xmlns="https://www.kdenlive.org" tag="avfilter.perspective" id="avfilter.perspective" type="video">
+    <name>Perspective (Corner Pin 3D)</name>
+    <description>4-Corner 3D Perspective and Vanishing Point Projection</description>
+    <author>FFmpeg / MLT</author>
+    <parameter type="animated" name="av.x0" default="0">
+        <name>Top-Left X</name>
+    </parameter>
+    <parameter type="animated" name="av.y0" default="0">
+        <name>Top-Left Y</name>
+    </parameter>
+    <parameter type="animated" name="av.x1" default="1920">
+        <name>Top-Right X</name>
+    </parameter>
+    <parameter type="animated" name="av.y1" default="0">
+        <name>Top-Right Y</name>
+    </parameter>
+    <parameter type="animated" name="av.x2" default="0">
+        <name>Bottom-Left X</name>
+    </parameter>
+    <parameter type="animated" name="av.y2" default="1080">
+        <name>Bottom-Left Y</name>
+    </parameter>
+    <parameter type="animated" name="av.x3" default="1920">
+        <name>Bottom-Right X</name>
+    </parameter>
+    <parameter type="animated" name="av.y3" default="1080">
+        <name>Bottom-Right Y</name>
+    </parameter>
+</effect>

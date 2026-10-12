@@ -17,6 +17,11 @@
 #include <QContextMenuEvent>
 #include <QMenu>
 #include <QOpenGLFunctions>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QFile>
+#include <QDir>
+#include <QCoreApplication>
 #include <cmath>
 #include <algorithm>
 
@@ -295,7 +300,18 @@ void NatronNodeGraphCanvas::loadPreset(const QString &presetName, const QJsonObj
     Q_UNUSED(params);
     clearGraph();
 
-    if (presetName == QStringLiteral("tracker") || presetName == QStringLiteral("planar_track")) {
+    if (presetName == QStringLiteral("motion_graphic") || presetName == QStringLiteral("kinetic_motion_graphic") || presetName.contains(QStringLiteral("kinetic"))) {
+        addNode(QStringLiteral("RadialBurst1"), QStringLiteral("RadialBurst1"), QStringLiteral("Generator"), QColor(140, 60, 100), QPointF(80, 50));
+        addNode(QStringLiteral("ConcentricRings1"), QStringLiteral("ConcentricRings1"), QStringLiteral("Transform"), QColor(140, 90, 30), QPointF(240, 50));
+        addNode(QStringLiteral("KineticText1"), QStringLiteral("KineticText1"), QStringLiteral("Generator"), QColor(60, 110, 140), QPointF(160, 140));
+        addNode(QStringLiteral("Merge1"), QStringLiteral("Merge_Comp"), QStringLiteral("Composite"), QColor(50, 90, 140), QPointF(160, 230));
+        addNode(QStringLiteral("Write1"), QStringLiteral("Write_ProRes"), QStringLiteral("I/O"), QColor(100, 60, 40), QPointF(160, 320));
+
+        connectNodes(QStringLiteral("RadialBurst1"), QStringLiteral("Merge1"));
+        connectNodes(QStringLiteral("ConcentricRings1"), QStringLiteral("Merge1"));
+        connectNodes(QStringLiteral("KineticText1"), QStringLiteral("Merge1"));
+        connectNodes(QStringLiteral("Merge1"), QStringLiteral("Write1"));
+    } else if (presetName == QStringLiteral("tracker") || presetName == QStringLiteral("planar_track")) {
         addNode(QStringLiteral("Read_Plate"), QStringLiteral("Read_Plate"), QStringLiteral("I/O"), QColor(100, 60, 40), QPointF(100, 50));
         addNode(QStringLiteral("Tracker1"), QStringLiteral("Tracker1"), QStringLiteral("Transform"), QColor(140, 90, 30), QPointF(100, 130));
         addNode(QStringLiteral("Transform1"), QStringLiteral("Transform1"), QStringLiteral("Transform"), QColor(140, 90, 30), QPointF(250, 130));
@@ -320,6 +336,24 @@ void NatronNodeGraphCanvas::loadPreset(const QString &presetName, const QJsonObj
         connectNodes(QStringLiteral("ColorCorrect1"), QStringLiteral("Merge1"));
         connectNodes(QStringLiteral("Keyer1"), QStringLiteral("Merge1"));
         connectNodes(QStringLiteral("Merge1"), QStringLiteral("Write1"));
+    } else if (presetName == QStringLiteral("rotoscope") || presetName.contains(QStringLiteral("roto"))) {
+        addNode(QStringLiteral("Read_Plate"), QStringLiteral("Read_Plate"), QStringLiteral("I/O"), QColor(100, 60, 40), QPointF(120, 50));
+        addNode(QStringLiteral("Roto1"), QStringLiteral("RotoMatte1"), QStringLiteral("Mask"), QColor(180, 50, 80), QPointF(280, 50));
+        addNode(QStringLiteral("MergeMatte"), QStringLiteral("MatteMerge1"), QStringLiteral("Composite"), QColor(50, 90, 140), QPointF(200, 160));
+        addNode(QStringLiteral("Write1"), QStringLiteral("Write_Matte"), QStringLiteral("I/O"), QColor(100, 60, 40), QPointF(200, 260));
+
+        connectNodes(QStringLiteral("Read_Plate"), QStringLiteral("MergeMatte"));
+        connectNodes(QStringLiteral("Roto1"), QStringLiteral("MergeMatte"));
+        connectNodes(QStringLiteral("MergeMatte"), QStringLiteral("Write1"));
+    } else if (presetName == QStringLiteral("glitch")) {
+        addNode(QStringLiteral("Read1"), QStringLiteral("Read_Plate"), QStringLiteral("I/O"), QColor(100, 60, 40), QPointF(150, 50));
+        addNode(QStringLiteral("RGBSplit1"), QStringLiteral("ChromaticSplit1"), QStringLiteral("Filter"), QColor(160, 80, 160), QPointF(150, 140));
+        addNode(QStringLiteral("Displace1"), QStringLiteral("GlitchDisplace1"), QStringLiteral("Filter"), QColor(140, 50, 120), QPointF(150, 220));
+        addNode(QStringLiteral("Write1"), QStringLiteral("Write_Glitch"), QStringLiteral("I/O"), QColor(100, 60, 40), QPointF(150, 300));
+
+        connectNodes(QStringLiteral("Read1"), QStringLiteral("RGBSplit1"));
+        connectNodes(QStringLiteral("RGBSplit1"), QStringLiteral("Displace1"));
+        connectNodes(QStringLiteral("Displace1"), QStringLiteral("Write1"));
     } else {
         addNode(QStringLiteral("Read1"), QStringLiteral("Read1"), QStringLiteral("I/O"), QColor(100, 60, 40), QPointF(150, 50));
         addNode(QStringLiteral("Grade1"), QStringLiteral("Grade1"), QStringLiteral("Color"), QColor(60, 110, 140), QPointF(150, 130));
@@ -718,6 +752,7 @@ void NatronGuiHostWidget::createNode(const QString &pluginId, const QJsonObject 
 
 void NatronGuiHostWidget::loadPresetPipeline(const QString &pipeline, const QJsonObject &params)
 {
+    m_currentPipeline = pipeline;
     if (m_nodeGraphCanvas) {
         m_nodeGraphCanvas->loadPreset(pipeline, params);
     }
@@ -725,6 +760,37 @@ void NatronGuiHostWidget::loadPresetPipeline(const QString &pipeline, const QJso
 
 void NatronGuiHostWidget::renderVfxSequence(const QString &outputPath)
 {
-    Q_EMIT statusMessageChanged(i18n("Natron Rendering sequence to %1...", outputPath));
-    Q_EMIT renderFinished(outputPath);
+    Q_EMIT statusMessageChanged(i18n("Natron rendering sequence to %1...", outputPath));
+
+    QString synthScript;
+    QStringList synthCandidates = {
+        QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("scripts/vfx/natron_synthesizer.py")),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/vfx/natron_synthesizer.py"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/vfx/natron_synthesizer.py"),
+        QDir::current().filePath(QStringLiteral("kdenlive/data/scripts/vfx/natron_synthesizer.py")),
+        QDir::current().filePath(QStringLiteral("data/scripts/vfx/natron_synthesizer.py"))
+    };
+    for (const QString &c : synthCandidates) {
+        if (!c.isEmpty() && QFile::exists(c)) {
+            synthScript = c;
+            break;
+        }
+    }
+
+    if (!synthScript.isEmpty()) {
+        auto *proc = new QProcess(this);
+        connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, [this, proc, outputPath](int exitCode, QProcess::ExitStatus) {
+            proc->deleteLater();
+            if (exitCode == 0 && QFile::exists(outputPath)) {
+                Q_EMIT statusMessageChanged(i18n("Natron VFX rendered successfully: %1", outputPath));
+                Q_EMIT renderFinished(outputPath);
+            } else {
+                Q_EMIT statusMessageChanged(i18n("Natron VFX rendering failed."));
+            }
+        });
+        QString pipe = m_currentPipeline.isEmpty() ? QStringLiteral("motion_graphic") : m_currentPipeline;
+        proc->start(QStringLiteral("python3"), {synthScript, QStringLiteral("--pipeline"), pipe, QStringLiteral("--output"), outputPath});
+    } else {
+        Q_EMIT renderFinished(outputPath);
+    }
 }

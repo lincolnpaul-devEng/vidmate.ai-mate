@@ -10,7 +10,6 @@
 #include "natronworkspacewidget.h"
 #include "natronguihostwidget.h"
 #include "natronselecttooldialog.h"
-#include "natronscriptgenerator.h"
 #include "core.h"
 #include "mainwindow.h"
 #include "timeline2/view/timelinewidget.h"
@@ -113,11 +112,13 @@ QWidget *NatronWorkspaceWidget::buildViewHeaderToolbar()
 
     // Preset VFX Pipeline Selector
     m_pipelineSelector = new QComboBox(topBar);
+    m_pipelineSelector->addItem(i18n("Kinetic Motion Graphic"), QStringLiteral("motion_graphic"));
     m_pipelineSelector->addItem(i18n("Object Tracker & Match-Move"), QStringLiteral("tracker"));
     m_pipelineSelector->addItem(i18n("Track & Privacy Blur"), QStringLiteral("track_blur"));
     m_pipelineSelector->addItem(i18n("Chroma Key Composite"), QStringLiteral("chroma_key"));
     m_pipelineSelector->addItem(i18n("Rotoscope & AI Matte"), QStringLiteral("rotoscope"));
     m_pipelineSelector->addItem(i18n("Color Grade & Curves"), QStringLiteral("color_grade"));
+    m_pipelineSelector->addItem(i18n("Glitch / Chromatic Split"), QStringLiteral("glitch"));
     connect(m_pipelineSelector, &QComboBox::currentTextChanged, this, [this]() {
         QString pipeline = m_pipelineSelector->currentData().toString();
         loadPipeline(pipeline, {});

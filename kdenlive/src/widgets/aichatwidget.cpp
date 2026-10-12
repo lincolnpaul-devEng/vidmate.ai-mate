@@ -139,6 +139,14 @@ AIChatWidget::AIChatWidget(QWidget *parent)
     });
     connect(m_dispatcher, &AIDispatcher::requestStarted, this, &AIChatWidget::slotRequestStarted);
     connect(m_dispatcher, &AIDispatcher::requestFinished, this, &AIChatWidget::slotRequestFinished);
+    connect(m_dispatcher, &AIDispatcher::streamDeltaReceived, this, [this](const QString &delta) {
+        if (!delta.isEmpty() && m_liveStatusText) {
+            QString clean = delta.trimmed();
+            if (!clean.isEmpty()) {
+                m_liveStatusText->setText(clean.left(80));
+            }
+        }
+    });
     connect(m_dispatcher, &AIDispatcher::modelsLoaded, this, &AIChatWidget::slotModelsLoaded);
     connect(m_dispatcher, &AIDispatcher::goalStarted, this, &AIChatWidget::slotGoalStarted);
     connect(m_dispatcher, &AIDispatcher::goalStepStarted, this, &AIChatWidget::slotGoalStepStarted);

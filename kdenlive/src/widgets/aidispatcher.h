@@ -12,6 +12,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QElapsedTimer>
+#include <QLocalSocket>
+#include <QProcess>
 
 #include "context_compaction.h"
 #include "run_ledger.h"
@@ -82,12 +84,16 @@ public:
     QString groqKey() const { return m_groqKey; }
     void setGroqKey(const QString &key) { m_groqKey = key; }
 
+    bool usePydanticAI() const { return m_usePydanticAI; }
+    void setUsePydanticAI(bool enable) { m_usePydanticAI = enable; }
+
     /** @brief Direct access to agent_cpp execution ledger */
     const agent_cpp::RunLedger &agentRunLedger() const { return m_agentRunLedger; }
     agent_cpp::RunLedger &agentRunLedger() { return m_agentRunLedger; }
 
 Q_SIGNALS:
     void responseReceived(const QString &summaryText, const QJsonObject &actionPayload);
+    void streamDeltaReceived(const QString &deltaText);
     void metricsUpdated(int totalTokens, qint64 latencyMs, const QString &modelId);
     void errorOccurred(const QString &errorMessage);
     void requestStarted();
@@ -101,6 +107,9 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void slotReplyFinished(QNetworkReply *reply, const QString &modelUsed = QString());
+    void slotSocketReadyRead();
+    void slotSocketError(QLocalSocket::LocalSocketError error);
+    void slotSocketDisconnected();
 
 private:
     void sendCurrentMessages();
@@ -108,6 +117,16 @@ private:
     QString buildEditorStateSnapshot();
     QString buildSystemPrompt();
     void maybeCompactConversation();
+
+    bool ensureAgentDaemonRunning();
+    void sendAgentPromptOverSocket(const QString &prompt);
+    void processSocketLine(const QByteArray &line);
+
+    QLocalSocket *m_agentSocket{nullptr};
+    QProcess *m_agentProcess{nullptr};
+    bool m_usePydanticAI{true};
+    QString m_currentSocketCallId;
+    QByteArray m_socketBuffer;
 
     QNetworkAccessManager *m_nam{nullptr};
     AIToolRegistry *m_toolRegistry{nullptr};

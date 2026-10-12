@@ -45,11 +45,19 @@
 #include <KSharedConfig>
 #include <KConfigGroup>
 
+#include <QThread>
+
 AIDispatcher::AIDispatcher(QObject *parent)
     : QObject(parent)
+    , m_agentSocket(new QLocalSocket(this))
+    , m_agentProcess(new QProcess(this))
     , m_nam(new QNetworkAccessManager(this))
     , m_toolRegistry(new AIToolRegistry())
 {
+    connect(m_agentSocket, &QLocalSocket::readyRead, this, &AIDispatcher::slotSocketReadyRead);
+    connect(m_agentSocket, &QLocalSocket::errorOccurred, this, &AIDispatcher::slotSocketError);
+    connect(m_agentSocket, &QLocalSocket::disconnected, this, &AIDispatcher::slotSocketDisconnected);
+
     loadEnvConfig();
     loadSettings();
 }
@@ -641,6 +649,13 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
     QString runId = QStringLiteral("run_%1").arg(QDateTime::currentMSecsSinceEpoch());
     m_agentRunLedger = agent_cpp::RunLedger(runId.toStdString(), prompt.toStdString());
 
+    // Check if PydanticAI daemon is enabled and available
+    if (m_usePydanticAI && ensureAgentDaemonRunning()) {
+        Q_EMIT goalStarted(prompt);
+        sendAgentPromptOverSocket(prompt);
+        return;
+    }
+
     // Maintain persistent multi-turn conversation history across prompt submissions
     if (m_conversationMessages.isEmpty()) {
         QJsonObject systemMsg;
@@ -694,6 +709,23 @@ void AIDispatcher::feedObservationAndContinue(const QString &actionName, const Q
     m_agentRunLedger.save_to_file(ledgerPath.toStdString());
 
     Q_EMIT goalStepFinished(m_currentStep, m_maxSteps, actionName, success);
+
+    // If PydanticAI daemon socket is active, feed the observation back over the socket
+    if (m_usePydanticAI && m_agentSocket && m_agentSocket->state() == QLocalSocket::ConnectedState && !m_currentSocketCallId.isEmpty()) {
+        QJsonObject resp;
+        resp[QStringLiteral("type")] = QStringLiteral("tool_response");
+        resp[QStringLiteral("call_id")] = m_currentSocketCallId;
+        QJsonObject resObj;
+        resObj[QStringLiteral("success")] = success;
+        resObj[QStringLiteral("message")] = compactedObservation;
+        resp[QStringLiteral("result")] = resObj;
+
+        QJsonDocument doc(resp);
+        m_agentSocket->write(doc.toJson(QJsonDocument::Compact) + '\n');
+        m_agentSocket->flush();
+        m_currentSocketCallId.clear();
+        return;
+    }
 
     if (m_currentStep >= m_maxSteps) {
         m_goalActive = false;
@@ -1083,4 +1115,144 @@ void AIDispatcher::maybeCompactConversation()
         m_conversationMessages = newConversation;
         qDebug() << "[AIDispatcher/agent_cpp] Context compacted down to" << m_conversationMessages.size() << "messages with active [CONTEXT CHECKPOINT].";
     }
+}
+
+bool AIDispatcher::ensureAgentDaemonRunning()
+{
+    const QString sockPath = QStringLiteral("/tmp/kdenlive_agent.sock");
+    if (m_agentSocket->state() == QLocalSocket::ConnectedState) {
+        return true;
+    }
+
+    m_agentSocket->connectToServer(sockPath);
+    if (m_agentSocket->waitForConnected(300)) {
+        return true;
+    }
+
+    if (m_agentProcess->state() == QProcess::NotRunning) {
+        QString scriptPath;
+        const QStringList candidatePaths = {
+            QDir::cleanPath(QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/agent/service.py")),
+            QDir::cleanPath(QCoreApplication::applicationDirPath() + QStringLiteral("/../data/scripts/agent/service.py")),
+            QStringLiteral("/home/lincoln/vidmate.ai-mate/kdenlive/data/scripts/agent/service.py")
+        };
+        for (const auto &p : candidatePaths) {
+            if (QFile::exists(p)) {
+                scriptPath = p;
+                break;
+            }
+        }
+
+        if (!scriptPath.isEmpty()) {
+            QDir scriptsDir = QFileInfo(scriptPath).dir();
+            scriptsDir.cdUp(); // kdenlive/data/scripts
+            m_agentProcess->setWorkingDirectory(scriptsDir.absolutePath());
+            m_agentProcess->start(QStringLiteral("python3"), {QStringLiteral("-m"), QStringLiteral("agent.service")});
+            if (m_agentProcess->waitForStarted(2000)) {
+                for (int i = 0; i < 15; ++i) {
+                    QThread::msleep(100);
+                    m_agentSocket->connectToServer(sockPath);
+                    if (m_agentSocket->waitForConnected(200)) {
+                        qDebug() << "[AIDispatcher] Connected to PydanticAI daemon at" << sockPath;
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    qWarning() << "[AIDispatcher] PydanticAI daemon unreachable at" << sockPath << ", falling back to direct HTTP proxy.";
+    return false;
+}
+
+void AIDispatcher::sendAgentPromptOverSocket(const QString &prompt)
+{
+    m_requestTimer.start();
+    Q_EMIT requestStarted();
+
+    QJsonObject req;
+    req[QStringLiteral("type")] = QStringLiteral("prompt");
+    req[QStringLiteral("req_id")] = QStringLiteral("req_%1").arg(QDateTime::currentMSecsSinceEpoch());
+    req[QStringLiteral("prompt")] = prompt;
+
+    QString snapshotStr = buildEditorStateSnapshot();
+    QJsonDocument stateDoc = QJsonDocument::fromJson(snapshotStr.toUtf8());
+    if (!stateDoc.isNull() && stateDoc.isObject()) {
+        req[QStringLiteral("editor_state")] = stateDoc.object();
+    } else {
+        QJsonObject rawState;
+        rawState[QStringLiteral("raw_snapshot")] = snapshotStr;
+        req[QStringLiteral("editor_state")] = rawState;
+    }
+
+    if (!m_settings.provider.isEmpty() && m_settings.provider != QStringLiteral("all")) {
+        req[QStringLiteral("provider")] = m_settings.provider;
+    }
+    if (!m_model.isEmpty()) {
+        req[QStringLiteral("model")] = m_model;
+    }
+
+    QJsonDocument doc(req);
+    m_agentSocket->write(doc.toJson(QJsonDocument::Compact) + '\n');
+    m_agentSocket->flush();
+}
+
+void AIDispatcher::slotSocketReadyRead()
+{
+    m_socketBuffer.append(m_agentSocket->readAll());
+    while (m_socketBuffer.contains('\n')) {
+        int idx = m_socketBuffer.indexOf('\n');
+        QByteArray line = m_socketBuffer.left(idx).trimmed();
+        m_socketBuffer.remove(0, idx + 1);
+        if (!line.isEmpty()) {
+            processSocketLine(line);
+        }
+    }
+}
+
+void AIDispatcher::processSocketLine(const QByteArray &line)
+{
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(line, &err);
+    if (doc.isNull() || !doc.isObject()) return;
+
+    QJsonObject msg = doc.object();
+    QString type = msg[QStringLiteral("type")].toString();
+
+    if (type == QStringLiteral("stream_delta")) {
+        QString text = msg[QStringLiteral("text")].toString();
+        if (!text.isEmpty()) {
+            Q_EMIT streamDeltaReceived(text);
+        }
+    } else if (type == QStringLiteral("tool_call")) {
+        m_currentSocketCallId = msg[QStringLiteral("call_id")].toString();
+        QString action = msg[QStringLiteral("action")].toString();
+        QJsonObject params = msg[QStringLiteral("parameters")].toObject();
+        QJsonObject payload = params;
+        payload[QStringLiteral("action")] = action;
+
+        Q_EMIT goalStepStarted(m_currentStep, m_maxSteps, action);
+        Q_EMIT responseReceived(QStringLiteral("Executing action: %1").arg(action), payload);
+    } else if (type == QStringLiteral("run_complete")) {
+        m_goalActive = false;
+        qint64 latency = m_requestTimer.elapsed();
+        Q_EMIT metricsUpdated(0, latency, m_model);
+        Q_EMIT goalFinished(i18n("Goal completed successfully."));
+        Q_EMIT requestFinished();
+    } else if (type == QStringLiteral("run_error")) {
+        m_goalActive = false;
+        QString errStr = msg[QStringLiteral("error")].toString();
+        Q_EMIT errorOccurred(errStr);
+        Q_EMIT requestFinished();
+    }
+}
+
+void AIDispatcher::slotSocketError(QLocalSocket::LocalSocketError error)
+{
+    qWarning() << "[AIDispatcher] PydanticAI daemon socket error:" << error << m_agentSocket->errorString();
+}
+
+void AIDispatcher::slotSocketDisconnected()
+{
+    qDebug() << "[AIDispatcher] Disconnected from PydanticAI daemon.";
 }

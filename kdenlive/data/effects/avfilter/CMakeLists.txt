@@ -108,6 +108,7 @@ avfilter_noise.xml
 avfilter_normalize.xml
 avfilter_oscilloscope.xml
 avfilter_phase.xml
+avfilter_perspective.xml
 avfilter_photosensitivity.xml
 avfilter_pixelize.xml
 avfilter_prewitt.xml
