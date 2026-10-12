@@ -273,6 +273,36 @@ void NatronNodeGraphCanvas::addNode(const QString &id, const QString &label, con
     node.category = category;
     node.color = color;
     node.pos = pos;
+
+    if (id.contains(QStringLiteral("Grade"), Qt::CaseInsensitive) || label.contains(QStringLiteral("Grade"), Qt::CaseInsensitive)) {
+        node.params[QStringLiteral("gamma")] = 1.0;
+        node.params[QStringLiteral("contrast")] = 1.0;
+        node.params[QStringLiteral("brightness")] = 0.0;
+        node.params[QStringLiteral("saturation")] = 1.0;
+        node.params[QStringLiteral("gain")] = 1.0;
+    } else if (id.contains(QStringLiteral("Blur"), Qt::CaseInsensitive) || label.contains(QStringLiteral("Blur"), Qt::CaseInsensitive)) {
+        node.params[QStringLiteral("size")] = 10.0;
+        node.params[QStringLiteral("filter")] = QStringLiteral("gaussian");
+        node.params[QStringLiteral("aspect")] = 1.0;
+    } else if (id.contains(QStringLiteral("Transform"), Qt::CaseInsensitive) || label.contains(QStringLiteral("Transform"), Qt::CaseInsensitive)) {
+        node.params[QStringLiteral("scale")] = 1.0;
+        node.params[QStringLiteral("rotate")] = 0.0;
+        node.params[QStringLiteral("translate_x")] = 0.0;
+        node.params[QStringLiteral("translate_y")] = 0.0;
+    } else if (id.contains(QStringLiteral("Tracker"), Qt::CaseInsensitive) || label.contains(QStringLiteral("Tracker"), Qt::CaseInsensitive)) {
+        node.params[QStringLiteral("mode")] = QStringLiteral("planar");
+        node.params[QStringLiteral("tolerance")] = 0.8;
+        node.params[QStringLiteral("track_scale")] = true;
+        node.params[QStringLiteral("track_rotation")] = true;
+    } else if (id.contains(QStringLiteral("Keyer"), Qt::CaseInsensitive) || label.contains(QStringLiteral("Keyer"), Qt::CaseInsensitive)) {
+        node.params[QStringLiteral("key_color")] = QStringLiteral("#00ff00");
+        node.params[QStringLiteral("tolerance")] = 0.2;
+        node.params[QStringLiteral("softness")] = 0.1;
+    } else if (id.contains(QStringLiteral("Split"), Qt::CaseInsensitive) || id.contains(QStringLiteral("Glitch"), Qt::CaseInsensitive)) {
+        node.params[QStringLiteral("amount")] = 5.0;
+        node.params[QStringLiteral("direction")] = 0.0;
+    }
+
     m_nodes[id] = node;
     update();
 }
@@ -374,6 +404,40 @@ void NatronNodeGraphCanvas::createNodeAtCursor(const QString &toolId, const QStr
                  ((category == QStringLiteral("Color")) ? QColor(60, 110, 140) :
                  ((category == QStringLiteral("Transform")) ? QColor(140, 90, 30) : QColor(50, 90, 140)));
     addNode(uniqueId, label, category, col, scenePos);
+}
+
+QJsonArray NatronNodeGraphCanvas::listNodes() const
+{
+    QJsonArray arr;
+    for (auto it = m_nodes.begin(); it != m_nodes.end(); ++it) {
+        const auto &node = it.value();
+        QJsonObject obj;
+        obj[QStringLiteral("id")] = node.id;
+        obj[QStringLiteral("label")] = node.label;
+        obj[QStringLiteral("category")] = node.category;
+        obj[QStringLiteral("disabled")] = node.disabled;
+        obj[QStringLiteral("params")] = node.params;
+        arr.append(obj);
+    }
+    return arr;
+}
+
+QJsonObject NatronNodeGraphCanvas::getNodeParams(const QString &nodeId) const
+{
+    if (m_nodes.contains(nodeId)) {
+        return m_nodes[nodeId].params;
+    }
+    return {};
+}
+
+bool NatronNodeGraphCanvas::setNodeParam(const QString &nodeId, const QString &paramName, const QJsonValue &value)
+{
+    if (!m_nodes.contains(nodeId)) {
+        return false;
+    }
+    m_nodes[nodeId].params[paramName] = value;
+    update();
+    return true;
 }
 
 void NatronNodeGraphCanvas::zoomIn()
@@ -793,4 +857,24 @@ void NatronGuiHostWidget::renderVfxSequence(const QString &outputPath)
     } else {
         Q_EMIT renderFinished(outputPath);
     }
+}
+
+QJsonArray NatronGuiHostWidget::listNodes() const
+{
+    return m_nodeGraphCanvas ? m_nodeGraphCanvas->listNodes() : QJsonArray();
+}
+
+QJsonObject NatronGuiHostWidget::getNodeParameters(const QString &nodeId) const
+{
+    return m_nodeGraphCanvas ? m_nodeGraphCanvas->getNodeParams(nodeId) : QJsonObject();
+}
+
+bool NatronGuiHostWidget::setNodeParameter(const QString &nodeId, const QString &paramName, const QJsonValue &value)
+{
+    if (!m_nodeGraphCanvas) return false;
+    bool ok = m_nodeGraphCanvas->setNodeParam(nodeId, paramName, value);
+    if (ok) {
+        Q_EMIT statusMessageChanged(i18n("Natron knob updated: %1.%2 = %3").arg(nodeId, paramName, value.toVariant().toString()));
+    }
+    return ok;
 }

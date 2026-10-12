@@ -49,7 +49,7 @@ public:
     ~AIDispatcher() override = default;
 
     void sendPrompt(const QString &prompt, const QString &targetEngine = QStringLiteral("auto"));
-    void feedObservationAndContinue(const QString &actionName, const QString &observationResult, bool success);
+    void feedObservationAndContinue(const QString &actionName, const QString &observationResult, bool success, const QString &imagePath = QString());
     void cancelCurrentGoal();
     void clearConversation();
 

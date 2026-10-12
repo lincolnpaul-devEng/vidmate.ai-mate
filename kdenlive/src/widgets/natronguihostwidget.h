@@ -120,6 +120,10 @@ public:
 
     void createNodeAtCursor(const QString &toolId, const QString &label, const QString &category);
 
+    QJsonArray listNodes() const;
+    QJsonObject getNodeParams(const QString &nodeId) const;
+    bool setNodeParam(const QString &nodeId, const QString &paramName, const QJsonValue &value);
+
 Q_SIGNALS:
     void nodeSelected(const QString &nodeId);
     void requestToolSelector(const QPoint &globalPos);
@@ -247,6 +251,10 @@ public:
     void createNode(const QString &pluginId, const QJsonObject &params = {});
     void loadPresetPipeline(const QString &pipeline, const QJsonObject &params = {});
     void renderVfxSequence(const QString &outputPath);
+
+    QJsonArray listNodes() const;
+    QJsonObject getNodeParameters(const QString &nodeId) const;
+    bool setNodeParameter(const QString &nodeId, const QString &paramName, const QJsonValue &value);
 
 Q_SIGNALS:
     void frameChangedInNatron(int frame);

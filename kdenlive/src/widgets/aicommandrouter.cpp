@@ -18,6 +18,7 @@
 #include "bin/model/subtitlemodel.hpp"
 #include "doc/kdenlivedoc.h"
 #include "doc/docundostack.hpp"
+#include "doc/kthumb.h"
 #include "monitor/monitor.h"
 #include "monitor/monitorproxy.h"
 #include "mainwindow.h"
@@ -50,6 +51,7 @@
 #include <QPainter>
 #include <QAction>
 #include <QDateTime>
+#include <QDomDocument>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QNetworkAccessManager>
@@ -110,6 +112,12 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
     QString action = actionPayload[QStringLiteral("action")].toString();
     QString target = actionPayload[QStringLiteral("target")].toString();
     QJsonObject params = actionPayload[QStringLiteral("params")].toObject();
+    if (params.isEmpty()) {
+        params = actionPayload[QStringLiteral("parameters")].toObject();
+    }
+    if (params.isEmpty()) {
+        params = actionPayload;
+    }
 
     // Route to Natron if explicitly targeted or Natron VFX/tracking tool
     if (target == QStringLiteral("natron") || action == QStringLiteral("natron_vfx")) {
@@ -187,6 +195,12 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
     else if (action == QStringLiteral("insert_natron_tool") || action == QStringLiteral("select_natron_tool") ||
              action == QStringLiteral("add_natron_node") || action == QStringLiteral("insert_vfx_tool"))
         handleInsertNatronTool(params);
+    else if (action == QStringLiteral("get_natron_node_parameters") || action == QStringLiteral("get_natron_parameters") ||
+             action == QStringLiteral("inspect_natron_node"))
+        handleGetNatronNodeParameters(params);
+    else if (action == QStringLiteral("set_natron_node_parameter") || action == QStringLiteral("set_natron_parameter") ||
+             action == QStringLiteral("set_natron_knob"))
+        handleSetNatronNodeParameter(params);
     else if (action == QStringLiteral("add_track"))
         handleAddTrack(params);
     else if (action == QStringLiteral("add_transition"))
@@ -284,7 +298,7 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
              action == QStringLiteral("remove_bin_folder"))
         handleDeleteBinFolder(params);
     else
-        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, add_track_effect, get_available_effects, get_available_compositions, get_effect_parameters, set_effect_parameter, remove_effect, add_track, add_transition, add_mix, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader, write_memory, read_memory, list_memory_keys, set_project_profile, detect_beats, generate_local_sfx, create_bin_folder, list_bin_folders, move_bin_clip_to_folder, rename_bin_folder, delete_bin_folder.", action), false);
+        Q_EMIT executionFinished(i18n("Unknown action: '%1'. Available tools: cut_at_playhead, delete_clips, trim_clip, move_clip, set_clip_speed, insert_clip, add_effect, add_track_effect, get_available_effects, get_available_compositions, get_effect_parameters, set_effect_parameter, remove_effect, add_track, add_transition, add_mix, create_split_edit, set_volume, audio_ducking, remove_silence, add_subtitle, insert_title, natron_vfx, insert_natron_tool, get_natron_node_parameters, set_natron_node_parameter, view_timeline_frames, get_timeline_state, probe_quality, seek_to, set_zone, find_transcript, generate_transcript, render_project, undo_last, search_stock_media, generate_voiceover, insert_media_url, detect_scenes, generate_glsl_shader, write_memory, read_memory, list_memory_keys, set_project_profile, detect_beats, generate_local_sfx, create_bin_folder, list_bin_folders, move_bin_clip_to_folder, rename_bin_folder, delete_bin_folder.", action), false);
 
     if (isMutating && pCore && pCore->undoStack()) {
         pCore->undoStack()->endMacro();
@@ -1302,6 +1316,64 @@ void AICommandRouter::handleInsertNatronTool(const QJsonObject &params)
     Q_EMIT executionFinished(i18n("Opened Natron VFX workspace and inserted tool '%1' into the node graph.", toolId), true);
 }
 
+void AICommandRouter::handleGetNatronNodeParameters(const QJsonObject &params)
+{
+    QString nodeId = params[QStringLiteral("node_id")].toString();
+    auto *mw = pCore && pCore->window() ? static_cast<MainWindow *>(pCore->window()) : nullptr;
+    if (!mw || !mw->natronWorkspaceWidget() || !mw->natronWorkspaceWidget()->natronHost()) {
+        Q_EMIT executionFinished(i18n("Natron workspace host is not available."), false);
+        return;
+    }
+    auto *host = mw->natronWorkspaceWidget()->natronHost();
+    mw->showNatronWorkspace();
+
+    QJsonObject outData;
+    if (!nodeId.isEmpty()) {
+        QJsonObject nodeParams = host->getNodeParameters(nodeId);
+        outData[QStringLiteral("node_id")] = nodeId;
+        outData[QStringLiteral("parameters")] = nodeParams;
+        Q_EMIT dataOutput(QStringLiteral("get_natron_node_parameters"), outData);
+        Q_EMIT executionFinished(QStringLiteral("Retrieved parameters for Natron node '%1': %2").arg(nodeId, QString::fromUtf8(QJsonDocument(nodeParams).toJson(QJsonDocument::Compact))), true);
+    } else {
+        QJsonArray nodes = host->listNodes();
+        outData[QStringLiteral("nodes")] = nodes;
+        Q_EMIT dataOutput(QStringLiteral("get_natron_node_parameters"), outData);
+        Q_EMIT executionFinished(QStringLiteral("Retrieved active Natron node graph (%1 nodes): %2").arg(nodes.size()).arg(QString::fromUtf8(QJsonDocument(nodes).toJson(QJsonDocument::Compact))), true);
+    }
+}
+
+void AICommandRouter::handleSetNatronNodeParameter(const QJsonObject &params)
+{
+    QString nodeId = params[QStringLiteral("node_id")].toString();
+    QString paramName = params[QStringLiteral("param_name")].toString();
+    QJsonValue value = params[QStringLiteral("value")];
+
+    if (nodeId.isEmpty() || paramName.isEmpty()) {
+        Q_EMIT executionFinished(i18n("set_natron_node_parameter requires 'node_id' and 'param_name'."), false);
+        return;
+    }
+
+    auto *mw = pCore && pCore->window() ? static_cast<MainWindow *>(pCore->window()) : nullptr;
+    if (!mw || !mw->natronWorkspaceWidget() || !mw->natronWorkspaceWidget()->natronHost()) {
+        Q_EMIT executionFinished(i18n("Natron workspace host is not available."), false);
+        return;
+    }
+    auto *host = mw->natronWorkspaceWidget()->natronHost();
+    mw->showNatronWorkspace();
+
+    bool ok = host->setNodeParameter(nodeId, paramName, value);
+    if (ok) {
+        QJsonObject outData;
+        outData[QStringLiteral("node_id")] = nodeId;
+        outData[QStringLiteral("param_name")] = paramName;
+        outData[QStringLiteral("value")] = value;
+        Q_EMIT dataOutput(QStringLiteral("set_natron_node_parameter"), outData);
+        Q_EMIT executionFinished(i18n("Updated Natron node '%1' knob '%2' to %3.").arg(nodeId, paramName, value.toVariant().toString()), true);
+    } else {
+        Q_EMIT executionFinished(i18n("Node '%1' was not found in active Natron node graph. Inspect active nodes first with get_natron_node_parameters.").arg(nodeId), false);
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // TRACK MANAGEMENT
 // ════════════════════════════════════════════════════════════════════════════
@@ -1656,15 +1728,257 @@ void AICommandRouter::handleEditSubtitle(const QJsonObject &params)
 void AICommandRouter::handleInsertTitle(const QJsonObject &params)
 {
     QString text = params[QStringLiteral("text")].toString();
-    QString style = params[QStringLiteral("style")].toString(QStringLiteral("minimal"));
+    if (text.trimmed().isEmpty()) {
+        Q_EMIT executionFinished(i18n("insert_title requires non-empty 'text' parameter."), false);
+        return;
+    }
+
+    QString subtext = params[QStringLiteral("subtext")].toString();
+    QString placement = params[QStringLiteral("placement")].toString(QStringLiteral("lower_third")).toLower();
     int durationFrames = params[QStringLiteral("duration_frames")].toInt(90);
     int position = params[QStringLiteral("position")].toInt(-1);
+    int trackId = params[QStringLiteral("track_id")].toInt(-1);
+    int fontSize = params[QStringLiteral("font_size")].toInt(56);
+    QString fontFamily = params[QStringLiteral("font_family")].toString(QStringLiteral("DejaVu Sans"));
+    int safeMarginPercent = params[QStringLiteral("safe_margin_percent")].toInt(80);
 
-    // Title generation requires creating a title clip via the bin.
-    // For now, emit result indicating it's staged.
-    Q_EMIT executionFinished(
-        i18n("Title card '%1' (style: %2, duration: %3 frames) — queued for insertion at frame %4.",
-             text, style, durationFrames, position), true);
+    // Dynamic 60/30/10 Color Rule parser
+    auto parseHexOrRgba = [](const QString &str, const QColor &defaultColor) -> QColor {
+        if (str.isEmpty()) return defaultColor;
+        QString s = str.trimmed();
+        if (s.startsWith(QLatin1Char('#'))) {
+            QColor c(s);
+            if (c.isValid()) return c;
+        }
+        if (s.contains(QLatin1Char(','))) {
+            QStringList parts = s.split(QLatin1Char(','));
+            if (parts.size() >= 3) {
+                int r = parts[0].trimmed().toInt();
+                int g = parts[1].trimmed().toInt();
+                int b = parts[2].trimmed().toInt();
+                int a = (parts.size() >= 4) ? parts[3].trimmed().toInt() : 255;
+                return QColor(r, g, b, a);
+            }
+        }
+        QColor c(s);
+        return c.isValid() ? c : defaultColor;
+    };
+
+    auto colStr = [](const QColor &c) {
+        return QStringLiteral("%1,%2,%3,%4").arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.alpha());
+    };
+
+    // 60% Dominant: Background card/glass
+    QColor dominantCol = parseHexOrRgba(params[QStringLiteral("color_dominant")].toString(), QColor(20, 20, 24, 210));
+    // 30% Secondary: Card border & subtext
+    QColor secondaryCol = parseHexOrRgba(params[QStringLiteral("color_secondary")].toString(), QColor(220, 220, 225, 255));
+    // 10% Accent: Main punchy title text
+    QColor accentCol = parseHexOrRgba(params[QStringLiteral("color_accent")].toString(), QColor(255, 195, 30, 255));
+
+    // Mathematical resolution awareness
+    int frameWidth = 1920;
+    int frameHeight = 1080;
+    if (pCore && pCore->getCurrentProfile()) {
+        frameWidth = pCore->getCurrentProfile()->width();
+        frameHeight = pCore->getCurrentProfile()->height();
+    }
+    if (frameWidth <= 0) frameWidth = 1920;
+    if (frameHeight <= 0) frameHeight = 1080;
+
+    // 80% Title Safe Boundary (10% margins)
+    double safeMargin = (100.0 - qBound(50, safeMarginPercent, 95)) / 200.0;
+    double safeLeft = frameWidth * safeMargin;
+    double safeRight = frameWidth * (1.0 - safeMargin);
+    double safeTop = frameHeight * safeMargin;
+    double safeBottom = frameHeight * (1.0 - safeMargin);
+    double safeWidth = safeRight - safeLeft;
+    double safeHeight = safeBottom - safeTop;
+
+    double scale = frameHeight / 1080.0;
+    int actualFontSize = qRound(fontSize * scale);
+    int actualSubFontSize = qRound(actualFontSize * 0.55);
+
+    double approxCharW = actualFontSize * 0.55;
+    double textW = text.length() * approxCharW;
+    double subW = subtext.isEmpty() ? 0.0 : (subtext.length() * actualSubFontSize * 0.55);
+    double contentW = qMax(textW, subW);
+
+    double boxPaddingX = 36.0 * scale;
+    double boxPaddingY = 20.0 * scale;
+    double boxWidth = qMin(contentW + boxPaddingX * 2.0, safeWidth);
+    double titleHeight = actualFontSize * 1.35;
+    double subHeight = subtext.isEmpty() ? 0.0 : (actualSubFontSize * 1.35 + 8.0 * scale);
+    double boxHeight = qMin(titleHeight + subHeight + boxPaddingY * 2.0, safeHeight);
+
+    double boxX = safeLeft;
+    double boxY = safeBottom - boxHeight;
+
+    if (placement == QStringLiteral("lower_third") || placement == QStringLiteral("lower_third_left")) {
+        boxX = safeLeft;
+        boxY = frameHeight * 0.74;
+    } else if (placement == QStringLiteral("lower_third_center") || placement == QStringLiteral("lower_third_mid")) {
+        boxX = (frameWidth - boxWidth) / 2.0;
+        boxY = frameHeight * 0.74;
+    } else if (placement == QStringLiteral("lower_third_right")) {
+        boxX = safeRight - boxWidth;
+        boxY = frameHeight * 0.74;
+    } else if (placement == QStringLiteral("upper_third") || placement == QStringLiteral("top_third")) {
+        boxX = (frameWidth - boxWidth) / 2.0;
+        boxY = frameHeight * 0.20;
+    } else if (placement == QStringLiteral("center") || placement == QStringLiteral("middle")) {
+        boxX = (frameWidth - boxWidth) / 2.0;
+        boxY = (frameHeight - boxHeight) / 2.0;
+    } else if (placement == QStringLiteral("rule_of_thirds_tl")) {
+        boxX = safeLeft;
+        boxY = (frameHeight * 0.333) - (boxHeight / 2.0);
+    } else if (placement == QStringLiteral("rule_of_thirds_tr")) {
+        boxX = safeRight - boxWidth;
+        boxY = (frameHeight * 0.333) - (boxHeight / 2.0);
+    } else if (placement == QStringLiteral("rule_of_thirds_bl")) {
+        boxX = safeLeft;
+        boxY = (frameHeight * 0.667) - (boxHeight / 2.0);
+    } else if (placement == QStringLiteral("rule_of_thirds_br")) {
+        boxX = safeRight - boxWidth;
+        boxY = (frameHeight * 0.667) - (boxHeight / 2.0);
+    }
+
+    // Clamp to 80% Title Safe boundary
+    if (boxX < safeLeft) boxX = safeLeft;
+    if (boxX + boxWidth > safeRight) boxX = safeRight - boxWidth;
+    if (boxY < safeTop) boxY = safeTop;
+    if (boxY + boxHeight > safeBottom) boxY = safeBottom - boxHeight;
+
+    // Generate Kdenlive Title XML
+    QDomDocument doc;
+    QDomElement root = doc.createElement(QStringLiteral("kdenlivetitle"));
+    root.setAttribute(QStringLiteral("width"), frameWidth);
+    root.setAttribute(QStringLiteral("height"), frameHeight);
+    root.setAttribute(QStringLiteral("LC_NUMERIC"), QStringLiteral("C"));
+    doc.appendChild(root);
+
+    // 1. Backing Rectangle Item (60% dominant background, 30% secondary border)
+    QDomElement rectItem = doc.createElement(QStringLiteral("item"));
+    rectItem.setAttribute(QStringLiteral("type"), QStringLiteral("QGraphicsRectItem"));
+    rectItem.setAttribute(QStringLiteral("z-index"), 0);
+
+    QDomElement rectPos = doc.createElement(QStringLiteral("position"));
+    rectPos.setAttribute(QStringLiteral("x"), QString::number(qRound(boxX)));
+    rectPos.setAttribute(QStringLiteral("y"), QString::number(qRound(boxY)));
+    rectItem.appendChild(rectPos);
+
+    QDomElement rectContent = doc.createElement(QStringLiteral("content"));
+    rectContent.setAttribute(QStringLiteral("rect"), QStringLiteral("0,0,%1,%2").arg(qRound(boxWidth)).arg(qRound(boxHeight)));
+    rectContent.setAttribute(QStringLiteral("pencolor"), colStr(secondaryCol));
+    rectContent.setAttribute(QStringLiteral("penwidth"), 2);
+    rectContent.setAttribute(QStringLiteral("brushcolor"), colStr(dominantCol));
+    rectContent.setAttribute(QStringLiteral("cornerRadius"), 8);
+    rectItem.appendChild(rectContent);
+    root.appendChild(rectItem);
+
+    // 2. Main Title Text Item (10% Accent Color)
+    QDomElement textItem = doc.createElement(QStringLiteral("item"));
+    textItem.setAttribute(QStringLiteral("type"), QStringLiteral("QGraphicsTextItem"));
+    textItem.setAttribute(QStringLiteral("z-index"), 1);
+
+    QDomElement textPos = doc.createElement(QStringLiteral("position"));
+    textPos.setAttribute(QStringLiteral("x"), QString::number(qRound(boxX + boxPaddingX)));
+    textPos.setAttribute(QStringLiteral("y"), QString::number(qRound(boxY + boxPaddingY)));
+    textItem.appendChild(textPos);
+
+    QDomElement textContent = doc.createElement(QStringLiteral("content"));
+    textContent.setAttribute(QStringLiteral("font"), fontFamily);
+    textContent.setAttribute(QStringLiteral("font-weight"), 700);
+    textContent.setAttribute(QStringLiteral("font-pixel-size"), actualFontSize);
+    textContent.setAttribute(QStringLiteral("font-color"), colStr(accentCol));
+    textContent.setAttribute(QStringLiteral("font-outline"), 2);
+    textContent.setAttribute(QStringLiteral("font-outline-color"), QStringLiteral("0,0,0,255"));
+    textContent.setAttribute(QStringLiteral("box-width"), QString::number(qRound(boxWidth - boxPaddingX * 2.0)));
+    textContent.setAttribute(QStringLiteral("box-height"), QString::number(qRound(titleHeight)));
+    textContent.setAttribute(QStringLiteral("alignment"), 1);
+    textContent.appendChild(doc.createTextNode(text));
+    textItem.appendChild(textContent);
+    root.appendChild(textItem);
+
+    // 3. Subtext (if present, 30% Secondary Color)
+    if (!subtext.isEmpty()) {
+        QDomElement subItem = doc.createElement(QStringLiteral("item"));
+        subItem.setAttribute(QStringLiteral("type"), QStringLiteral("QGraphicsTextItem"));
+        subItem.setAttribute(QStringLiteral("z-index"), 2);
+
+        QDomElement subPos = doc.createElement(QStringLiteral("position"));
+        subPos.setAttribute(QStringLiteral("x"), QString::number(qRound(boxX + boxPaddingX)));
+        subPos.setAttribute(QStringLiteral("y"), QString::number(qRound(boxY + boxPaddingY + titleHeight + 6.0 * scale)));
+        subItem.appendChild(subPos);
+
+        QDomElement subContent = doc.createElement(QStringLiteral("content"));
+        subContent.setAttribute(QStringLiteral("font"), fontFamily);
+        subContent.setAttribute(QStringLiteral("font-weight"), 400);
+        subContent.setAttribute(QStringLiteral("font-pixel-size"), actualSubFontSize);
+        subContent.setAttribute(QStringLiteral("font-color"), colStr(secondaryCol));
+        subContent.setAttribute(QStringLiteral("font-outline"), 1);
+        subContent.setAttribute(QStringLiteral("font-outline-color"), QStringLiteral("0,0,0,200"));
+        subContent.setAttribute(QStringLiteral("box-width"), QString::number(qRound(boxWidth - boxPaddingX * 2.0)));
+        subContent.setAttribute(QStringLiteral("box-height"), QString::number(qRound(subHeight)));
+        subContent.setAttribute(QStringLiteral("alignment"), 1);
+        subContent.appendChild(doc.createTextNode(subtext));
+        subItem.appendChild(subContent);
+        root.appendChild(subItem);
+    }
+
+    QDomElement bg = doc.createElement(QStringLiteral("background"));
+    bg.setAttribute(QStringLiteral("color"), QStringLiteral("0,0,0,0"));
+    root.appendChild(bg);
+
+    std::unordered_map<QString, QString> properties;
+    properties[QStringLiteral("xmldata")] = doc.toString();
+    properties[QStringLiteral("kdenlive:clipname")] = text;
+
+    auto model = pCore->projectItemModel();
+    if (!model) {
+        Q_EMIT executionFinished(i18n("Cannot create title: Project item model is unavailable."), false);
+        return;
+    }
+
+    auto readyCallback = [this, position, trackId, text, placement](const QString &binId) {
+        if (binId.isEmpty() || binId == QStringLiteral("-1")) {
+            Q_EMIT executionFinished(i18n("Failed to add title card to project bin."), false);
+            return;
+        }
+        auto tm = getTimelineModel();
+        if (!tm) {
+            Q_EMIT executionFinished(i18n("Title card '%1' created in bin (ID %2), but timeline is unavailable.").arg(text, binId), true);
+            return;
+        }
+        int targetTrack = trackId;
+        if (targetTrack < 0) {
+            for (int tid : tm->getAllTracksIds()) {
+                if (!tm->isAudioTrack(tid)) {
+                    if (targetTrack < 0 || tid > targetTrack) {
+                        targetTrack = tid;
+                    }
+                }
+            }
+        }
+        int targetPos = position;
+        if (targetPos < 0) {
+            targetPos = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
+        }
+        int newClipId = -1;
+        bool ok = tm->requestClipInsertion(binId, targetTrack, targetPos, newClipId, true, true, false);
+        if (ok) {
+            QJsonObject out;
+            out[QStringLiteral("clip_id")] = newClipId;
+            out[QStringLiteral("bin_id")] = binId;
+            out[QStringLiteral("track_id")] = targetTrack;
+            out[QStringLiteral("position")] = targetPos;
+            Q_EMIT dataOutput(QStringLiteral("insert_title"), out);
+            Q_EMIT executionFinished(i18n("Created and inserted title '%1' (Placement: %2, 60/30/10 colors applied, Title-Safe verified) onto track %3 at frame %4 (Clip ID: %5).").arg(text, placement).arg(targetTrack).arg(targetPos).arg(newClipId), true);
+        } else {
+            Q_EMIT executionFinished(i18n("Created title card in bin (%1) but could not insert onto track %2 at frame %3.").arg(binId).arg(targetTrack).arg(targetPos), false);
+        }
+    };
+
+    ClipCreator::createTitleClip(properties, durationFrames, text, QString(), model, readyCallback);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1778,17 +2092,26 @@ void AICommandRouter::handleViewTimelineFrames(const QJsonObject &params)
     QString primaryBase64;
     QJsonObject primaryMetrics;
 
+    auto tm = getTimelineModel();
+    int w = pCore->getCurrentProfile()->width();
+    int h = pCore->getCurrentProfile()->height();
+
     for (int f : framesToCapture) {
         QString framePath = QStringLiteral("%1/ai_frame_%2.png").arg(tmpDir).arg(f);
-        pCore->seekMonitor(Kdenlive::ProjectMonitor, f);
-        projMon->extractFrame(framePath);
-
-        QImage img(framePath);
-        if (img.isNull() && projMon->getControllerProxy()) {
-            img = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
-            if (!img.isNull()) {
-                img.save(framePath);
+        QImage img;
+        if (tm && tm->producer()) {
+            img = KThumb::getFrame(tm->producer().get(), f, w, h);
+        }
+        if (img.isNull()) {
+            pCore->seekMonitor(Kdenlive::ProjectMonitor, f);
+            projMon->extractFrame(framePath);
+            img.load(framePath);
+            if (img.isNull() && projMon->getControllerProxy()) {
+                img = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
             }
+        }
+        if (!img.isNull()) {
+            img.save(framePath);
         }
 
         QJsonObject fObj;
@@ -1839,13 +2162,24 @@ void AICommandRouter::handleVerifyEditVisually(const QJsonObject &params)
     QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     QString currentFramePath = QStringLiteral("%1/verify_current_%2.png").arg(tmpDir).arg(frame);
 
-    // 1. Capture current edited frame
-    pCore->seekMonitor(Kdenlive::ProjectMonitor, frame);
-    projMon->extractFrame(currentFramePath);
-    QImage currentImg(currentFramePath);
-    if (currentImg.isNull() && projMon->getControllerProxy()) {
-        currentImg = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
-        if (!currentImg.isNull()) currentImg.save(currentFramePath);
+    // 1. Capture current edited frame synchronously from timeline tractor
+    auto tm = getTimelineModel();
+    int w = pCore->getCurrentProfile()->width();
+    int h = pCore->getCurrentProfile()->height();
+    QImage currentImg;
+    if (tm && tm->producer()) {
+        currentImg = KThumb::getFrame(tm->producer().get(), frame, w, h);
+    }
+    if (currentImg.isNull()) {
+        pCore->seekMonitor(Kdenlive::ProjectMonitor, frame);
+        projMon->extractFrame(currentFramePath);
+        currentImg.load(currentFramePath);
+        if (currentImg.isNull() && projMon->getControllerProxy()) {
+            currentImg = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
+        }
+    }
+    if (!currentImg.isNull()) {
+        currentImg.save(currentFramePath);
     }
 
     QJsonObject currentMetrics = analyzeImageMetrics(currentImg);
@@ -1855,12 +2189,19 @@ void AICommandRouter::handleVerifyEditVisually(const QJsonObject &params)
     QString refFramePath;
     if (refFrame >= 0) {
         refFramePath = QStringLiteral("%1/verify_ref_%2.png").arg(tmpDir).arg(refFrame);
-        pCore->seekMonitor(Kdenlive::ProjectMonitor, refFrame);
-        projMon->extractFrame(refFramePath);
-        refImg = QImage(refFramePath);
-        if (refImg.isNull() && projMon->getControllerProxy()) {
-            refImg = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
-            if (!refImg.isNull()) refImg.save(refFramePath);
+        if (tm && tm->producer()) {
+            refImg = KThumb::getFrame(tm->producer().get(), refFrame, w, h);
+        }
+        if (refImg.isNull()) {
+            pCore->seekMonitor(Kdenlive::ProjectMonitor, refFrame);
+            projMon->extractFrame(refFramePath);
+            refImg.load(refFramePath);
+            if (refImg.isNull() && projMon->getControllerProxy()) {
+                refImg = projMon->getControllerProxy()->extractFrame(QString(), -1, -1);
+            }
+        }
+        if (!refImg.isNull()) {
+            refImg.save(refFramePath);
         }
         // Return playhead to original verification frame
         pCore->seekMonitor(Kdenlive::ProjectMonitor, frame);
@@ -3409,6 +3750,8 @@ void AICommandRouter::handleDetectScenes(const QJsonObject &params)
     int clipIn = tm->getClipIn(clipId);
     int clipPlaytime = tm->getClipPlaytime(clipId);
 
+    int trackId = tm->getClipTrackId(clipId);
+
     for (int i = 0; i < scenes.size(); ++i) {
         QJsonObject scene = scenes[i].toObject();
         int sFrame = scene[QStringLiteral("start_frame")].toInt();
@@ -3425,7 +3768,9 @@ void AICommandRouter::handleDetectScenes(const QJsonObject &params)
         // Apply cut at boundary if within clip bounds and not at the very start
         if (applyCuts && i > 0) {
             if (timelinePos > clipStart && timelinePos < clipStart + clipPlaytime) {
-                if (TimelineFunctions::requestClipCut(tm, clipId, timelinePos)) {
+                int targetCutClipId = (trackId >= 0) ? tm->getClipByPosition(trackId, timelinePos) : clipId;
+                if (targetCutClipId < 0) targetCutClipId = clipId;
+                if (TimelineFunctions::requestClipCut(tm, targetCutClipId, timelinePos)) {
                     cutsApplied++;
                 }
             }

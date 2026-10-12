@@ -38,6 +38,8 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QStandardPaths>
+#include <QBuffer>
+#include <QImage>
 #include <QTextStream>
 #include <QCoreApplication>
 #include <QProcessEnvironment>
@@ -350,9 +352,10 @@ QString AIDispatcher::buildEditorStateSnapshot()
             // Compute active clip(s) under playhead cursor right now:
             int mainClipUnderCursor = -1;
             QStringList activeClipsUnderCursor;
-            int trackCount = tm->getTracksCount();
-            for (int i = 0; i < trackCount; i++) {
-                int tid = tm->getTrackIndexFromPosition(i);
+            const auto trackIds = tm->getAllTracksIds();
+            int trackCount = trackIds.size();
+            for (int tid : trackIds) {
+                if (tid < 0 || !tm->isTrack(tid)) continue;
                 int cid = tm->getClipByPosition(tid, playheadPos);
                 if (cid >= 0 && tm->isClip(cid)) {
                     if (mainClipUnderCursor < 0) mainClipUnderCursor = cid;
@@ -365,10 +368,12 @@ QString AIDispatcher::buildEditorStateSnapshot()
 
             // Track summary
             state += QStringLiteral("tracks=%1\n").arg(trackCount);
-            for (int i = 0; i < trackCount && i < 20; i++) {
-                int tid = tm->getTrackIndexFromPosition(i);
+            int trackIdx = 0;
+            for (int tid : trackIds) {
+                if (trackIdx >= 20) break;
+                if (tid < 0 || !tm->isTrack(tid)) continue;
                 state += QStringLiteral("  track[%1] id=%2 name=\"%3\" audio=%4\n")
-                    .arg(i).arg(tid)
+                    .arg(trackIdx++).arg(tid)
                     .arg(tm->getTrackFullName(tid))
                     .arg(tm->isAudioTrack(tid) ? QStringLiteral("yes") : QStringLiteral("no"));
             }
@@ -388,11 +393,12 @@ QString AIDispatcher::buildEditorStateSnapshot()
                 QString binId;
             };
             std::vector<ClipSummary> allClips;
-            for (int i = 0; i < trackCount; i++) {
-                int tid = tm->getTrackIndexFromPosition(i);
+            for (int tid : trackIds) {
+                if (tid < 0 || !tm->isTrack(tid)) continue;
                 auto cids = tm->getTrackClips(tid);
                 QString trackName = tm->getTrackFullName(tid);
                 for (int cid : cids) {
+                    if (cid < 0 || !tm->isClip(cid)) continue;
                     auto inOut = tm->getClipInOut(cid);
                     allClips.push_back({
                         cid,
@@ -701,7 +707,7 @@ void AIDispatcher::sendPrompt(const QString &prompt, const QString &targetEngine
     sendCurrentMessages();
 }
 
-void AIDispatcher::feedObservationAndContinue(const QString &actionName, const QString &observationResult, bool success)
+void AIDispatcher::feedObservationAndContinue(const QString &actionName, const QString &observationResult, bool success, const QString &imagePath)
 {
     if (!m_goalActive) {
         return;
@@ -737,6 +743,9 @@ void AIDispatcher::feedObservationAndContinue(const QString &actionName, const Q
         QJsonObject resObj;
         resObj[QStringLiteral("success")] = success;
         resObj[QStringLiteral("message")] = compactedObservation;
+        if (!imagePath.isEmpty() && QFile::exists(imagePath)) {
+            resObj[QStringLiteral("image_path")] = imagePath;
+        }
         resp[QStringLiteral("result")] = resObj;
 
         QJsonDocument doc(resp);
@@ -757,13 +766,48 @@ void AIDispatcher::feedObservationAndContinue(const QString &actionName, const Q
     // Item B: Dynamic context compaction check before inserting observation
     maybeCompactConversation();
 
-    // Append observation message with live timeline snapshot
+    // Append observation message with live timeline snapshot & visual image attachment
     QJsonObject obsMsg;
     obsMsg[QStringLiteral("role")] = QStringLiteral("user");
-    obsMsg[QStringLiteral("content")] = QStringLiteral(
+
+    QString textPrompt = QStringLiteral(
         "[Tool Observation: '%1'] Status: %2\nResult: %3\n\nUpdated Timeline State:\n%4\n\n"
         "Continue towards achieving user goal: \"%5\". Take the next step or conclude if complete."
     ).arg(actionName, success ? QStringLiteral("Success") : QStringLiteral("Failed"), compactedObservation, buildEditorStateSnapshot(), m_currentGoal);
+
+    if (!imagePath.isEmpty() && QFile::exists(imagePath)) {
+        QImage img(imagePath);
+        if (!img.isNull()) {
+            if (img.width() > 1024 || img.height() > 1024) {
+                img = img.scaled(1024, 1024, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            }
+            QByteArray jpegBa;
+            QBuffer buf(&jpegBa);
+            buf.open(QIODevice::WriteOnly);
+            img.save(&buf, "JPEG", 75);
+            QString b64 = QString::fromLatin1(jpegBa.toBase64());
+
+            QJsonArray contentArray;
+            QJsonObject textPart;
+            textPart[QStringLiteral("type")] = QStringLiteral("text");
+            textPart[QStringLiteral("text")] = textPrompt;
+            contentArray.append(textPart);
+
+            QJsonObject imgPart;
+            imgPart[QStringLiteral("type")] = QStringLiteral("image_url");
+            QJsonObject urlObj;
+            urlObj[QStringLiteral("url")] = QStringLiteral("data:image/jpeg;base64,%1").arg(b64);
+            imgPart[QStringLiteral("image_url")] = urlObj;
+            contentArray.append(imgPart);
+
+            obsMsg[QStringLiteral("content")] = contentArray;
+            qDebug() << "[AIDispatcher] Multimodal snapshot image attached to observation for" << actionName << "base64 size:" << b64.length() << "bytes";
+        } else {
+            obsMsg[QStringLiteral("content")] = textPrompt;
+        }
+    } else {
+        obsMsg[QStringLiteral("content")] = textPrompt;
+    }
     m_conversationMessages.append(obsMsg);
 
     sendCurrentMessages();
@@ -1108,7 +1152,16 @@ void AIDispatcher::maybeCompactConversation()
         QJsonObject obj = val.toObject();
         agent_cpp::common_chat_msg msg;
         msg.role = obj[QStringLiteral("role")].toString().toStdString();
-        msg.content = obj[QStringLiteral("content")].toString().toStdString();
+        if (obj[QStringLiteral("content")].isString()) {
+            msg.content = obj[QStringLiteral("content")].toString().toStdString();
+        } else if (obj[QStringLiteral("content")].isArray()) {
+            QJsonArray parts = obj[QStringLiteral("content")].toArray();
+            for (const auto &p : parts) {
+                if (p.toObject()[QStringLiteral("type")].toString() == QStringLiteral("text")) {
+                    msg.content += p.toObject()[QStringLiteral("text")].toString().toStdString();
+                }
+            }
+        }
         cppMessages.push_back(msg);
     }
 
@@ -1250,6 +1303,7 @@ void AIDispatcher::processSocketLine(const QByteArray &line)
         QJsonObject payload = params;
         payload[QStringLiteral("action")] = action;
 
+        m_currentStep++;
         Q_EMIT goalStepStarted(m_currentStep, m_maxSteps, action);
         Q_EMIT responseReceived(QStringLiteral("Executing action: %1").arg(action), payload);
     } else if (type == QStringLiteral("run_complete")) {
@@ -1269,6 +1323,9 @@ void AIDispatcher::processSocketLine(const QByteArray &line)
         Q_EMIT requestFinished();
     } else if (type == QStringLiteral("run_error")) {
         m_goalActive = false;
+        qint64 latency = m_requestTimer.elapsed();
+        int tokens = qMax(1, m_lastPrompt.length() / 4);
+        Q_EMIT metricsUpdated(tokens, latency, m_model);
         QString errStr = msg[QStringLiteral("error")].toString();
         Q_EMIT errorOccurred(errStr);
         Q_EMIT requestFinished();

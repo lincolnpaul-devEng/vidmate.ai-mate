@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, Optional
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from .config import AgentConfig
@@ -24,6 +24,7 @@ from .schemas import (
     DetectScenesArgs,
     GenerateLocalSFXArgs,
     GetEffectParametersArgs,
+    GetNatronNodeParametersArgs,
     InsertClipArgs,
     InsertNatronToolArgs,
     InsertTitleArgs,
@@ -35,6 +36,7 @@ from .schemas import (
     SetClipSpeedArgs,
     SetEditorialStyleArgs,
     SetEffectParameterArgs,
+    SetNatronNodeParameterArgs,
     SetVolumeArgs,
     TrackObjectArgs,
     TrimClipArgs,
@@ -57,6 +59,14 @@ class KdenliveDeps:
 
 SYSTEM_PROMPT = """You are VidMate AI-Mate, an elite master video editor and compositing director embedded directly inside Kdenlive with in-process Natron compositing.
 You do not edit like a blind script robot; you edit with the intentionality, taste, rhythm, and visual design standards of a master post-production director.
+
+# ABSOLUTE RULE — AUTONOMOUS AGENT EXECUTION (NOT A CONVERSATIONAL CHATBOT):
+- You are NOT a passive conversational chatbot. You are an autonomous software editing agent operating a live Kdenlive workstation.
+- When the user gives an editing request (e.g. cut, split, add title, apply effect, color grade, adjust volume, sync beats), you must IMMEDIATELY invoke the appropriate tools to perform the work.
+- NEVER reply with conversational filler (e.g. "Sure! I can help you with that", "I would be happy to...", "First, you could consider...").
+- NEVER describe what you intend to do in text without actually invoking the corresponding tools.
+- Every editing request MUST trigger real tool actions that modify or inspect the timeline.
+- After all tool actions execute and are visually verified on the timeline, return a concise, professional markdown summary of what was completed.
 
 # MASTER EDITORIAL WORKFLOW (THE 8-PHASE DIRECTIVE):
 Every video project is unique in theme, pace, color, and audience. Always adapt dynamically to the user's footage and genre rather than applying a rigid, one-size-fits-all formula. Progress through these editorial stages:
@@ -81,22 +91,35 @@ Every video project is unique in theme, pace, color, and audience. Always adapt 
      * Check `selected=[...]` for user-selected clips.
      * Check `<timeline_clips count=...>` for the complete list of all clips: `[clip <id>] track=<tid> ("<track_name>") "<filename>" @<start> +<duration>f (in=<in> out=<out>)`.
    - When user asks to cut, trim, or apply effects to "the video" or "the clip", target `active_clip_id` or the selected clip ID.
-   - NEVER call `cut_at_playhead` at frame 0 unless a clip starts at 0 and needs cutting there. Cut strictly within `[clip.start, clip.start + clip.duration]`.
-   - If user asks to "cut the video and detect scenes", DO NOT guess frame cuts manually. Call `detect_scenes(clip_id=...)` on the active clip!
-   - When cutting or applying effects, specify the exact target `clip_id` or seek the playhead (`seek_to`) to the target frame first.
+   - NEVER blindly seek to frame 0 or verify frame 0 unless a clip actually covers frame 0!
+     * Check the clip's `@<start>` position in `<timeline_clips>`. If the footage begins at frame 5, frame 0 is an empty black gap.
+     * Always seek to a valid frame inside the clip (e.g. `start + 15` or the clip's midpoint `start + duration // 2`).
+   - If user asks to "detect scenes" or "split scenes":
+     * Call `detect_scenes(clip_id=...)` with the target clip ID.
+     * If PySceneDetect returns "detected 1 scene(s), applied 0 cuts", this means the footage is a SINGLE CONTINUOUS TAKE without visual cuts!
+     * DO NOT repeatedly call `detect_scenes` in a loop.
+     * Immediately report to the user that the footage is a single uncut continuous take, OR if the user asked to split/segment it, proceed to split the clip into rhythmic intervals (e.g. every 3-4 seconds: frame 120, 240, 360) using `cut_at_playhead`.
+     * Inspect `<timeline_clips count=...>` to confirm that cuts exist before concluding.
 
-2. **MANDATORY TWO-WAY EFFECT INSPECTION**:
+2. **MANDATORY TWO-WAY EFFECT & VFX INSPECTION**:
    - Before tweaking effect parameters (such as `triplevel`, `diffspace`, `radius`, `gain`), call `get_effect_parameters` first to inspect the live slider names, ranges, and current values, then invoke `set_effect_parameter`.
+   - When manipulating Natron compositing nodes (e.g. `Grade1`, `Blur1`, `Transform1`, `Tracker1`), call `get_natron_node_parameters` first to inspect active node IDs and tunable knobs, then use `set_natron_node_parameter` to adjust knobs.
 
-3. **DYNAMIC STYLE & CREATIVE FREEDOM**:
+3. **MATHEMATICAL VISUAL LAYOUT & TITLE CARDS**:
+   - When creating titles or lower thirds via `insert_title`, always leverage the Mathematical Visual Layout Engine:
+     * Choose an appropriate `placement` (`lower_third`, `upper_third`, `center`, `rule_of_thirds_tl`, etc.).
+     * Respect the 60/30/10 Color Rule: pass `color_dominant` (60% backdrop), `color_secondary` (30% border/subtext), and `color_accent` (10% title highlight) tailored dynamically to the footage aesthetic.
+     * The engine automatically enforces the 80% Title Safe boundary and Rule of Thirds geometric snapping.
+
+4. **DYNAMIC STYLE & CREATIVE FREEDOM**:
    - You can call `set_editorial_style` to define or adjust the project's pacing, color palette, and font direction for the session based on user intent.
    - Adapt freely to any genre: Talking Head, Gaming, Documentary, Music Video, Cinematic Short, SaaS Product Demo, or Social Ad.
 
-4. **CRITIC & VERIFY**:
+5. **CRITIC & VERIFY**:
    - When calling `verify_edit_visually`, check the observation. If it reports `WARNING (Black frame detected)` or unexpected results, DO NOT declare success! Investigate: did you seek to an empty frame? Was the clip ID wrong? Correct your parameters immediately.
    - If any tool returns an error, read the error, adjust parameters, and fix it.
 
-5. **FINAL PROFESSIONAL SUMMARY**:
+6. **FINAL PROFESSIONAL SUMMARY**:
    - When all edits are completed, provide a concise, structured markdown summary:
      * **Editorial Style & Pacing**: State the creative direction and pacing rhythm used.
      * **Clips Cut & Assembled**: List clip IDs, timecodes, and split frames.
@@ -256,11 +279,14 @@ def build_vidmate_agent(
 
     @agent.tool
     async def insert_title(ctx: RunContext[KdenliveDeps], args: InsertTitleArgs) -> str:
-        """Create and place a title clip overlay."""
+        """Create and place a mathematically aligned title card or lower-third overlay enforcing 60/30/10 Color Rule and Rule of Thirds snapping."""
         res = await ctx.deps.call_kdenlive("insert_title", args.model_dump())
         if not res.get("success", False):
             raise ModelRetry(f"insert_title failed: {res.get('error')}.")
-        return f"Created title '{args.text}' on track {args.track} at frame {args.position}."
+        return (
+            f"Created and inserted title '{args.text}' (Placement: {args.placement}, "
+            f"Title-Safe verified) at frame {res.get('position', args.position)} on track {res.get('track_id', args.track_id)}."
+        )
 
     # ─── Natron VFX & Compositing Tools ────────────────────────────────────────
 
@@ -287,6 +313,22 @@ def build_vidmate_agent(
         return f"Inserted Natron node '{args.tool_type}' with connections {args.inputs}."
 
     @agent.tool
+    async def get_natron_node_parameters(ctx: RunContext[KdenliveDeps], args: GetNatronNodeParametersArgs) -> str:
+        """Inspect active nodes and parameter knob values in Natron's in-process compositor node graph."""
+        res = await ctx.deps.call_kdenlive("get_natron_node_parameters", args.model_dump())
+        if not res.get("success", False):
+            raise ModelRetry(f"get_natron_node_parameters failed: {res.get('error')}.")
+        return f"Natron node inspection: {res.get('message', 'Nodes retrieved')}"
+
+    @agent.tool
+    async def set_natron_node_parameter(ctx: RunContext[KdenliveDeps], args: SetNatronNodeParameterArgs) -> str:
+        """Adjust a parameter knob on a node in Natron's in-process compositor node graph (e.g. Grade1.gamma, Blur1.size, Transform1.scale)."""
+        res = await ctx.deps.call_kdenlive("set_natron_node_parameter", args.model_dump())
+        if not res.get("success", False):
+            raise ModelRetry(f"set_natron_node_parameter failed: {res.get('error')}. Inspect active nodes first using get_natron_node_parameters.")
+        return f"Updated Natron node '{args.node_id}' knob '{args.param_name}' to {args.value}."
+
+    @agent.tool
     async def track_object(ctx: RunContext[KdenliveDeps], args: TrackObjectArgs) -> str:
         """Track object or region across frames using OpenCV tracker."""
         res = await ctx.deps.call_kdenlive("track_object", args.model_dump())
@@ -305,13 +347,13 @@ def build_vidmate_agent(
         return f"Seeked playhead to frame {args.position}."
 
     @agent.tool
-    async def verify_edit_visually(ctx: RunContext[KdenliveDeps], args: VerifyEditVisuallyArgs) -> str:
+    async def verify_edit_visually(ctx: RunContext[KdenliveDeps], args: VerifyEditVisuallyArgs) -> list[Any] | str:
         """Inspect the project monitor frame to verify the edit result visually."""
         res = await ctx.deps.call_kdenlive("verify_edit_visually", args.model_dump())
         if not res.get("success", False):
             raise ModelRetry(f"Visual verification failed: {res.get('error')}.")
 
-        obs = res.get("observation", "")
+        obs = res.get("observation", res.get("message", ""))
         status = res.get("status", "")
         # Enforce Critic: If black frame or flaw detected, self-correct!
         if "WARNING" in status or "Black frame detected" in obs or "empty/black" in obs:
@@ -320,10 +362,24 @@ def build_vidmate_agent(
                 "The frame is black or empty. Ensure playhead is within an active clip timeframe on the timeline."
             )
 
-        return (
+        summary_text = (
             f"Visual inspection at frame {args.frame}: {obs or 'Visual matches intent'}. "
-            f"Quality confidence: {res.get('confidence', 'high')}."
+            f"Quality confidence: {res.get('confidence', 'high')}. Inspect the rendered frame below."
         )
+
+        image_path = res.get("image_path") or res.get("path")
+        if image_path:
+            import os
+            if os.path.isfile(image_path):
+                try:
+                    with open(image_path, "rb") as f:
+                        img_bytes = f.read()
+                    mime = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
+                    return [summary_text, BinaryContent(data=img_bytes, media_type=mime)]
+                except Exception:
+                    pass
+
+        return summary_text
 
     @agent.tool
     async def detect_beats(ctx: RunContext[KdenliveDeps], args: DetectBeatsArgs) -> str:

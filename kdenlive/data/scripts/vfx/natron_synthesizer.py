@@ -299,14 +299,43 @@ def render_radial_kinetic_motion_graphic(output_path, width, height, fps, durati
 
 
 def render_lower_third(output_path, width, height, fps, duration, extra_params):
-    """Renders sleek broadcast animated Lower Third on alpha channel."""
+    """Renders sleek broadcast animated Lower Third on alpha channel with dynamic 60/30/10 styling."""
     total_frames = max(1, int(fps * duration))
-    title = str(extra_params.get("title", extra_params.get("title_1", "FEATURE REVEAL")))
-    subtitle = str(extra_params.get("subtitle", extra_params.get("title_2", "VidMate Compositor & VFX Engine")))
-    accent_col = parse_color(extra_params.get("accent_color", "#3DAEE9"), (61, 174, 233, 255))
+    
+    # Extract title and subtitle from parameters, with smart regex extraction from prompt
+    prompt = str(extra_params.get("prompt", ""))
+    title = str(extra_params.get("title", extra_params.get("text", extra_params.get("title_1", "")))).strip()
+    subtitle = str(extra_params.get("subtitle", extra_params.get("subtext", extra_params.get("title_2", "")))).strip()
+    
+    if not title and prompt:
+        import re
+        quotes = re.findall(r"['\"]([^'\"]+)['\"]", prompt)
+        if len(quotes) >= 1:
+            title = quotes[0]
+        if len(quotes) >= 2 and not subtitle:
+            subtitle = quotes[1]
+        elif not subtitle and "subtitle" in prompt.lower():
+            m = re.search(r"subtitle\s+['\"]?([^'\",\.]+)['\"]?", prompt, re.IGNORECASE)
+            if m:
+                subtitle = m.group(1).strip()
+            
+    if not title:
+        title = "Title Overlay"
+        
+    dominant_col = parse_color(extra_params.get("color_dominant", "#141418E6"), (20, 20, 24, 230))
+    secondary_col = parse_color(extra_params.get("color_secondary", "#F1F5F9FF"), (241, 245, 249, 255))
+    accent_col = parse_color(extra_params.get("color_accent", extra_params.get("accent_color", "#38BDF8FF")), (56, 189, 248, 255))
 
     bold_font = get_bold_font(int(height * 0.038))
     reg_font = get_regular_font(int(height * 0.024))
+
+    # Compute bounding box
+    dummy_img = Image.new("RGBA", (100, 100))
+    dummy_draw = ImageDraw.Draw(dummy_img)
+    t_box = dummy_draw.textbbox((0, 0), title, font=bold_font)
+    s_box = dummy_draw.textbbox((0, 0), subtitle, font=reg_font) if subtitle else (0, 0, 0, 0)
+    card_w = max(t_box[2] - t_box[0], s_box[2] - s_box[0]) + 80
+    card_h = (t_box[3] - t_box[1]) + (s_box[3] - s_box[1] + 16 if subtitle else 0) + 40
 
     ffmpeg_cmd = [
         "ffmpeg", "-y",
@@ -322,23 +351,28 @@ def render_lower_third(output_path, width, height, fps, duration, extra_params):
     ]
     proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-    y_pos = int(height * 0.80)
+    x_margin = int(width * 0.08)
+    y_pos = int(height * 0.78)
     for f in range(total_frames):
         img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
         # Entrance wipe from left (0 to 0.4s)
         wipe_t = min(1.0, f / (fps * 0.4))
-        slide_x = int(math.sin(wipe_t * math.pi * 0.5) * 580)
+        cur_w = int(math.sin(wipe_t * math.pi * 0.5) * card_w)
 
-        # Accent bar
-        draw.rectangle([100, y_pos - 8, 100 + slide_x, y_pos + 68], fill=(22, 24, 28, 230))
-        draw.rectangle([100, y_pos - 8, 108, y_pos + 68], fill=accent_col)
+        # 60% Dominant Background card
+        draw.rounded_rectangle([x_margin, y_pos, x_margin + cur_w, y_pos + card_h], radius=10, fill=dominant_col)
+        # 10% Accent Vertical Indicator Bar
+        draw.rounded_rectangle([x_margin, y_pos, x_margin + 8, y_pos + card_h], radius=4, fill=accent_col)
 
         if wipe_t >= 0.7:
             fade_text = int(min(255, (wipe_t - 0.7) / 0.3 * 255))
-            draw.text((124, y_pos - 2), title, fill=(255, 255, 255, fade_text), font=bold_font)
-            draw.text((124, y_pos + 36), subtitle, fill=(190, 205, 220, fade_text), font=reg_font)
+            text_color = (secondary_col[0], secondary_col[1], secondary_col[2], fade_text)
+            draw.text((x_margin + 28, y_pos + 12), title, fill=text_color, font=bold_font)
+            if subtitle:
+                sub_color = (min(255, int(secondary_col[0] * 0.85)), min(255, int(secondary_col[1] * 0.85)), min(255, int(secondary_col[2] * 0.85)), fade_text)
+                draw.text((x_margin + 28, y_pos + 16 + (t_box[3] - t_box[1]) + 8), subtitle, fill=sub_color, font=reg_font)
 
         proc.stdin.write(img.tobytes())
 
@@ -531,14 +565,15 @@ def main():
             pass
 
     pipeline = args.pipeline.lower()
+    prompt = str(extra_params.get("prompt", "")).lower()
     success = False
 
     # 1. YouTube Subscribe Button (only when specifically requested)
-    if ("subscribe" in pipeline or "youtube" in pipeline) and "motion_graphic" not in pipeline:
+    if ("subscribe" in pipeline or "subscribe" in prompt or "youtube" in pipeline) and ("motion_graphic" not in pipeline and "lower" not in prompt):
         success = render_youtube_subscribe(args.output, args.width, args.height, args.fps, args.duration, extra_params)
 
     # 2. Lower Third
-    elif "lower_third" in pipeline or "lowerthird" in pipeline:
+    elif "lower_third" in pipeline or "lowerthird" in pipeline or "lower_third" in prompt or "lower third" in prompt or "lower-third" in prompt:
         success = render_lower_third(args.output, args.width, args.height, args.fps, args.duration, extra_params)
 
     # 3. HUD / Circular Telemetry

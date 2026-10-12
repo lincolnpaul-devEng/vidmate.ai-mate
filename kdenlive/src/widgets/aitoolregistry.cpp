@@ -438,20 +438,28 @@ void AIToolRegistry::registerAllTools()
                 makeParams(props, {QStringLiteral("new_text")}));
     }
 
-    // 16. insert_title — add styled title card
+    // 16. insert_title — add styled title card with Mathematical Visual Layout Engine
     {
         QJsonObject props;
-        props[QStringLiteral("text")] = stringParam(QStringLiteral("Title text."));
-        props[QStringLiteral("style")] = enumParam(
-            QStringLiteral("Visual style preset."),
-            {QStringLiteral("minimal"), QStringLiteral("cinematic"), QStringLiteral("bold"),
-             QStringLiteral("lower_third"), QStringLiteral("full_screen")});
-        props[QStringLiteral("duration_frames")] = intParam(QStringLiteral(
-            "Duration of the title card in frames (default: 90 = 3s at 30fps)."));
-        props[QStringLiteral("position")] = intParam(QStringLiteral(
-            "Frame position on timeline. -1 = at playhead."));
+        props[QStringLiteral("text")] = stringParam(QStringLiteral("Primary title text content."));
+        props[QStringLiteral("subtext")] = stringParam(QStringLiteral("Optional secondary subtitle or speaker attribution."));
+        props[QStringLiteral("placement")] = enumParam(
+            QStringLiteral("Mathematical layout placement rule (Rule of Thirds / Golden Ratio snapping)."),
+            {QStringLiteral("lower_third"), QStringLiteral("lower_third_left"), QStringLiteral("lower_third_center"), QStringLiteral("lower_third_right"),
+             QStringLiteral("upper_third"), QStringLiteral("center"),
+             QStringLiteral("rule_of_thirds_tl"), QStringLiteral("rule_of_thirds_tr"),
+             QStringLiteral("rule_of_thirds_bl"), QStringLiteral("rule_of_thirds_br")});
+        props[QStringLiteral("color_dominant")] = stringParam(QStringLiteral("60% Dominant color for backing card/glass (hex e.g. '#141416e0' or 'rgba(20,20,24,210)')."));
+        props[QStringLiteral("color_secondary")] = stringParam(QStringLiteral("30% Secondary color for card border and subtext (hex e.g. '#dcdcdc')."));
+        props[QStringLiteral("color_accent")] = stringParam(QStringLiteral("10% Accent color for punchy title headline (hex e.g. '#ffbb00', '#3daee9', '#ff4b4b')."));
+        props[QStringLiteral("font_size")] = intParam(QStringLiteral("Base font size in points (default: 56). Dynamically scaled to project resolution."));
+        props[QStringLiteral("font_family")] = stringParam(QStringLiteral("Font family name (default: 'DejaVu Sans')."));
+        props[QStringLiteral("safe_margin_percent")] = intParam(QStringLiteral("Title Safe Boundary constraint percentage (default: 80 for 80% safe zone)."));
+        props[QStringLiteral("duration_frames")] = intParam(QStringLiteral("Duration of the title card in frames (default: 90 = 3s at 30fps)."));
+        props[QStringLiteral("position")] = intParam(QStringLiteral("Frame position on timeline (-1 = at playhead)."));
+        props[QStringLiteral("track_id")] = intParam(QStringLiteral("Video track ID to insert onto (-1 = highest video track)."));
         addTool(QStringLiteral("insert_title"),
-                QStringLiteral("Insert a styled title card or lower-third caption onto the timeline."),
+                QStringLiteral("Insert a mathematically aligned, professional title card or lower-third onto the timeline enforcing the 60/30/10 Color Rule, Rule of Thirds snapping, and 80% Title Safe boundary."),
                 makeParams(props, {QStringLiteral("text")}));
     }
 
@@ -522,6 +530,28 @@ void AIToolRegistry::registerAllTools()
         addTool(QStringLiteral("insert_natron_tool"),
                 QStringLiteral("Insert a Natron VFX compositor node/tool (like Magic Mask, Merge, Grade, Blur, Tracker, Roto, ChromaKeyer, AI Depth Map) into the active video clip pipeline."),
                 makeParams(props, {QStringLiteral("tool_id")}),
+                QStringLiteral("natron"));
+    }
+
+    // 17d. get_natron_node_parameters — inspect active nodes and knob values
+    {
+        QJsonObject props;
+        props[QStringLiteral("node_id")] = stringParam(QStringLiteral("Specific Natron node ID to inspect (e.g. 'Grade1', 'Blur1', 'Tracker1'). Leave empty to list all nodes and their knobs."));
+        addTool(QStringLiteral("get_natron_node_parameters"),
+                QStringLiteral("Inspect active nodes and parameter knob values in Natron's in-process compositor node graph."),
+                makeParams(props, {}),
+                QStringLiteral("natron"));
+    }
+
+    // 17e. set_natron_node_parameter — adjust knob values on any Natron node
+    {
+        QJsonObject props;
+        props[QStringLiteral("node_id")] = stringParam(QStringLiteral("Target Natron node ID (e.g. 'Grade1', 'Blur1', 'Transform1', 'Tracker1')."));
+        props[QStringLiteral("param_name")] = stringParam(QStringLiteral("Parameter knob name (e.g. 'gamma', 'contrast', 'brightness', 'saturation', 'gain', 'size', 'scale', 'rotate', 'key_color')."));
+        props[QStringLiteral("value")] = stringParam(QStringLiteral("New knob parameter value (number or string)."));
+        addTool(QStringLiteral("set_natron_node_parameter"),
+                QStringLiteral("Adjust a parameter knob on a node in Natron's in-process compositor node graph (e.g. tweak color grade gamma, blur size, or transform scale)."),
+                makeParams(props, {QStringLiteral("node_id"), QStringLiteral("param_name"), QStringLiteral("value")}),
                 QStringLiteral("natron"));
     }
 

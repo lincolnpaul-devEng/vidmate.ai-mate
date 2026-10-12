@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -113,14 +113,23 @@ class AddSubtitleArgs(BaseModel):
 
 
 class InsertTitleArgs(BaseModel):
-    """Insert a styled title card or motion graphic text overlay."""
-    text: str = Field(description="Text content.")
-    track: int = Field(description="Track index.")
-    position: int = Field(description="Start frame position.")
-    duration: int = Field(default=120, description="Duration in frames.")
-    font: str = Field(default="Sans Serif", description="Font family.")
-    font_size: int = Field(default=64, description="Font size in points.")
-    color: str = Field(default="#ffffff", description="Hex text color.")
+    """Insert a mathematically aligned title card or lower-third overlay enforcing 60/30/10 Color Rule and Rule of Thirds snapping."""
+    text: str = Field(description="Primary title text content.")
+    subtext: Optional[str] = Field(default=None, description="Optional secondary subtitle or speaker attribution.")
+    placement: Literal[
+        "lower_third", "lower_third_left", "lower_third_center", "lower_third_right",
+        "upper_third", "center",
+        "rule_of_thirds_tl", "rule_of_thirds_tr", "rule_of_thirds_bl", "rule_of_thirds_br"
+    ] = Field(default="lower_third", description="Geometric snapping rule (Rule of Thirds / Golden Ratio).")
+    color_dominant: Optional[str] = Field(default=None, description="60% Dominant color for card backdrop (e.g. '#141416e0').")
+    color_secondary: Optional[str] = Field(default=None, description="30% Secondary color for card border and subtext (e.g. '#dcdcdc').")
+    color_accent: Optional[str] = Field(default=None, description="10% Accent color for punchy title text (e.g. '#ffbb00', '#3daee9', '#ff4b4b').")
+    font_size: int = Field(default=56, description="Base font size in points.")
+    font_family: str = Field(default="DejaVu Sans", description="Font family name.")
+    duration_frames: int = Field(default=90, description="Duration in frames.")
+    position: int = Field(default=-1, description="Start frame on timeline (-1 for playhead cursor).")
+    track_id: int = Field(default=-1, description="Video track ID (-1 for top video track).")
+    safe_margin_percent: int = Field(default=80, description="Title Safe boundary percentage (default 80%).")
 
 
 # ─── Natron VFX & Compositing Models ──────────────────────────────────────────
@@ -138,6 +147,18 @@ class InsertNatronToolArgs(BaseModel):
     tool_type: str = Field(description="Natron node type (e.g. 'Blur', 'Grade', 'Transform', 'Roto').")
     inputs: List[str] = Field(default_factory=list, description="Input node names to connect.")
     properties: Dict[str, Any] = Field(default_factory=dict, description="Node properties.")
+
+
+class GetNatronNodeParametersArgs(BaseModel):
+    """Inspect active nodes and knob parameter values in Natron's in-process compositor node graph."""
+    node_id: Optional[str] = Field(default=None, description="Specific node ID to inspect (e.g. 'Grade1', 'Blur1', 'Tracker1'). Leave None to list all nodes.")
+
+
+class SetNatronNodeParameterArgs(BaseModel):
+    """Adjust a parameter knob on a node in Natron's in-process compositor node graph."""
+    node_id: str = Field(description="Target node ID (e.g. 'Grade1', 'Blur1', 'Transform1', 'Tracker1').")
+    param_name: str = Field(description="Parameter knob name (e.g. 'gamma', 'contrast', 'brightness', 'saturation', 'gain', 'size', 'scale', 'rotate').")
+    value: Any = Field(description="New parameter knob value (number, string, or boolean).")
 
 
 class TrackObjectArgs(BaseModel):

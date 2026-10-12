@@ -111,9 +111,12 @@ class VidMateAgentService:
                         "text": text,
                     })
 
-                usage = result.usage()
+                usage = getattr(result, "usage", None)
+                if callable(usage):
+                    usage = usage()
                 if usage:
-                    total_tokens = (usage.input_tokens or 0) + (usage.output_tokens or 0)
+                    total_tokens = (getattr(usage, "total_tokens", 0) or
+                                    (getattr(usage, "input_tokens", 0) or 0) + (getattr(usage, "output_tokens", 0) or 0))
 
             # Fallback approximate token estimation if provider returns 0
             if total_tokens <= 0:

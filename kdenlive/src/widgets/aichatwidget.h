@@ -240,6 +240,7 @@ private:
     QPushButton *m_refreshModelsBtn{nullptr};
     QLabel *m_modelsStatusLabel{nullptr};
     QString m_lastExecutedActionName;
+    QString m_lastToolImagePath;
 
     // Backend Engines
     AIDispatcher *m_dispatcher{nullptr};

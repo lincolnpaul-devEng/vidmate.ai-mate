@@ -1865,17 +1865,20 @@ void AIChatWidget::slotExecutionFinished(const QString &resultMessage, bool succ
                                 resultMessage.contains(QStringLiteral("Black frame detected"), Qt::CaseInsensitive) ||
                                 resultMessage.contains(QStringLiteral("empty/black"), Qt::CaseInsensitive);
 
+        QString imgPathToPass = m_lastToolImagePath;
+        m_lastToolImagePath.clear();
+
         if (!success || isWarningOrBlack) {
             QString criticWarning = QStringLiteral(
                 "CRITIC WARNING: Step '%1' failed or has visual flaws: %2. "
                 "YOU CANNOT CONCLUDE. Self-correct your parameters, target a valid active clip timeframe, "
                 "or seek the playhead to a valid frame now."
             ).arg(action, resultMessage);
-            m_dispatcher->feedObservationAndContinue(action, criticWarning, false);
+            m_dispatcher->feedObservationAndContinue(action, criticWarning, false, imgPathToPass);
             return;
         }
 
-        m_dispatcher->feedObservationAndContinue(action, resultMessage, success);
+        m_dispatcher->feedObservationAndContinue(action, resultMessage, success, imgPathToPass);
     }
 }
 
@@ -1918,6 +1921,7 @@ void AIChatWidget::slotToolDataOutput(const QString &toolName, const QJsonObject
         QString imgPath = data[QStringLiteral("path")].toString();
         QString compPath = data[QStringLiteral("comparison_path")].toString();
         QString displayPath = !compPath.isEmpty() ? compPath : imgPath;
+        m_lastToolImagePath = displayPath;
         QJsonObject metrics = data[QStringLiteral("metrics")].toObject();
         QString status = data[QStringLiteral("status")].toString(QStringLiteral("passed"));
         int lum = metrics[QStringLiteral("avg_brightness_percent")].toInt(50);

@@ -489,15 +489,27 @@ int TimelineModel::getClipByPosition(int trackId, int position, int playlistOrLa
         Q_ASSERT(playlistOrLayer > -1);
         return getSubtitleByPosition(playlistOrLayer, position);
     }
-    Q_ASSERT(isTrack(trackId));
-    return getTrackById_const(trackId)->getClipByPosition(position, playlistOrLayer);
+    if (trackId < 0 || !isTrack(trackId)) {
+        return -1;
+    }
+    auto track = getTrackById_const(trackId);
+    if (!track) {
+        return -1;
+    }
+    return track->getClipByPosition(position, playlistOrLayer);
 }
 
 int TimelineModel::getCompositionByPosition(int trackId, int position) const
 {
     READ_LOCK();
-    Q_ASSERT(isTrack(trackId));
-    return getTrackById_const(trackId)->getCompositionByPosition(position);
+    if (trackId < 0 || !isTrack(trackId)) {
+        return -1;
+    }
+    auto track = getTrackById_const(trackId);
+    if (!track) {
+        return -1;
+    }
+    return track->getCompositionByPosition(position);
 }
 
 int TimelineModel::getSubtitleByStartPosition(int layer, int position) const
