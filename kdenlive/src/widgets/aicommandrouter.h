@@ -58,6 +58,7 @@ private:
     void handleAddTrack(const QJsonObject &params);
     void handleAddTransition(const QJsonObject &params);
     void handleAddMix(const QJsonObject &params);
+    void handleCreateSplitEdit(const QJsonObject &params);
     void handleSetVolume(const QJsonObject &params);
     void handleAudioDucking(const QJsonObject &params);
     void handleRemoveSilence(const QJsonObject &params);

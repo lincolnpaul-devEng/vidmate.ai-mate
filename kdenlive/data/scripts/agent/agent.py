@@ -17,6 +17,7 @@ from .schemas import (
     AddSubtitleArgs,
     AddTransitionArgs,
     AudioDuckingArgs,
+    CreateSplitEditArgs,
     CutAtPlayheadArgs,
     DeleteClipsArgs,
     DetectBeatsArgs,
@@ -359,6 +360,14 @@ def build_vidmate_agent(
             raise ModelRetry(f"add_mix failed: {res.get('error')}. Verify cut point position between two clips.")
         await ctx.deps.call_kdenlive("seek_to", {"position": args.position})
         return f"Created mix '{args.transition_id}' on Track {args.track_id} at frame {args.position}."
+
+    @agent.tool
+    async def create_split_edit(ctx: RunContext[KdenliveDeps], args: CreateSplitEditArgs) -> str:
+        """Create a cinematic split edit (J-cut or L-cut) where audio and video change at different times to smooth scene transitions."""
+        res = await ctx.deps.call_kdenlive("create_split_edit", args.model_dump())
+        if not res.get("success", False):
+            raise ModelRetry(f"create_split_edit failed: {res.get('error')}. Verify clip_id exists on timeline.")
+        return f"Created cinematic {args.type.upper()} on clip {args.clip_id} with {args.lead_frames} frames lead."
 
     @agent.tool
     async def generate_local_sfx(ctx: RunContext[KdenliveDeps], args: GenerateLocalSFXArgs) -> str:

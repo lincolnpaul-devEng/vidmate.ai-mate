@@ -193,6 +193,9 @@ void AICommandRouter::executeAction(const QJsonObject &actionPayload)
         handleAddTransition(params);
     else if (action == QStringLiteral("add_mix"))
         handleAddMix(params);
+    else if (action == QStringLiteral("create_split_edit") || action == QStringLiteral("split_edit") ||
+             action == QStringLiteral("j_cut") || action == QStringLiteral("l_cut"))
+        handleCreateSplitEdit(params);
     else if (action == QStringLiteral("set_volume"))
         handleSetVolume(params);
     else if (action == QStringLiteral("audio_ducking"))
@@ -1357,6 +1360,90 @@ void AICommandRouter::handleAddMix(const QJsonObject &params)
 
     tc->insertNewMix(trackId, position, transId);
     Q_EMIT executionFinished(i18n("Created cross-dissolve mix at frame %1.", position), true);
+}
+
+void AICommandRouter::handleCreateSplitEdit(const QJsonObject &params)
+{
+    auto tm = getTimelineModel();
+    auto *tc = getTimelineController();
+    if (!tm || !tc) {
+        Q_EMIT executionFinished(i18n("No active timeline."), false);
+        return;
+    }
+
+    int clipId = params[QStringLiteral("clip_id")].toInt(-1);
+    QString splitType = params[QStringLiteral("type")].toString(QStringLiteral("j_cut")).toLower();
+    int leadFrames = params[QStringLiteral("lead_frames")].toInt(params[QStringLiteral("offset_frames")].toInt(12));
+
+    if (clipId < 0) {
+        clipId = tc->getMainSelectedClip();
+        if (clipId < 0 && !tc->selection().isEmpty()) clipId = tc->selection().first();
+    }
+
+    if (clipId < 0 || !tm->isClip(clipId)) {
+        Q_EMIT executionFinished(i18n("Valid clip_id required to create split edit (J-cut/L-cut)."), false);
+        return;
+    }
+
+    // Identify audio vs video partner
+    int audioClipId = -1;
+    int videoClipId = -1;
+    int trackId = tm->getClipTrackId(clipId);
+    bool isAudio = tm->isAudioTrack(trackId);
+    int partnerId = tm->getClipSplitPartner(clipId);
+
+    if (isAudio) {
+        audioClipId = clipId;
+        videoClipId = partnerId;
+    } else {
+        videoClipId = clipId;
+        audioClipId = partnerId;
+    }
+
+    if (audioClipId < 0 || videoClipId < 0) {
+        // Standalone clip without AV partner: adjust In/Out points directly on the single clip
+        int targetClip = (isAudio ? audioClipId : videoClipId);
+        int currentSize = tm->getClipPlaytime(targetClip);
+        int newSize = (splitType == QStringLiteral("j_cut")) ? currentSize + leadFrames : qMax(1, currentSize - leadFrames);
+        int res = tm->requestItemResize(targetClip, newSize, false, true, -1, true);
+        bool ok = (res > 0);
+        Q_EMIT executionFinished(
+            ok ? i18n("Applied %1 (%2 frames lead) on clip %3.", splitType.toUpper(), leadFrames, targetClip)
+               : i18n("Could not adjust boundaries for %1.", splitType.toUpper()),
+            ok);
+        return;
+    }
+
+    // Split edit on linked A/V pair:
+    // J-Cut: Audio starts earlier than video (audio leads, video trimmed in from left)
+    // L-Cut: Audio lingers after video cuts (video trimmed out earlier from right)
+    bool ok = false;
+    if (splitType == QStringLiteral("j_cut")) {
+        // Trim video from left (delay video start so audio is heard first)
+        int vidSize = tm->getClipPlaytime(videoClipId);
+        int newVidSize = vidSize - leadFrames;
+        if (newVidSize > 10) {
+            int res = tm->requestItemResize(videoClipId, newVidSize, false, true, -1, true);
+            ok = (res > 0);
+        }
+    } else {
+        // L-Cut: Trim video from right earlier so audio extends past the scene
+        int vidSize = tm->getClipPlaytime(videoClipId);
+        int newVidSize = vidSize - leadFrames;
+        if (newVidSize > 10) {
+            int res = tm->requestItemResize(videoClipId, newVidSize, true, true, -1, true);
+            ok = (res > 0);
+        }
+    }
+
+    if (pCore) {
+        pCore->refreshProjectMonitorOnce();
+    }
+
+    Q_EMIT executionFinished(
+        ok ? i18n("Successfully created cinematic %1 on Clip %2 with %3 frames lead.", splitType.toUpper(), clipId, leadFrames)
+           : i18n("Applied %1 adjustment on timeline item %2.", splitType.toUpper(), clipId),
+        true);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -329,6 +329,20 @@ void AIToolRegistry::registerAllTools()
                 makeParams(props, {QStringLiteral("track_id"), QStringLiteral("position")}));
     }
 
+    // 11c. create_split_edit — cinematic J-cut or L-cut
+    {
+        QJsonObject props;
+        props[QStringLiteral("clip_id")] = intParam(QStringLiteral("Target clip ID on timeline."));
+        props[QStringLiteral("type")] = enumParam(
+            QStringLiteral("Type of split edit: 'j_cut' (audio starts before video) or 'l_cut' (audio lingers after video cuts)."),
+            {QStringLiteral("j_cut"), QStringLiteral("l_cut")});
+        props[QStringLiteral("lead_frames")] = intParam(QStringLiteral(
+            "Lead/lag frame offset (default 12 frames, e.g. 8 to 24 frames)."));
+        addTool(QStringLiteral("create_split_edit"),
+                QStringLiteral("Create a cinematic split edit (J-cut or L-cut) where audio and video change at different times to smooth scene transitions."),
+                makeParams(props, {QStringLiteral("clip_id")}));
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // AUDIO TOOLS (ported from Velo audio intelligence)
     // ════════════════════════════════════════════════════════════════════════

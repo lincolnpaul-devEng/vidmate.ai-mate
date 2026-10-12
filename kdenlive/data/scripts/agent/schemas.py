@@ -188,6 +188,13 @@ class AddMixArgs(BaseModel):
     transition_id: str = Field(default="luma", description="Mix transition type (e.g. 'luma').")
 
 
+class CreateSplitEditArgs(BaseModel):
+    """Create a cinematic split edit (J-cut or L-cut) where audio and video start or end at different times."""
+    clip_id: int = Field(description="Clip ID on timeline.")
+    type: str = Field(default="j_cut", description="Type of split edit: 'j_cut' (audio leads video) or 'l_cut' (audio lingers after video cut).")
+    lead_frames: int = Field(default=12, description="Frame offset for the audio-video split (typically 8 to 24 frames).")
+
+
 class GenerateLocalSFXArgs(BaseModel):
     """Synthesize a sound effect procedurally."""
     sound_type: str = Field(description="Type of SFX (e.g. 'whoosh', 'riser', 'glitch', 'impact', 'pop').")
