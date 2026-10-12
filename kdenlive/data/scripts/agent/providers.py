@@ -33,10 +33,13 @@ def create_agent_model(
             chosen_provider = "groq"
 
     if chosen_provider == "groq":
-        target_model = model_name or config.groq_model
-        p = GroqProvider(
+        raw_model = model_name or config.groq_model
+        # Strip provider prefix if passed as groq/llama-3.3-70b-versatile
+        target_model = raw_model.split("/", 1)[-1] if raw_model.startswith("groq/") else raw_model
+        from pydantic_ai.providers.openai import OpenAIProvider
+        p = OpenAIProvider(
             api_key=config.groq_key or "missing-groq-key",
-            base_url=config.groq_base_url,
+            base_url=config.groq_base_url or "https://api.groq.com/openai/v1",
         )
         return OpenAIChatModel(target_model, provider=p)
 
