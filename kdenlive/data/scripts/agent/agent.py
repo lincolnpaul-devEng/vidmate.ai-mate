@@ -22,6 +22,7 @@ from .schemas import (
     DetectBeatsArgs,
     DetectScenesArgs,
     GenerateLocalSFXArgs,
+    GetEffectParametersArgs,
     InsertClipArgs,
     InsertNatronToolArgs,
     InsertTitleArgs,
@@ -164,12 +165,25 @@ def build_vidmate_agent(
         return f"Applied effect '{args.effect_id}' to clip {args.clip_id}."
 
     @agent.tool
+    async def get_effect_parameters(ctx: RunContext[KdenliveDeps], args: GetEffectParametersArgs) -> str:
+        """Inspect the exact parameter schema, sliders, default values, min/max limits, and current values of an effect or composition."""
+        res = await ctx.deps.call_kdenlive("get_effect_parameters", args.model_dump())
+        if not res.get("success", False):
+            raise ModelRetry(f"get_effect_parameters failed: {res.get('error')}. Verify clip_id or effect_id.")
+        data = res.get("data", {})
+        params = data.get("parameters", [])
+        return (
+            f"Effect/Composition '{args.effect_id or data.get('effect_id')}' parameters ({len(params)} found): "
+            f"{params}."
+        )
+
+    @agent.tool
     async def set_effect_parameter(ctx: RunContext[KdenliveDeps], args: SetEffectParameterArgs) -> str:
-        """Adjust a parameter on an applied effect."""
+        """Adjust or tweak slider controls, keyframes, toggles, or values on an applied effect or composition."""
         res = await ctx.deps.call_kdenlive("set_effect_parameter", args.model_dump())
         if not res.get("success", False):
-            raise ModelRetry(f"set_effect_parameter failed: {res.get('error')}.")
-        return f"Set '{args.param_name}' to {args.value} on clip {args.clip_id}."
+            raise ModelRetry(f"set_effect_parameter failed: {res.get('error')}. Verify parameter name and limits.")
+        return f"Successfully updated parameter(s) for '{args.effect_id}' on Target: {res.get('message', 'Updated successfully')}."
 
     @agent.tool
     async def remove_effect(ctx: RunContext[KdenliveDeps], args: RemoveEffectArgs) -> str:

@@ -59,18 +59,29 @@ class AddEffectArgs(BaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Initial parameter values.")
 
 
+class GetEffectParametersArgs(BaseModel):
+    """Inspect parameter schema, slider ranges (min/max), defaults, and current values for an effect or composition."""
+    clip_id: int = Field(default=-1, description="Clip ID to inspect (-1 if inspecting track or composition).")
+    track_id: int = Field(default=-2, description="Track ID to inspect (-2 if inspecting clip, -1 for Master).")
+    composition_id: int = Field(default=-1, description="Composition / Transition ID to inspect.")
+    effect_id: str = Field(default="", description="Effect identifier (e.g. 'frei0r.cartoon', 'qtblend', 'lift_gamma_gain').")
+
+
 class SetEffectParameterArgs(BaseModel):
-    """Set parameter on an applied effect."""
-    clip_id: int = Field(description="ID of the clip.")
-    effect_index: int = Field(default=0, description="Index of the effect on the clip.")
-    param_name: str = Field(description="Name of the parameter to change.")
-    value: Any = Field(description="New parameter value or keyframe string.")
+    """Tweak, slider-adjust, or keyframe an effect or composition parameter."""
+    clip_id: int = Field(default=-1, description="Clip ID (-1 if modifying track or composition).")
+    track_id: int = Field(default=-2, description="Track ID (-2 if modifying clip, -1 for Master).")
+    composition_id: int = Field(default=-1, description="Composition / Transition ID (if modifying composition).")
+    effect_id: str = Field(default="", description="Effect identifier (e.g. 'frei0r.cartoon', 'qtblend', 'lift_gamma_gain').")
+    param_name: str = Field(default="", description="Specific parameter/slider name to modify (e.g. 'triplevel', 'diffspace', 'rect').")
+    value: Any = Field(default=None, description="New value or keyframe string.")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of multiple parameters to set simultaneously (e.g. {'triplevel': 1.0, 'diffspace': 0.02}).")
 
 
 class RemoveEffectArgs(BaseModel):
     """Remove an effect from a clip."""
     clip_id: int = Field(description="ID of the clip.")
-    effect_index: int = Field(description="Index of the effect to remove.")
+    effect_index: int = Field(default=0, description="Index of the effect to remove.")
 
 
 class RemoveBackgroundArgs(BaseModel):
