@@ -193,3 +193,31 @@ class GenerateLocalSFXArgs(BaseModel):
     sound_type: str = Field(description="Type of SFX (e.g. 'whoosh', 'riser', 'glitch', 'impact', 'pop').")
     duration_seconds: float = Field(default=1.0, description="Duration of the sound in seconds.")
 
+
+class SetEditorialStyleArgs(BaseModel):
+    """Dynamically establish or adapt the editorial style, pacing, typography, and color palette for the editing session."""
+    style_name: str = Field(
+        default="custom",
+        description="Name or archetype of the style: 'minimal_clean', 'cinematic_documentary', 'high_energy_viral', 'corporate_business', 'retro_analog', 'gaming_streamer', or 'custom'."
+    )
+    pacing_mood: str = Field(
+        default="balanced",
+        description="Pacing tempo: 'slow_deliberate' (4-8s cuts), 'balanced_narrative' (2.5-5s cuts), 'fast_paced' (1.2-2.5s cuts), 'hyper_montage' (<1s cuts)."
+    )
+    typography_intent: str = Field(
+        default="modern_sans",
+        description="Font and subtitle visual direction: 'modern_sans' (Inter/Helvetica), 'cinematic_serif' (Cinzel/Playfair), 'bold_display' (Montserrat Black/Impact), 'handwritten_script' (Artistic), or custom font family name."
+    )
+    color_palette: Dict[str, str] = Field(
+        default_factory=lambda: {"dominant_60": "#0D0E12", "secondary_30": "#C89D5C", "accent_10": "#FF4500"},
+        description="Dynamic 60/30/10 color distribution dictionary: 'dominant_60' (background/canvas), 'secondary_30' (cards/shapes/secondary), 'accent_10' (key text/highlights/punchline)."
+    )
+    transition_preference: str = Field(
+        default="clean_cuts",
+        description="Preferred transition language: 'clean_cuts' (invisible/J-cut/L-cut), 'cross_dissolve', 'whip_pan_zoom', 'glitch_digital', or 'luma_wipe'."
+    )
+    creative_intent_notes: str = Field(
+        default="",
+        description="Specific user desires, audience expectations, or thematic guidelines to respect."
+    )
+
