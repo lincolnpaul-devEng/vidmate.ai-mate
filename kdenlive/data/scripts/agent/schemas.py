@@ -153,7 +153,32 @@ class DetectBeatsArgs(BaseModel):
     clip_id: int = Field(description="Audio clip ID to analyze.")
 
 
+class DetectScenesArgs(BaseModel):
+    """Visually analyze a video clip using PySceneDetect to detect scene/shot changes and automatically split the clip."""
+    clip_id: int = Field(default=-1, description="Clip ID to analyze (-1 for selected or active timeline clip).")
+    threshold: float = Field(default=27.0, description="Detection threshold sensitivity (lower = more sensitive to subtle cuts).")
+    detector: str = Field(default="content", description="Scene detection algorithm: 'content', 'adaptive', or 'threshold'.")
+    apply_cuts: bool = Field(default=True, description="If true, automatically split/cut the clip on the timeline at each detected scene boundary.")
+    add_markers: bool = Field(default=False, description="If true, add scene guide markers with timestamps at each shot transition.")
+
+
+class AddTransitionArgs(BaseModel):
+    """Add a transition or composition between overlapping clips on a track."""
+    track_id: int = Field(description="Track ID for the composition.")
+    position: int = Field(description="Frame position to place the transition.")
+    transition_id: str = Field(default="dissolve", description="Transition type: 'wipe', 'dissolve', 'slide', 'luma', 'composite'.")
+    duration: int = Field(default=30, description="Duration in frames (e.g. 30 frames = 1 second at 30fps).")
+
+
+class AddMixArgs(BaseModel):
+    """Create a cross-dissolve mix between two adjacent clips at a cut point."""
+    track_id: int = Field(description="Track ID.")
+    position: int = Field(description="Frame position at the cut point between two adjacent clips.")
+    transition_id: str = Field(default="luma", description="Mix transition type (e.g. 'luma').")
+
+
 class GenerateLocalSFXArgs(BaseModel):
     """Synthesize a sound effect procedurally."""
     sound_type: str = Field(description="Type of SFX (e.g. 'whoosh', 'riser', 'glitch', 'impact', 'pop').")
     duration_seconds: float = Field(default=1.0, description="Duration of the sound in seconds.")
+

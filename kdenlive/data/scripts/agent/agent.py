@@ -13,11 +13,14 @@ from .config import AgentConfig
 from .providers import create_agent_model
 from .schemas import (
     AddEffectArgs,
+    AddMixArgs,
     AddSubtitleArgs,
+    AddTransitionArgs,
     AudioDuckingArgs,
     CutAtPlayheadArgs,
     DeleteClipsArgs,
     DetectBeatsArgs,
+    DetectScenesArgs,
     GenerateLocalSFXArgs,
     InsertClipArgs,
     InsertNatronToolArgs,
@@ -49,20 +52,28 @@ class KdenliveDeps:
         return await self.action_executor(action_name, params)
 
 
-SYSTEM_PROMPT = """You are VidMate AI-Mate, a world-class professional video editor and compositing artist embedded directly inside Kdenlive with in-process Natron compositing.
+SYSTEM_PROMPT = """You are VidMate AI-Mate, an elite master video editor and compositing director embedded directly inside Kdenlive with in-process Natron compositing.
 
-You follow a strict 9-phase professional editing workflow:
-1. UNDERSTAND: Review the user's creative intent and the exact timeline state in <editor_state>.
-2. LOCATE: Identify the exact track indices, clip IDs, and frame numbers before making changes.
-3. PRESERVE SYNC: When editing speech or audio, keep video and audio strictly synchronized.
-4. RHYTHM & PACING: Cut on beats, pauses, or scene transitions.
-5. CLEAN LAYERING: Place background media on Track 1, overlays/B-roll on Track 2, text/titles/motion graphics on upper tracks.
-6. TOOL EXECUTION: Invoke the appropriate tool. Check all frame numbers and clip boundaries.
-7. SELF-CORRECTION: If a tool reports an error (e.g. out of bounds, clip locked, parameter error), immediately adjust your calculations and retry.
-8. COMPOSITING: For complex motion graphics and visual effects, use natron_vfx to synthesize high-quality procedural animations.
-9. VERIFY: Confirm that the visual timeline accurately reflects the user's vision.
+# CORE OPERATING DIRECTIVES (PLAN -> ACT -> OBSERVE -> CRITIC / VERIFY):
+1. **EXACT TIMELINE AWARENESS**:
+   - Inspect `<timeline_clips>` in `<editor_state>` before taking any action.
+   - Note the exact active clip IDs, track IDs, start frames, and duration (+frames).
+   - NEVER call `cut_at_playhead` at frame 0 or outside clip boundaries. Cut strictly within [clip.start, clip.start + clip.duration].
+   - If user asks to "cut the video and detect scenes", DO NOT guess frame cuts manually. Call `detect_scenes` on the clip!
+   - When cutting or applying effects, specify the exact target `clip_id` or seek the playhead (`seek_to`) to the target frame first.
 
-Never guess frame numbers. Use the exact boundaries provided in <editor_state>.
+2. **REASONING & INTENT**:
+   - For every step, briefly explain your creative reasoning (what you plan to do, which clip you are targeting, and why).
+
+3. **CRITIC & VERIFY**:
+   - When calling `verify_edit_visually`, check the observation. If it reports `WARNING (Black frame detected)` or unexpected results, DO NOT declare success! Investigate: did you seek to an empty frame? Was the clip ID wrong? Correct your parameters immediately.
+   - If any tool returns an error (e.g. `No clip selected`, `out of bounds`), read the error, adjust parameters, and fix it.
+
+4. **FINAL PROFESSIONAL SUMMARY**:
+   - When all edits are completed, provide a concise, structured markdown summary:
+     * **Clips Cut**: List clip IDs, timecodes, and split frames.
+     * **Transitions / Effects Added**: Specify tracks, transition types, and durations.
+     * **Visual QA**: Confirm visual verification passed without black frames or errors.
 """
 
 
@@ -87,6 +98,9 @@ def build_vidmate_agent(
     @agent.tool
     async def cut_at_playhead(ctx: RunContext[KdenliveDeps], args: CutAtPlayheadArgs) -> str:
         """Cut clips on the timeline at a specific position or current playhead."""
+        target_pos = args.position
+        if target_pos != -1:
+            await ctx.deps.call_kdenlive("seek_to", {"position": target_pos})
         res = await ctx.deps.call_kdenlive("cut_at_playhead", args.model_dump())
         if not res.get("success", False):
             raise ModelRetry(
@@ -106,6 +120,10 @@ def build_vidmate_agent(
     @agent.tool
     async def trim_clip(ctx: RunContext[KdenliveDeps], args: TrimClipArgs) -> str:
         """Trim the in or out point of a clip on the timeline."""
+        if args.new_in != -1:
+            await ctx.deps.call_kdenlive("seek_to", {"position": args.new_in})
+        elif args.new_out != -1:
+            await ctx.deps.call_kdenlive("seek_to", {"position": args.new_out})
         res = await ctx.deps.call_kdenlive("trim_clip", args.model_dump())
         if not res.get("success", False):
             raise ModelRetry(f"trim_clip failed: {res.get('error')}. Verify new_in/new_out boundaries.")
@@ -251,8 +269,18 @@ def build_vidmate_agent(
         res = await ctx.deps.call_kdenlive("verify_edit_visually", args.model_dump())
         if not res.get("success", False):
             raise ModelRetry(f"Visual verification failed: {res.get('error')}.")
+
+        obs = res.get("observation", "")
+        status = res.get("status", "")
+        # Enforce Critic: If black frame or flaw detected, self-correct!
+        if "WARNING" in status or "Black frame detected" in obs or "empty/black" in obs:
+            raise ModelRetry(
+                f"Visual verification warning at frame {args.frame}: {obs}. "
+                "The frame is black or empty. Ensure playhead is within an active clip timeframe on the timeline."
+            )
+
         return (
-            f"Visual inspection at frame {args.frame}: {res.get('observation', 'Visual matches intent')}. "
+            f"Visual inspection at frame {args.frame}: {obs or 'Visual matches intent'}. "
             f"Quality confidence: {res.get('confidence', 'high')}."
         )
 
@@ -263,6 +291,34 @@ def build_vidmate_agent(
         if not res.get("success", False):
             raise ModelRetry(f"detect_beats failed: {res.get('error')}.")
         return f"Detected {len(res.get('beats', []))} beats on clip {args.clip_id}."
+
+    @agent.tool
+    async def detect_scenes(ctx: RunContext[KdenliveDeps], args: DetectScenesArgs) -> str:
+        """Visually analyze a video clip using PySceneDetect to detect scene/shot changes and automatically split the clip."""
+        res = await ctx.deps.call_kdenlive("detect_scenes", args.model_dump())
+        if not res.get("success", False):
+            raise ModelRetry(f"detect_scenes failed: {res.get('error')}. Verify clip_id exists on timeline.")
+        scenes = res.get("scenes", [])
+        return f"Scene detection complete on clip {args.clip_id}. Found {len(scenes)} scenes/cuts: {scenes}."
+
+    @agent.tool
+    async def add_transition(ctx: RunContext[KdenliveDeps], args: AddTransitionArgs) -> str:
+        """Add a transition or composition between overlapping clips on a track."""
+        res = await ctx.deps.call_kdenlive("add_transition", args.model_dump())
+        if not res.get("success", False):
+            raise ModelRetry(f"add_transition failed: {res.get('error')}. Verify track_id and position overlap.")
+        # Auto-seek to transition point for immediate visual feedback
+        await ctx.deps.call_kdenlive("seek_to", {"position": args.position})
+        return f"Added '{args.transition_id}' transition on Track {args.track_id} at frame {args.position} (duration={args.duration}f)."
+
+    @agent.tool
+    async def add_mix(ctx: RunContext[KdenliveDeps], args: AddMixArgs) -> str:
+        """Create a cross-dissolve mix between two adjacent clips at a cut point."""
+        res = await ctx.deps.call_kdenlive("add_mix", args.model_dump())
+        if not res.get("success", False):
+            raise ModelRetry(f"add_mix failed: {res.get('error')}. Verify cut point position between two clips.")
+        await ctx.deps.call_kdenlive("seek_to", {"position": args.position})
+        return f"Created mix '{args.transition_id}' on Track {args.track_id} at frame {args.position}."
 
     @agent.tool
     async def generate_local_sfx(ctx: RunContext[KdenliveDeps], args: GenerateLocalSFXArgs) -> str:
