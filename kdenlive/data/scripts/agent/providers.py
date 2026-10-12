@@ -24,6 +24,8 @@ def create_agent_model(
             chosen_provider = "groq"
         elif config.openrouter_api_key:
             chosen_provider = "openrouter"
+        elif config.supabase_proxy_url and config.supabase_anon_key:
+            chosen_provider = "supabase_proxy"
         elif config.custom_api_key:
             chosen_provider = "custom"
         else:
@@ -45,6 +47,28 @@ def create_agent_model(
             app_url="https://vidmate.ai",
             app_title="VidMate AI-Mate",
         )
+        return OpenAIChatModel(target_model, provider=p)
+
+    if chosen_provider in ("supabase_proxy", "ai-proxy", "supabase"):
+        target_model = model_name or "auto"
+        from openai import AsyncOpenAI
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        headers = {
+            "apikey": config.supabase_anon_key or "missing-anon-key",
+            "Authorization": f"Bearer {config.supabase_anon_key or 'missing-anon-key'}",
+        }
+        if config.openrouter_api_key:
+            headers["x-openrouter-key"] = config.openrouter_api_key
+        if config.groq_key:
+            headers["x-groq-key"] = config.groq_key
+
+        client = AsyncOpenAI(
+            base_url=config.supabase_proxy_url or "http://localhost:54321/functions/v1/ai-proxy",
+            api_key=config.supabase_anon_key or "dummy-key",
+            default_headers=headers,
+        )
+        p = OpenAIProvider(openai_client=client)
         return OpenAIChatModel(target_model, provider=p)
 
     # Custom OpenAI-compatible fallback (e.g. Ollama, LM Studio, vLLM)

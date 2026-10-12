@@ -53,6 +53,11 @@ def _load_env_file(path: Path) -> dict[str, str]:
 class AgentConfig(BaseModel):
     """Configuration settings for VidMate AI Agent."""
 
+    # Supabase Proxy
+    supabase_url: str = Field(default="")
+    supabase_anon_key: str = Field(default="")
+    supabase_proxy_url: str = Field(default="")
+
     # Provider Keys
     openrouter_api_key: str = Field(default="")
     groq_api_key: str = Field(default="")
@@ -77,7 +82,7 @@ class AgentConfig(BaseModel):
     custom_model: str = Field(default="qwen2.5:latest")
 
     # Routing
-    active_provider: str = Field(default="auto")  # "auto", "groq", "openrouter", "custom"
+    active_provider: str = Field(default="auto")  # "auto", "supabase_proxy", "groq", "openrouter", "custom"
 
     # IPC
     ipc_socket_path: str = Field(default="/tmp/kdenlive_agent.sock")
@@ -95,6 +100,19 @@ class AgentConfig(BaseModel):
 
         # 2. System environment variables override file settings
         merged.update({k: v for k, v in os.environ.items() if v})
+
+        # Resolve Supabase Proxy credentials
+        sb_url = (
+            merged.get("VITE_SUPABASE_URL")
+            or merged.get("SUPABASE_URL")
+            or ""
+        )
+        sb_anon = (
+            merged.get("VITE_SUPABASE_ANON_KEY")
+            or merged.get("SUPABASE_ANON_KEY")
+            or ""
+        )
+        sb_proxy = f"{sb_url.rstrip('/')}/functions/v1/ai-proxy" if sb_url else ""
 
         # Resolve OpenRouter key
         or_key = (
@@ -127,15 +145,20 @@ class AgentConfig(BaseModel):
 
         # Determine active provider
         provider = merged.get("LLM_PROVIDER", "auto").lower()
-        if provider not in ("groq", "openrouter", "custom"):
+        if provider not in ("groq", "openrouter", "supabase_proxy", "custom"):
             if groq_key:
                 provider = "groq"
             elif or_key:
                 provider = "openrouter"
+            elif sb_proxy and sb_anon:
+                provider = "supabase_proxy"
             else:
                 provider = "auto"
 
         return cls(
+            supabase_url=sb_url,
+            supabase_anon_key=sb_anon,
+            supabase_proxy_url=sb_proxy,
             openrouter_api_key=or_key,
             groq_api_key=groq_key,
             custom_api_key=custom_key,
