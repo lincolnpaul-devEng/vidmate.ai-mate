@@ -1903,7 +1903,7 @@ void AIChatWidget::slotGoalFinished(const QString &finalSummary)
     if (cleanedSummary.isEmpty()) {
         appendSystemMessage(i18n("✓ All edits completed and verified on timeline."));
     } else {
-        appendAssistantMessage(cleanedSummary);
+        appendAssistantResponse(cleanedSummary);
     }
     slotRequestFinished();
 }

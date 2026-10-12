@@ -86,8 +86,11 @@ class VidMateAgentService:
             # Format prompt with latest editor state
             user_content = prompt
             if editor_state:
-                state_str = json.dumps(editor_state, indent=2)
-                user_content = f"{prompt}\n\n<editor_state>\n{state_str}\n</editor_state>"
+                if isinstance(editor_state, dict) and "raw_snapshot" in editor_state:
+                    state_str = str(editor_state["raw_snapshot"]).strip()
+                else:
+                    state_str = json.dumps(editor_state, indent=2)
+                user_content = f"{prompt}\n\n{state_str}"
 
             await self._send_json(writer, {
                 "type": "run_start",
@@ -98,6 +101,7 @@ class VidMateAgentService:
 
             # Run agent with streaming tokens
             full_text = ""
+            total_tokens = 0
             async with agent.run_stream(user_content, deps=deps) as result:
                 async for text in result.stream_text(delta=True):
                     full_text += text
@@ -107,10 +111,19 @@ class VidMateAgentService:
                         "text": text,
                     })
 
+                usage = result.usage()
+                if usage:
+                    total_tokens = (usage.input_tokens or 0) + (usage.output_tokens or 0)
+
+            # Fallback approximate token estimation if provider returns 0
+            if total_tokens <= 0:
+                total_tokens = max(1, (len(user_content) + len(full_text)) // 4)
+
             await self._send_json(writer, {
                 "type": "run_complete",
                 "req_id": req_id,
                 "success": True,
+                "tokens": total_tokens,
                 "summary": full_text.strip() or "Goal completed successfully.",
             })
 

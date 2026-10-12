@@ -332,8 +332,9 @@ QString AIDispatcher::buildEditorStateSnapshot()
         auto *tc = tw->controller();
         auto tm = tw->model();
         if (tc && tm) {
+            int playheadPos = pCore->getMonitorPosition(Kdenlive::ProjectMonitor);
             state += QStringLiteral("playhead_frame=%1 duration=%2 clips=%3\n")
-                .arg(pCore->getMonitorPosition(Kdenlive::ProjectMonitor))
+                .arg(playheadPos)
                 .arg(tc->duration())
                 .arg(tm->getClipsCount());
 
@@ -346,8 +347,23 @@ QString AIDispatcher::buildEditorStateSnapshot()
             for (int id : sel) selStrs << QString::number(id);
             state += QStringLiteral("selected=[%1]\n").arg(selStrs.join(QStringLiteral(",")));
 
-            // Track summary
+            // Compute active clip(s) under playhead cursor right now:
+            int mainClipUnderCursor = -1;
+            QStringList activeClipsUnderCursor;
             int trackCount = tm->getTracksCount();
+            for (int i = 0; i < trackCount; i++) {
+                int tid = tm->getTrackIndexFromPosition(i);
+                int cid = tm->getClipByPosition(tid, playheadPos);
+                if (cid >= 0 && tm->isClip(cid)) {
+                    if (mainClipUnderCursor < 0) mainClipUnderCursor = cid;
+                    activeClipsUnderCursor << QStringLiteral("id=%1 (track=%2 \"%3\", \"%4\")")
+                        .arg(cid).arg(tid).arg(tm->getTrackFullName(tid)).arg(tm->getClipName(cid));
+                }
+            }
+            state += QStringLiteral("active_clip_id=%1\n").arg(mainClipUnderCursor);
+            state += QStringLiteral("active_clips_under_playhead=[%1]\n").arg(activeClipsUnderCursor.join(QStringLiteral("; ")));
+
+            // Track summary
             state += QStringLiteral("tracks=%1\n").arg(trackCount);
             for (int i = 0; i < trackCount && i < 20; i++) {
                 int tid = tm->getTrackIndexFromPosition(i);
@@ -1239,7 +1255,11 @@ void AIDispatcher::processSocketLine(const QByteArray &line)
     } else if (type == QStringLiteral("run_complete")) {
         m_goalActive = false;
         qint64 latency = m_requestTimer.elapsed();
-        Q_EMIT metricsUpdated(0, latency, m_model);
+        int tokens = msg[QStringLiteral("tokens")].toInt(0);
+        if (tokens <= 0) {
+            tokens = qMax(1, (m_lastPrompt.length() + msg[QStringLiteral("summary")].toString().length()) / 4);
+        }
+        Q_EMIT metricsUpdated(tokens, latency, m_model);
         QString summary = msg[QStringLiteral("summary")].toString();
         if (summary.isEmpty()) {
             summary = i18n("Goal completed successfully.");
